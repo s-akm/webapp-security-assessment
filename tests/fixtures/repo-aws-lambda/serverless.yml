@@ -1,0 +1,7 @@
+functions:
+  admin:
+    handler: src/handlers/admin.handler
+    events: [{ http: { path: /api/admin, method: get } }]
+  report:
+    handler: src/handlers/report.handler
+    events: [{ http: { path: /api/report, method: post } }]

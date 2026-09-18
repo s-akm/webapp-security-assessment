@@ -1,0 +1,27 @@
+# ビルド成果物（build/build.sh で再生成できる）
+dist/
+
+# 適用事例。依頼者の未修正の脆弱性が再現できる粒度で書かれているため、
+# リポジトリには入れない。手元に置いて教材として使う分には構わない
+cases/
+
+# 検査で使う案件固有語。依頼者を示す語そのものが機微なので手元にだけ置く
+tests/ngwords.local
+
+# テストの一時出力
+tests/tmp/
+tests/.mutating
+
+# OS / エディタ
+.DS_Store
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+
+# Excel の一時ファイル
+~$*.xlsx
+
+# Node（tests でブラウザ確認を動かすときだけ使う）
+node_modules/

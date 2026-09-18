@@ -1,0 +1,2 @@
+GET     /api/admin      controllers.AdminController.index
+POST    /api/report     controllers.ReportController.store
