@@ -1,0 +1,15 @@
+{
+  "name": "webapp-security-assessment",
+  "version": "1.2.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Web アプリケーションのセキュリティ評価スキルの保守リポジトリ",
+  "type": "module",
+  "scripts": {
+    "test": "./tests/run.sh",
+    "build": "./build/build.sh"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

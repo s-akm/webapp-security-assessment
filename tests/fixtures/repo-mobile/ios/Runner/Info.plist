@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0">
+<dict>
+  <key>NSAppTransportSecurity</key>
+  <dict><key>NSAllowsArbitraryLoads</key><true/></dict>
+  <key>CFBundleURLTypes</key>
+  <array><dict><key>CFBundleURLSchemes</key><array><string>myapp</string></array></dict></array>
+</dict>
+</plist>
