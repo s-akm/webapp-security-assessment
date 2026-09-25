@@ -23,10 +23,14 @@
 `scripts/recon.sh <url>` が、指定したページから読み込まれる第三者オリジンを列挙する。加えてコード側も見る。
 
 ```bash
-# 計測・広告タグの読み込み箇所
-grep -rnE 'googletagmanager|google-analytics|gtag\(|GoogleAnalytics|adsbygoogle|pagead2|
-facebook\.net|fbq\(|connect\.facebook|clarity\.ms|hotjar|
-x\.com/i/adsct|analytics\.tiktok|snap\.licdn|doubleclick' --include='*.tsx' --include='*.jsx' --include='*.html' .
+# 計測・広告タグの読み込み箇所。パターンを行で折り返すときは -e で分ける
+# （引用符の中で改行すると、grep は改行を別のパターンの区切りとして扱い、行末の | が「何にでも一致」になる）
+grep -rnE --exclude-dir=node_modules \
+  -e 'googletagmanager|google-analytics|analytics\.google\.com|gtag\(|GoogleAnalytics|adsbygoogle|pagead2|googleadservices|doubleclick' \
+  -e 'facebook\.net|fbq\(|clarity\.ms|hotjar|analytics\.tiktok|snap\.licdn|ads-twitter|x\.com/i/adsct|twq\(|s\.yimg\.jp|ytag\(' \
+  -e 'sentry|intercom|logrocket|fullstory|posthog|datadogRum|browser-rum|mouseflow' \
+  --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.vue' --include='*.svelte' \
+  --include='*.astro' --include='*.html' --include='*.php' .
 
 # 共通レイアウトに入っているか（= 全ページで発火するか）
 grep -rn 'Script\|<script' app/layout.tsx src/app/layout.tsx 2>/dev/null
@@ -110,8 +114,9 @@ Cookie 等の情報を第三者へ提供する場合で、**提供先がそれ�
 
 ```bash
 # 同意管理の実装があるか
-grep -rniE 'consent|cmp|cookiebot|onetrust|usercentrics|klaro|osano|trustarc|
-gtag\(.?.?consent|__tcfapi|iabtcf' --include='*.ts' --include='*.tsx' --include='*.js' .
+grep -rniE --exclude-dir=node_modules \
+  -e 'consent|cmp|cookiebot|onetrust|usercentrics|klaro|osano|trustarc' \
+  -e 'gtag\(.?.?consent|__tcfapi|iabtcf' --include='*.ts' --include='*.tsx' --include='*.js' .
 ```
 
 **ここで注意する取り違えが 1 つある。** 「同意」で検索すると、フォームの第三者提供同意チェックボックス（`third_party_consent` のような列）が引っかかる。**それは Cookie の同意とは別物。** 混同すると「同意管理はある」と誤判定する。

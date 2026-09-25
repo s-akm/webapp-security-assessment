@@ -216,6 +216,10 @@ mutate "audit_grep: 画面操作の記録で 09 を読ませない" "scripts/aud
   's = s.replace("references/08-privacy-compliance.md references/09-browser-verification.md\"", "references/08-privacy-compliance.md\"")'
 mutate "audit_grep: X 広告の関数を送信先から外す" "scripts/audit_grep.sh" "X 広告のタグを拾う" \
   's = s.replace("|ads-twitter|twq\\(|", "|")'
+mutate "recon: パイプで grep -Eq に渡す（確率的に誤る書き方）" "scripts/recon.sh" "パイプで grep -q に渡していない" \
+  's = s.replace("| grep -E \x27^(ref:|[0-9a-f]{40})\x27 >/dev/null", "| grep -Eq \x27^(ref:|[0-9a-f]{40})\x27", 1)'
+mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
+  's = s.replace("evaluateJavascript\x27 \\\n  -e \x27javaScriptEnabled", "evaluateJavascript|\njavaScriptEnabled", 1)'
 
 # ---- recon ----
 # 旧不具合は「自サイトの判定がポートを考えない」。ホスト名にポートを残すだけでは、最終的なホスト名も

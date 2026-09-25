@@ -623,8 +623,9 @@ curl -s "https://<domain>/sectest-$(date +%s)" | grep -iE 'stack|trace|exception
 
 ```bash
 # 200 のときだけ。値を画面に出さずに、中身らしいかだけを判定する
-curl -s -r 0-15 "https://<domain>/.git/HEAD" | grep -q '^ref:' && echo '.git/HEAD の中身が返っている'
-curl -s -r 0-200 "https://<domain>/.env" | grep -qE '^[A-Z_]+=' && echo '.env の中身が返っている'
+# grep -q は使わない。見つけた時点で終わり、curl が書き込み中に落ちるので、pipefail のもとでは判定が揺れる
+curl -s -r 0-15 "https://<domain>/.git/HEAD" | grep '^ref:' >/dev/null && echo '.git/HEAD の中身が返っている'
+curl -s -r 0-200 "https://<domain>/.env" | grep -E '^[A-Z_]+=' >/dev/null && echo '.env の中身が返っている'
 ```
 - **ソースマップが公開されていると、元のソースがそのまま読める。** コメントに書いた内部の情報や、
   サーバー用のつもりで書いたコードが出る。Next.js は既定で無効（`productionBrowserSourceMaps`）

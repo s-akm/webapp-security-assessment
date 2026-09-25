@@ -106,10 +106,19 @@ mb="$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$SKILL"/scrip
 # pipefail のもとで「… | grep -q」と書くと、grep -q が見つけた時点で終わり、書き手が SIGPIPE で落ちて
 # パイプライン全体が失敗扱いになる。見つかったのに「無い」と判定することが確率的に起きる（Linux で 200 回に 1 回）。
 # 検査の absent では、本当は出ている文字列を「出ていない」として素通りさせる。grep ... >/dev/null で読み切らせる。
-gq="$(grep -nE '(^|[^|])\|[[:space:]]*grep[[:space:]]+-q' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
+# -iq・-Eq・-E -q・--quiet のように、オプションの並びの中に q があるものも同じ（以前は -q で始まる形しか見ていなかった）
+gq="$(grep -nE '(^|[^|])\|[[:space:]]*grep[[:space:]]+((-[A-Za-z]+|--[a-z-]+)[[:space:]]+)*(-[A-Za-z]*q|--quiet|--silent)' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
       | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#|s = s\.replace\(' || true)"
 if [[ -z "$gq" ]]; then ok "パイプで grep -q に渡していない（pipefail のもとで確率的に誤る書き方）"
 else ng "パイプで grep -q に渡していない（pipefail のもとで確率的に誤る書き方）" "$(printf '%s' "$gq" | head -3 | cut -c1-120)"; fi
+# 資料のコード例で、grep のパターンを単引用符の中で改行しているもの。grep は改行を「別のパターン」の区切りとして
+# 扱うので、行末の | は空の選択肢になり、GNU では全行に一致し、macOS ではエラーになる（08 の例が実際にそうだった）。
+# 単引用符の数が奇数の行（引用符が閉じないまま次の行へ続く）で、末尾が | か |\ のものを捕まえる。-e で分けて書く。
+ml="$(LC_ALL=C awk '/^```/ { inb = !inb; next }
+  inb && /grep/ { l = $0; n = gsub(/\047/, "", l); if (n % 2 == 1 && $0 ~ /\|\\?$/) print FILENAME ":" FNR }' \
+  "$SKILL"/SKILL.md "$SKILL"/references/*.md "$SKILL"/templates/*.md)"
+if [[ -z "$ml" ]]; then ok "資料の grep の例で、パターンを引用符の中で改行していない"
+else ng "資料の grep の例で、パターンを引用符の中で改行していない" "$(printf '%s' "$ml" | head -3 | tr '\n' ' ')（-e で分けて書く）"; fi
 if [[ -z "$mb" ]]; then ok "変数名の直後に全角文字が続かない（bash 3.2 で止まる書き方）"
 else ng "変数名の直後に全角文字が続かない（bash 3.2 で止まる書き方）" "$(printf '%s' "$mb" | head -3 | cut -c1-120)"; fi
 if python3 -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" \

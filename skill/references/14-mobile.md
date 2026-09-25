@@ -73,8 +73,8 @@ Generative Language API（Gemini）を有効にすると、**配布済みの鍵�
 ### 2. 端末に保存しているもの（MASVS-STORAGE）
 
 ```bash
-grep -rnE 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|localStorage|\
-sqlite|Realm|shared_preferences|SecureStore|Keychain|EncryptedSharedPreferences' \
+grep -rnE -e 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|localStorage' \
+  -e 'sqlite|Realm|shared_preferences|SecureStore|Keychain|EncryptedSharedPreferences' \
   --include='*.swift' --include='*.kt' --include='*.java' --include='*.dart' \
   --include='*.ts' --include='*.js' . 2>/dev/null | head -20
 ```
@@ -97,11 +97,11 @@ sqlite|Realm|shared_preferences|SecureStore|Keychain|EncryptedSharedPreferences'
 
 ```bash
 # 平文通信の許可
-grep -rnE 'usesCleartextTraffic|cleartextTrafficPermitted|NSAllowsArbitraryLoads|\
-NSExceptionAllowsInsecureHTTPLoads' --include='*.xml' --include='*.plist' . 2>/dev/null
+grep -rnE -e 'usesCleartextTraffic|cleartextTrafficPermitted|NSAllowsArbitraryLoads' \
+  -e 'NSExceptionAllowsInsecureHTTPLoads' --include='*.xml' --include='*.plist' . 2>/dev/null
 # 証明書の検証を切っている
-grep -rnE 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509TrustManager|\
-setHostnameVerifier|badCertificateCallback|rejectUnauthorized' . 2>/dev/null | head
+grep -rnE -e 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509TrustManager' \
+  -e 'setHostnameVerifier|badCertificateCallback|rejectUnauthorized' . 2>/dev/null | head
 ```
 
 - **平文通信を許可していないか**（`usesCleartextTraffic="true"` / `NSAllowsArbitraryLoads`）。
@@ -134,8 +134,8 @@ setHostnameVerifier|badCertificateCallback|rejectUnauthorized' . 2>/dev/null | h
 grep -rnE 'intent-filter|CFBundleURLSchemes|associatedDomains|android:scheme|deepLink' \
   --include='*.xml' --include='*.plist' --include='*.json' . 2>/dev/null | head -15
 # WebView
-grep -rnE 'WebView|WKWebView|InAppBrowser|addJavascriptInterface|evaluateJavascript|\
-javaScriptEnabled|allowFileAccess' . 2>/dev/null | head -15
+grep -rnE -e 'WebView|WKWebView|InAppBrowser|addJavascriptInterface|evaluateJavascript' \
+  -e 'javaScriptEnabled|allowFileAccess' . 2>/dev/null | head -15
 ```
 
 - **ディープリンクで受け取った値を検証しているか。** 他のアプリから任意の値で呼べる。
