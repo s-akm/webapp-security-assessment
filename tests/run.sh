@@ -869,6 +869,7 @@ printf '%s\n' 'raise ImportError("題材: openpyxl が無い状態を作る")' >
 msg="$(PYTHONPATH="$TMP/no-openpyxl" python3 "$SKILL/scripts/make_register.py" "$TMP/x.xlsx" 2>&1 || true)"
 contains "make_register: openpyxl 不在時に案内を出す" "openpyxl が見つからない" "$msg"
 contains "make_register: 導入の案内に venv がある（PEP 668 の環境向け）" "python3 -m venv" "$msg"
+absent   "make_register: 仮想環境を今のディレクトリ（評価対象かもしれない）に作らせない" ".venv/bin" "$msg"
 contains "make_register: 導入の案内に uv がある" "uv run --with openpyxl" "$msg"
 contains "make_register: 導入の案内に apt がある" "apt install python3-openpyxl" "$msg"
 if [[ -z "$PY_BIN" ]]; then
@@ -917,6 +918,10 @@ kub = {ws.cell(r,1).value for r in range(6, ws.max_row+1) if ws.cell(r,1).value 
 if kub != AREAS: bad.append(f"個人情報シートの区分が 7 区分と一致しない（余分: {sorted(kub - AREAS)} / 不足: {sorted(AREAS - kub)}）")
 n = sum(1 for r in range(6, ws.max_row+1) if ws.cell(r,3).value)
 if n < 50: bad.append(f"個人情報シートの項目が {n}（50 以上のはず）")
+# スキルが見る領域（BaaS・リアルタイム通信・SMS・CI・エージェントの設定・画面操作の記録）の確認行があること
+items = " ".join(str(ws.cell(r,3).value or "") for r in range(6, ws.max_row+1))
+for w in ("BaaS", "リアルタイム通信", "SMS", "CI の定義", "AI エージェントの設定", "セッションリプレイ"):
+    if w not in items: bad.append(f"個人情報シートに「{w}」の確認行が無い")
 # 人的・物理的はコードから見えない。既定値を「範囲外（取材で聞く）」にして、未確認と混同させない
 for r in range(6, ws.max_row+1):
     if ws.cell(r,1).value in ("人的安全管理措置", "物理的安全管理措置") and ws.cell(r,4).value != "範囲外（取材で聞く）":
@@ -932,7 +937,7 @@ if n != 10: bad.append(f"API シートが {n} 行（10 のはず）")
 print("ALL OK" if not bad else " / ".join(bad))
 PYEOF
 )"
-  if printf '%s' "$V2" | grep '^ALL OK$' >/dev/null; then ok "make_register: 版と構成ごとの中身が正しい（2021/2025 の A10、個人情報は通則編の 7 区分で人的・物理的は範囲外、IPA 6 大項目、API 10 行）"
+  if printf '%s' "$V2" | grep '^ALL OK$' >/dev/null; then ok "make_register: 版と構成ごとの中身が正しい（2021/2025 の A10、個人情報は通則編の 7 区分で人的・物理的は範囲外、新しい領域の確認行、IPA 6 大項目、API 10 行）"
   else ng "make_register: 版と構成ごとの中身" "$V2"; fi
 
   # 集計数式が、その構成の指摘一覧シートを正しく指しているか
