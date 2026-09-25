@@ -1,0 +1,14 @@
+name: ci
+on:
+  pull_request_target:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: github/codeql-action/init@v3
+      - run: echo "title: ${{ github.event.pull_request.title }}"
+      - run: npm install
+      - run: echo ${{ secrets.NPM_TOKEN }}

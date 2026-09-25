@@ -339,6 +339,161 @@ if [[ -d "$ROOT/tests/fixtures/repo-realistic" ]]; then
   else ok "audit_grep[realistic]: ユーティリティをハンドラに数えない"; fi
 fi
 
+# 基盤・CI・依存・エージェント設定・リアルタイム・SMS の題材（1b / 4d / 9b / 10b / 19〜24 節）。
+# どの節にも「穴のある側」と「正しく作った側」を置き、検出と誤検出の両方を見る。
+# 名前を repo* にしないのは、枠組みごとの題材の数（README）に数えないため。
+if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
+  cp -R "$ROOT/tests/fixtures/supply-baas" "$TMP/supply-baas"
+  # AI エージェントの設定ファイルは、開いた人の環境で実際に効くのでリポジトリに置かない。ここで作る
+  A="$TMP/supply-baas"
+  mkdir -p "$A/.claude" "$A/.vscode"
+  printf '{ "permissions": { "defaultMode": "bypassPermissions" } }\n' > "$A/.claude/settings.json"
+  printf '{ "version": "2.0.0", "tasks": [ { "label": "setup", "command": "true", "runOptions": { "runOn": "folderOpen" } } ] }\n' > "$A/.vscode/tasks.json"
+  printf '{ "mcpServers": { "db": { "command": "npx", "args": ["-y", "EXAMPLE-NOT-A-PACKAGE"], "env": { "DATABASE_URL": "postgres://admin:FIXTURE-PASSWORD@db.example.invalid/app" } } } }\n' > "$A/.mcp.json"
+  printf '# 題材\n\nこの行の中には見えない文字\xe2\x80\x8bがある。\n' > "$A/AGENTS.md"
+  printf '# 題材\n\n見えない文字は無い。\n' > "$A/CLAUDE.md"
+  echo '{}' > "$A/.claude/settings.local.json"
+  # 個人用の設定がコミットされている形を作る。git ls-files は索引を読むので add だけで足りる。
+  # コミットしないのは、利用者の署名の設定で止まったり、GIT_DIR が外のリポジトリを指していて
+  # そちらに書き込んだりするのを避けるため
+  ( cd "$A" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init -q \
+    && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git add -A \
+    && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git add -f .claude/settings.local.json ) >/dev/null 2>&1 || true
+  SB="$(bash "$SKILL/scripts/audit_grep.sh" "$A" 2>&1)"
+  # 節の切り出し。見出しから次の見出しの直前まで。LC_ALL=C で読み、出力に不正なバイトが混ざっても
+  # 空にならないようにする（空になると absent の検査が何も見ずに通る）
+  sec() { printf '%s\n' "$SB" | LC_ALL=C awk -v s="=== $1" 'index($0, s) == 1 { f = 1; print; next } f && /^=== / { exit } f'; }
+  S0="$(sec '0.')"; S1B="$(sec '1b.')"; S4D="$(sec '4d.')"; S10B="$(sec '10b.')"
+  S19="$(sec '19.')"; S20="$(sec '20.')"; S21="$(sec '21.')"; S22="$(sec '22.')"
+  # 切り出しが空なら、それ自体を失敗にする（absent が素通りするのを防ぐ）
+  for v in S0 S1B S4D S10B S19 S20 S21 S22; do
+    if [[ -n "${!v}" ]]; then ok "audit_grep[基盤]: 節を切り出せる（${v}）"
+    else ng "audit_grep[基盤]: 節を切り出せる（${v}）" "空。見出しが変わったか、出力が壊れている"; fi
+  done
+
+  contains "audit_grep[基盤]: 構成の判定で BaaS を名指しする"        "Supabase Firebase Clerk Convex" "$S0"
+  contains "audit_grep[基盤]: カード決済なら 06 を読ませる"          "references/06-frameworks.md"    "$S0"
+  # 1b. 枠組みの版
+  contains "audit_grep[版]: ミドルウェア迂回の修正前を判定"          "CVE-2025-29927 の修正前"        "$S1B"
+  contains "audit_grep[版]: React2Shell の修正前を判定"              "CVE-2025-66478）の修正前"       "$S1B"
+  contains "audit_grep[版]: adapter-vercel のキャッシュ不具合"       "CVE-2026-27118 の修正前"        "$S1B"
+  absent   "audit_grep[版]: 15 系をサポート外と言わない"             "サポート外"                     "$S1B"
+  # 4d. LLM の鍵
+  contains "audit_grep[LLM鍵]: ブラウザから直接呼ぶ指定"             "dangerouslyAllowBrowser"        "$S4D"
+  contains "audit_grep[LLM鍵]: 公開用の接頭辞が付いた LLM の鍵"      "NEXT_PUBLIC_OPENAI_API_KEY"     "$S4D"
+  # 10b. サーバー側のセッション検証
+  contains "audit_grep[セッション]: サーバー側の getSession"         "lib/supabase-server.ts"         "$S10B"
+  absent   "audit_grep[セッション]: 'use client' の getSession は除く" "app/HeaderClient.tsx"        "$S10B"
+  contains "audit_grep[セッション]: allowedOrigins のワイルドカード" "*.example.com"                  "$S10B"
+  contains "audit_grep[セッション]: Host ヘッダから URL を組む"      "app/api/reset/route.ts"         "$S10B"
+  # 19. BaaS
+  contains "audit_grep[基盤]: RLS を有効にしていないテーブル"        "★ public.profiles"              "$S19"
+  if printf '%s' "$S19" | grep -qE '★ public\.orders$'; then ng "audit_grep[基盤]: RLS を有効にしたテーブルを咎めない" "orders が★で出ている"
+  else ok "audit_grep[基盤]: RLS を有効にしたテーブルを咎めない"; fi
+  absent   "audit_grep[基盤]: API に出ないスキーマは除く"            "audit_log"                      "$S19"
+  contains "audit_grep[基盤]: search_path を固定しない定義者権限"    "admin_list_profiles（search_path の固定なし）" "$S19"
+  absent   "audit_grep[基盤]: search_path を固定した関数は咎めない"  "my_orders（search_path"         "$S19"
+  contains "audit_grep[基盤]: security_invoker の無いビュー"         "order_summary"                  "$S19"
+  absent   "audit_grep[基盤]: security_invoker 付きのビューは咎めない" "my_order_view"                "$S19"
+  contains "audit_grep[基盤]: マテリアライズドビュー"                "order_stats"                    "$S19"
+  contains "audit_grep[基盤]: user_metadata による認可"              "user_metadata を認可に使っている" "$S19"
+  contains "audit_grep[基盤]: 公開バケット"                          "公開バケットの疑い"             "$S19"
+  contains "audit_grep[基盤]: JWT の検証を外した Edge Function"      "stripe-hook"                    "$S19"
+  if printf '%s' "$S19" | grep -qE 'config\.toml: api$'; then ng "audit_grep[基盤]: verify_jwt = true の関数を咎めない" "api が出ている"
+  else ok "audit_grep[基盤]: verify_jwt = true の関数を咎めない"; fi
+  contains "audit_grep[基盤]: Firebase の誰でも読めるルール"         "★ 誰でも: ./firestore.rules:5" "$S19"
+  contains "audit_grep[基盤]: ログイン済みなら誰でも"               "ログイン済みなら誰でも: ./firestore.rules:8" "$S19"
+  absent   "audit_grep[基盤]: 所有者を照合するルールは咎めない"      "firestore.rules:11"            "$S19"
+  contains "audit_grep[基盤]: 何も保護しない clerkMiddleware"        "既定では何も保護しない"         "$S19"
+  if printf '%s' "$S19" | grep -qE 'convex/messages\.ts: list +★ 認証の確認なし'; then ok "audit_grep[基盤]: 認証を確かめない Convex の関数"
+  else ng "audit_grep[基盤]: 認証を確かめない Convex の関数" "messages.ts の list が★で出ない"; fi
+  if printf '%s' "$S19" | grep -qE 'convex/tasks\.ts: mine +認証の確認あり'; then ok "audit_grep[基盤]: 認証を確かめる Convex の関数は咎めない"
+  else ng "audit_grep[基盤]: 認証を確かめる Convex の関数は咎めない" "tasks.ts の mine が確認ありと出ない"; fi
+  # 同じファイルの中でも関数ごとに見る。前の関数の確認を次の関数へ持ち越さない
+  if printf '%s' "$S19" | grep -qE 'convex/tasks\.ts: all +★ 認証の確認なし'; then ok "audit_grep[基盤]: Convex の確認を次の関数へ持ち越さない"
+  else ng "audit_grep[基盤]: Convex の確認を次の関数へ持ち越さない" "tasks.ts の all が★で出ない"; fi
+  # 20. CI
+  contains "audit_grep[CI]: 固定していない Action"                   "actions/checkout@v4"            "$S20"
+  contains "audit_grep[CI]: サブパス付きの Action も拾う"            "codeql-action/init@v3"          "$S20"
+  absent   "audit_grep[CI]: ハッシュで固定した Action は出さない"    "0123456789abcdef0123456789abcdef01234567" "$S20"
+  absent   "audit_grep[CI]: ローカルの Action は出さない"            "./.github/actions/local"        "$S20"
+  contains "audit_grep[CI]: 危険なトリガー"                          "pull_request_target"            "$S20"
+  contains "audit_grep[CI]: PR の中身の取得"                          "pull_request.head.sha"          "$S20"
+  contains "audit_grep[CI]: run: への外部値の埋め込み"               "github.event.pull_request.title" "$S20"
+  contains "audit_grep[CI]: permissions の無いワークフロー"          "ci.yml: トップレベルの permissions が無い" "$S20"
+  absent   "audit_grep[CI]: permissions のあるワークフローは咎めない" "ok.yml: トップレベル"          "$S20"
+  contains "audit_grep[CI]: 秘密情報の出力"                          'echo ${{ secrets.NPM_TOKEN }}'  "$S20"
+  contains "audit_grep[CI]: npm install を使うビルド"                "ci.yml:13"                      "$S20"
+  absent   "audit_grep[CI]: npm ci は咎めない"                        "npm ci"                         "$S20"
+  # 21. インストール時の防御
+  contains "audit_grep[依存]: インストール時のスクリプト"            "@scope/native-thing"            "$S21"
+  contains "audit_grep[依存]: 公式レジストリ以外の取得元"            "公式レジストリ以外から取っている依存" "$S21"
+  contains "audit_grep[依存]: クールダウンの設定を読む"              "min-release-age=3"              "$S21"
+  # 22. エージェントの設定
+  contains "audit_grep[エージェント]: 権限の緩和"                    "bypassPermissions"              "$S22"
+  contains "audit_grep[エージェント]: フォルダを開くだけで走るタスク" "folderOpen"                    "$S22"
+  contains "audit_grep[エージェント]: 版を固定しない MCP サーバー"   "EXAMPLE-NOT-A-PACKAGE"          "$S22"
+  absent   "audit_grep[エージェント]: 設定の中の接続文字列の認証情報を伏せる" "FIXTURE-PASSWORD"         "$S22"
+  contains "audit_grep[エージェント]: 個人用設定のコミット"          "個人用の設定がコミットされている" "$S22"
+  if command -v perl >/dev/null 2>&1; then
+    contains "audit_grep[エージェント]: 見えない Unicode"            "★ AGENTS.md:3"                  "$S22"
+    absent   "audit_grep[エージェント]: 普通の指示書は咎めない"      "★ CLAUDE.md"                    "$S22"
+  fi
+  # 23. リアルタイム通信
+  S23="$(sec '23.')"
+  contains "audit_grep[リアルタイム]: private の無い Supabase のチャネル"   "★ ./app/chat.ts:3:"             "$S23"
+  absent   "audit_grep[リアルタイム]: private: true のチャネルは咎めない"   "chat.ts:8:"                     "$S23"
+  contains "audit_grep[リアルタイム]: publication と replica identity"      "replica identity full"          "$S23"
+  contains "audit_grep[リアルタイム]: Origin を検証しない WebSocket"        "Origin を検証している形跡が無い" "$S23"
+  contains "audit_grep[リアルタイム]: クライアントの指定したルームに参加"   "socket.join(data.room)"         "$S23"
+  contains "audit_grep[リアルタイム]: SSE の配信ハンドラ"                   "app/api/stream/route.ts"        "$S23"
+  contains "audit_grep[リアルタイム]: トークンを URL に載せた SSE"         "トークンを URL に載せている"    "$S23"
+  # 9b. セッションリプレイ / 24. SMS
+  S9B="$(sec '9b.')"; S24="$(sec '24.')"
+  contains "audit_grep[リプレイ]: 使っているツール"                  "replayIntegration"              "$S9B"
+  contains "audit_grep[リプレイ]: マスクを緩める設定"                "maskAllText: false"             "$S9B"
+  contains "audit_grep[リプレイ]: 通信の本文の記録"                  "networkDetailAllowUrls"         "$S9B"
+  contains "audit_grep[リプレイ]: 利用者の特定"                      "Sentry.setUser"                 "$S9B"
+  contains "audit_grep[SMS]: SMS を送らせる箇所"                     "lib/sms.ts"                     "$S24"
+  contains "audit_grep[SMS]: Supabase の SMS の設定"                 "[auth.sms]"                     "$S24"
+  contains "audit_grep[SMS]: API の直接呼び出し"                     "SMS の API を直接呼んでいる"    "$S24"
+  # 確認用サービス（verifications.create）だけなら、直接呼び出しとは言わない（誤検出）
+  mkdir -p "$TMP/sms-ok"
+  printf 'export const send = (to) => client.verify.v2.services(SID).verifications.create({ to, channel: "sms" });\n' > "$TMP/sms-ok/otp.ts"
+  SO="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/sms-ok" 2>&1)"
+  contains "audit_grep[SMS]: 確認用サービスの呼び出しを拾う"         "verifications.create"           "$SO"
+  absent   "audit_grep[SMS]: 確認用サービスだけなら直接呼び出しと言わない" "SMS の API を直接呼んでいる" "$SO"
+  # Origin を検証していれば咎めない（誤検出）
+  mkdir -p "$TMP/ws-ok"
+  cp "$ROOT/tests/fixtures/supply-baas/server/ws.js" "$TMP/ws-ok/ws.js"
+  cat > "$TMP/ws-ok/upgrade.js" <<'JS'
+server.on('upgrade', (req, socket, head) => {
+  if (!ALLOWED.includes(req.headers.origin)) return socket.destroy();
+  wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+});
+JS
+  WO="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/ws-ok" 2>&1)"
+  contains "audit_grep[リアルタイム]: Origin の検証を読み取る"               "headers.origin"                 "$WO"
+  absent   "audit_grep[リアルタイム]: Origin を検証していれば咎めない"       "Origin を検証している形跡が無い" "$WO"
+  # 途中で止まらず最後まで出ること（bash 3.2 の set -u で止まった不具合があった）
+  contains "audit_grep[基盤]: 最後の節まで出力する"                 "=== 完了 ==="                   "$SB"
+  # ロックファイルが無く package.json だけの構成でも止まらないこと（1b 節の旧不具合）
+  mkdir -p "$TMP/nolock" && printf '{"dependencies":{"next":"^15.1.0"}}\n' > "$TMP/nolock/package.json"
+  NL="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/nolock" 2>&1)"
+  contains "audit_grep[版]: ロックファイルが無くても止まらない"      "package.json の宣言。解決結果ではない" "$NL"
+  contains "audit_grep[版]: ロックファイルが無くても最後まで出す"    "=== 完了 ==="                   "$NL"
+  absent   "audit_grep[版]: 宣言の範囲では版を判定しない"           "修正前"                            "$(printf '%s' "$NL" | sed -n '/=== 1b/,/=== 2\./p')"
+  # 依存名は、実際のロックファイルのように間に integrity / dev が入っても取れること
+  absent   "audit_grep[依存]: 取得元の URL の認証情報を伏せる"       "user:secret"                    "$S21"
+  # 題材に無い構成では、これらの節を出さない（見たことにしない）
+  RN="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/repo-realistic" 2>&1)"
+  absent   "audit_grep[基盤]: BaaS が無ければ 19 節を出さない"       "=== 19."                        "$RN"
+  absent   "audit_grep[CI]: CI が無ければ 20 節を出さない"           "=== 20."                        "$RN"
+  absent   "audit_grep[リアルタイム]: 無ければ 23 節を出さない"      "=== 23."                        "$RN"
+  absent   "audit_grep[リプレイ]: 無ければ 9b 節を出さない"          "=== 9b."                        "$RN"
+  absent   "audit_grep[SMS]: 無ければ 24 節を出さない"               "=== 24."                        "$RN"
+fi
+
 # 構成の判定。対象に無い技術の資料を読ませないための仕組みで、
 # 「有」と「無」の両方が正しく出ることを見る。
 for fw in iac mobile; do

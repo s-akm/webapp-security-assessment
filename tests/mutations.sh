@@ -137,6 +137,27 @@ mutate "audit_grep: Math.random の検出を壊す" "scripts/audit_grep.sh" "予
 mutate "audit_grep: 構成判定で IaC を要らないと言う" "scripts/audit_grep.sh" "audit_grep\\[iac\\]: 読む資料を名指しする" \
   's = s.replace("need=\"$need references/13-infrastructure.md\"", "need=\"$need\"")'
 
+mutate "audit_grep: RLS 判定でスキーマの補完をやめる" "scripts/audit_grep.sh" "audit_grep\\[基盤\\]: RLS を有効にしていないテーブル" \
+  's = s.replace("sed -E \x27s/^([a-z0-9_]+)$/public.\\1/\x27", "cat")'
+mutate "audit_grep: search_path の判定を外す（誤検出）" "scripts/audit_grep.sh" "search_path を固定した関数は咎めない" \
+  's = s.replace("tolower($0) ~ /search_path/ { sp=1 }", "tolower($0) ~ /ZZZNOMATCH/ { sp=1 }")'
+mutate "audit_grep: use client の除外を外す（誤検出）" "scripts/audit_grep.sh" "use client' の getSession は除く" \
+  's = s.replace("grep -qE \"^[[:space:]]*[\x27\\\"]use client[\x27\\\"]\" \"$f\" && continue", ":")'
+mutate "audit_grep: ハッシュ固定の除外を外す（誤検出）" "scripts/audit_grep.sh" "ハッシュで固定した Action は出さない" \
+  's = s.replace("grep -vE \x27@[0-9a-f]{40}", "grep -vE \x27@ZZZNOMATCH")'
+mutate "audit_grep: private 指定の読み取りを壊す（誤検出）" "scripts/audit_grep.sh" "private: true のチャネルは咎めない" \
+  's = s.replace("start && /private:[[:space:]]*true/ { priv=1 }", "start && /ZZZNOMATCH/ { priv=1 }")'
+mutate "audit_grep: Origin の検証を読み取らない（誤検出）" "scripts/audit_grep.sh" "Origin を検証していれば咎めない" \
+  's = s.replace("grep -qiE \x27origin|allowRequest|verifyClient\x27", "grep -qiE \x27ZZZNOMATCH\x27")'
+mutate "audit_grep: SMS の直接呼び出しの判定を外す" "scripts/audit_grep.sh" "API の直接呼び出し" \
+  's = s.replace("if grep -rqE \"${EXA[@]}\" \x27messages\\.create\\(\x27", "if grep -rqE \"${EXA[@]}\" \x27ZZZNOMATCH\x27")'
+mutate "audit_grep: 伏字から URL の認証情報を外す" "scripts/audit_grep.sh" "設定の中の接続文字列の認証情報を伏せる" \
+  's = "\n".join(l for l in s.split("\n") if "#://<伏字>@#g" not in l)'
+mutate "audit_grep: Convex の確認を次の関数へ持ち越す" "scripts/audit_grep.sh" "Convex の確認を次の関数へ持ち越さない" \
+  's = s.replace("(ok ? \"認証の確認あり\" : \"★ 認証の確認なし\"); name=\"\"; ok=0 }", "(ok ? \"認証の確認あり\" : \"★ 認証の確認なし\"); name=\"\" }")'
+mutate "audit_grep: React2Shell の修正版を取り違える" "scripts/audit_grep.sh" "React2Shell の修正前を判定" \
+  's = s.replace("15.1) fix=15.1.9", "15.1) fix=15.1.0")'
+
 # ---- recon ----
 mutate "recon: ポート付き URL の自サイト判定を戻す（旧不具合）" "scripts/recon.sh" "自サイトを第三者に数えない" \
   's = s.replace("${DOMAIN//./\\\\.}(:[0-9]+)?$\"", "${DOMAIN//./\\\\.}$\"")'

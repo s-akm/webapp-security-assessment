@@ -1,0 +1,8 @@
+[functions.stripe-hook]
+verify_jwt = false
+
+[functions.api]
+verify_jwt = true
+
+[auth.sms]
+enable_signup = true

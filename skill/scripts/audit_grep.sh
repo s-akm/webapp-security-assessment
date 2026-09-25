@@ -12,6 +12,10 @@
 #   6. 開発用の抜け道
 #   7. git 履歴中の鍵らしき文字列
 #   8. コードが参照するテーブル名（スキーマ定義との突合用）
+#   ほかに、枠組みの版（1b）、LLM の鍵の露出（4d）、サーバー側のセッション検証（10b）、
+#   構成に応じて BaaS の設定（19）、CI の定義（20）、インストール時の防御（21）、
+#   AI エージェントの設定ファイル（22）、リアルタイム通信（23）、SMS の送信経路（24）。
+#   画面操作の記録（9b）は、ツールがあるときだけ出す
 #
 # grep は当たりを付けるための道具であって、判定するものではない。
 # ここで挙がった箇所は必ず目で読んでから起票する。逆に、ここに挙がらなくても
@@ -34,7 +38,7 @@ show() { local out; out="$(cat)"; if [[ -n "$out" ]]; then printf '%s\n' "$out";
 # 検出した秘密情報の値そのものは出力しない。
 # 「どのファイルの何行目に、どの名前で存在するか」までが分かれば起票できる。
 # 値が要るときは、この出力ではなく元ファイルを直接開く。
-mask() {
+mask_keys() {
   sed -E \
     -e 's/(eyJ[A-Za-z0-9_-]{6})[A-Za-z0-9_.-]+/\1…<JWT・伏字>/g' \
     -e 's/(AKIA[0-9A-Z]{4})[0-9A-Z]+/\1…<伏字>/g' \
@@ -42,9 +46,16 @@ mask() {
     -e 's/(ghp_[0-9A-Za-z]{4})[0-9A-Za-z]+/\1…<伏字>/g' \
     -e 's/(sb_(secret|publishable)_[0-9A-Za-z]{4})[0-9A-Za-z_-]+/\1…<伏字>/g' \
     -e 's/(AIza[0-9A-Za-z_-]{4})[0-9A-Za-z_-]+/\1…<伏字>/g' \
-    -e "s/([\"'\`])[A-Za-z0-9_\/+=.-]{12,}([\"'\`]?)/\1<値は伏字>\2/g" \
+    -e 's/((sk|rk)-(proj-|ant-(api|admin)[0-9]*-)?[A-Za-z0-9]{4})[A-Za-z0-9_-]{8,}/\1…<伏字>/g' \
+    -e 's/(gh[pousr]_[0-9A-Za-z]{4})[0-9A-Za-z]{8,}/\1…<伏字>/g' \
+    -e 's#://[^/@[:space:]"'"'"']+@#://<伏字>@#g' \
     -e 's/([A-Za-z_]*(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL)[A-Za-z_]*)[[:space:]]*=[[:space:]]*[^[:space:]"'"'"'`]{8,}/\1=<値は伏字>/g' \
     | cut -c1-200
+}
+# 設定ファイルの行のように、値ではない文字列（設定名・パッケージ名）が引用符に入る出力には mask_keys を使う。
+# mask は引用符の中の長い値をすべて伏せるので、設定名まで消えて読めなくなる（実際に消えた）
+mask() { mask_keys | sed -E \
+    -e "s/([\"'\`])[A-Za-z0-9_\/+=.:-]{12,}([\"'\`]?)/\1<値は伏字>\2/g"
 }
 
 hr "対象"
@@ -193,7 +204,7 @@ else
   say "LLM の利用" "無"
 fi
 
-if [[ -n "$(grep -rlE 'googletagmanager|google-analytics|gtag\(|adsbygoogle|connect\.facebook|clarity\.ms|hotjar' \
+if [[ -n "$(grep -rlE 'googletagmanager|google-analytics|gtag\(|adsbygoogle|connect\.facebook|clarity\.ms|hotjar|replayIntegration|logrocket|LogRocket|@fullstory|posthog|browser-rum|mouseflow' \
      --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.html' . 2>/dev/null | head -1)" ]]; then
   say "計測・広告タグ" "有"
   need="$need references/08-privacy-compliance.md"
@@ -207,6 +218,66 @@ else
   say "XML の解析" "無"
 fi
 
+# --- マネージドの基盤（BaaS）---
+baas=""
+{ [[ -d supabase ]] || grep -qE '"@supabase/' package.json 2>/dev/null; } && baas="$baas Supabase"
+{ [[ -e firebase.json ]] || [[ -n "$(find . -maxdepth 3 \( -name 'firestore.rules' -o -name 'storage.rules' -o -name 'database.rules.json' \) -not -path '*/node_modules/*' 2>/dev/null | head -1)" ]] \
+  || grep -qE '"firebase(-admin)?"' package.json 2>/dev/null; } && baas="$baas Firebase"
+grep -qE '"@clerk/' package.json 2>/dev/null && baas="$baas Clerk"
+{ [[ -d convex ]] || grep -qE '"convex"' package.json 2>/dev/null; } && baas="$baas Convex"
+if [[ -n "$baas" ]]; then say "マネージドの基盤" "有 →${baas}（19 節）"; else say "マネージドの基盤" "無"; fi
+
+# --- CI とエージェントの設定（どちらもリポジトリにある「他人のコードが動く経路」）---
+if [[ -d .github/workflows ]]; then
+  say "CI の定義" "有 → .github/workflows（20 節）"
+  need="$need references/10-dependencies.md"
+else
+  say "CI の定義" "無"
+fi
+
+if [[ -n "$(grep -rlE '"(stripe|@stripe/stripe-js|@stripe/react-stripe-js|payjp|@payjp/[a-z-]+|square|@square/web-sdk|komoju)"' \
+     --include='package.json' . 2>/dev/null | grep -v node_modules | head -1)" ]]; then
+  say "カード決済" "有 → 06 の「カード決済を扱う場合」"
+  need="$need references/06-frameworks.md"
+else
+  say "カード決済" "無"
+fi
+
+agent_files=""
+for f in AGENTS.md CLAUDE.md GEMINI.md .cursorrules .windsurfrules .clinerules .cursor/mcp.json .mcp.json .vscode/mcp.json \
+         .claude/settings.json .claude/settings.local.json .github/copilot-instructions.md .vscode/settings.json \
+         .vscode/tasks.json .gemini/settings.json; do
+  [[ -e "$f" ]] && agent_files="$agent_files $f"
+done
+for d in .cursor/rules .claude/commands .claude/agents .claude/skills .github/instructions; do
+  [[ -d "$d" ]] && agent_files="$agent_files $d/"
+done
+if [[ -n "$agent_files" ]]; then
+  say "AI エージェントの設定" "有 →${agent_files}（22 節）"
+  need="$need references/10-dependencies.md"
+else
+  say "AI エージェントの設定" "無"
+fi
+
+# リアルタイム通信。HTTP のガードとは別の入口になる
+rt=""
+# .channel( は Laravel Echo や Phoenix にもある。Supabase を使っている構成に限る
+{ [[ -d supabase ]] || grep -qE '"@supabase/' package.json 2>/dev/null; } \
+  && grep -rqlE "${EXA[@]}" '\.channel\(|postgres_changes' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null && rt="$rt Supabase-Realtime"
+grep -rqlE "${EXA[@]}" 'new (WebSocketServer|WebSocket\.Server)\(|from ["'"'"']ws["'"'"']|require\(["'"'"']ws["'"'"']\)|upgradeWebSocket|experimental_upgradeWebSocket|defineWebSocketHandler|@app\.websocket' \
+  --include='*.ts' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null && rt="$rt WebSocket"
+grep -rqlE "${EXA[@]}" 'socket\.io|new Server\([^)]*\{[^}]*cors' --include='*.ts' --include='*.js' --include='package.json' . 2>/dev/null && rt="$rt Socket.IO"
+grep -rqlE "${EXA[@]}" '"(pusher|pusher-js|ably|@liveblocks/[a-z-]+|partykit|partyserver|graphql-ws)"' --include='package.json' . 2>/dev/null && rt="$rt 配信サービス"
+grep -rqlE "${EXA[@]}" 'text/event-stream|new EventSource\(' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null && rt="$rt SSE"
+grep -rqlE "${EXA[@]}" 'onSnapshot\(|onValue\(|onChildAdded\(' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null && rt="$rt Firebase-購読"
+
+if [[ -n "$rt" ]]; then
+  say "リアルタイム通信" "有 →${rt}（23 節）"
+  need="$need references/07-web-vulnerabilities.md"
+else
+  say "リアルタイム通信" "無"
+fi
+
 lock=""
 for f in package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Gemfile.lock go.sum composer.lock Cargo.lock; do
   [[ -e "$f" ]] && lock="$lock $f"
@@ -216,7 +287,7 @@ say "ロックファイル" "${lock:-★ 無い。監査した版と本番の版
 echo
 if [[ -n "$need" ]]; then
   echo "  この案件で追加で読む資料:"
-  for f in $need; do echo "    $f"; done
+  for f in $(printf '%s\n' $need | awk '!seen[$0]++'); do echo "    $f"; done
 else
   echo "  追加で読む資料は無い（01〜05 と、該当する 07 の節だけで足りる）"
 fi
@@ -236,6 +307,78 @@ if [[ "$n_files" != "0" ]]; then
   echo "  ハンドラらしき定義の総数: $n_def 件"
 fi
 git rev-parse --git-dir >/dev/null 2>&1 && echo "  コミット数: $(git log --all --oneline 2>/dev/null | wc -l | tr -d ' ')"
+
+# --------------------------------------------------------------------------
+hr "1b. 枠組みの版（ロックファイルの解決結果。公式アドバイザリで照合する）"
+# 枠組み本体の脆弱性は「呼んでいるか」ではなく「版が該当するか」で決まる（10 の 1 節）。
+# ここでは、公式の勧告で修正版まで一次情報で確かめたものだけを機械的に判定する。
+# それ以外は版を並べるだけにする。表は評価の時点で古くなっている前提で、公式の一覧を必ず見る。
+pkgver() {
+  local name="$1" v=""
+  if [[ -f package-lock.json ]]; then
+    v="$(awk -v k="\"node_modules/$name\": {" 'index($0,k){f=1;next} f&&/"version"/{gsub(/[",]/,"",$2);print $2;exit}' package-lock.json 2>/dev/null)"
+  fi
+  if [[ -z "$v" && -f pnpm-lock.yaml ]]; then
+    v="$(grep -oE "^  '?/?$name@[0-9][0-9A-Za-z.+-]*" pnpm-lock.yaml 2>/dev/null | head -1 | sed -E "s/.*@//")"
+  fi
+  if [[ -z "$v" && -f package.json ]]; then
+    v="$(grep -oE "\"$name\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" package.json 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"([^"]+)"/\1/')"
+    [[ -n "$v" ]] && v="${v}（package.json の宣言。解決結果ではない）"
+  fi
+  printf '%s' "$v"
+}
+# a < b（版の比較）。sort -V に任せる
+verlt() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" == "$1" ]]; }
+# 範囲 [lo, hi) に入るか
+inrange() { ! verlt "$1" "$2" && verlt "$1" "$3"; }
+
+fw_found=""
+for name in next react-server-dom-webpack react-server-dom-turbopack react-server-dom-parcel \
+            nuxt astro @sveltejs/kit @sveltejs/adapter-vercel react-router @remix-run/node; do
+  v="$(pkgver "$name")"
+  [[ -z "$v" ]] && continue
+  fw_found=1
+  note=""
+  pure="$(printf '%s' "$v" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+  # canary などのプレリリースは、修正の範囲が安定版と別に決まっている。機械的には判定しない
+  if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+- && "$v" != *宣言* ]]; then
+    note=" （プレリリース版。勧告の canary の範囲を公式で確かめる）"; pure=""
+  fi
+  if [[ -n "$pure" && "$v" != *宣言* ]]; then
+    case "$name" in
+      next)
+        major="${pure%%.*}"
+        [[ "$major" -lt 15 ]] && note="$note ★ サポート外（14 以前には 2026 年の修正が出ていない）"
+        if ! verlt "$pure" 11.1.4 && { verlt "$pure" 12.3.5 || inrange "$pure" 13.0.0 13.5.9 \
+             || inrange "$pure" 14.0.0 14.2.25 || inrange "$pure" 15.0.0 15.2.3; }; then
+          note="$note ★ ミドルウェア迂回 CVE-2025-29927 の修正前（02 の A-5）"
+        fi
+        mm="$(printf '%s' "$pure" | cut -d. -f1-2)"
+        fix=""
+        case "$mm" in
+          15.0) fix=15.0.5 ;; 15.1) fix=15.1.9 ;; 15.2) fix=15.2.6 ;; 15.3) fix=15.3.6 ;;
+          15.4) fix=15.4.8 ;; 15.5) fix=15.5.7 ;; 16.0) fix=16.0.7 ;;
+        esac
+        # App Router の有無。モノレポ（apps/web/app など）も見る
+        approuter="$(find . -maxdepth 4 -type d \( -path '*/app' -o -path '*/src/app' \) -not -path '*/node_modules/*' -not -path '*/.next/*' 2>/dev/null | head -1)"
+        if [[ -n "$fix" ]] && verlt "$pure" "$fix" && [[ -n "$approuter" ]]; then
+          note="$note ★ React2Shell（CVE-2025-66478）の修正前。版上げと秘密情報の入れ替えの二段（02 の H）"
+        fi ;;
+      react-server-dom-*)
+        case "$pure" in
+          19.0.0|19.1.0|19.1.1|19.2.0) note=" ★ React2Shell（CVE-2025-55182）の対象。版上げと秘密情報の入れ替え" ;;
+          *) if inrange "$pure" 19.0.0 19.0.4 || inrange "$pure" 19.1.0 19.1.5 || inrange "$pure" 19.2.0 19.2.4; then
+               note=" ★ 後続の DoS・ソース露出（CVE-2025-55183 / 55184 / 67779、CVE-2026-23864）の修正前"; fi ;;
+        esac ;;
+      @sveltejs/adapter-vercel)
+        verlt "$pure" 6.3.2 && note=" ★ 認証済みの応答がキャッシュされる CVE-2026-27118 の修正前（07 の 7 節）" ;;
+    esac
+  fi
+  printf '  %-28s %s%s\n' "$name" "$v" "$note"
+done
+[[ -z "$fw_found" ]] && echo "  （判定対象の枠組みは無い）"
+echo "  ※ ★ が無くても安全とは限らない。2026 年だけで同種の勧告が多数出ている。"
+echo "    github.com の各リポジトリの security/advisories で、この版に当たるものを見る"
 
 # --------------------------------------------------------------------------
 hr "2. ハンドラ × 認可ガード（空欄は「本当に公開してよいか」を 1 本ずつ確認する）"
@@ -405,6 +548,16 @@ hr "4c. .env の混入と gitignore"
 } | show
 
 # --------------------------------------------------------------------------
+hr "4d. LLM の鍵がブラウザに出ていないか（従量課金がそのまま攻撃の費用になる）"
+{
+  grep -rnE "${EXA[@]}" 'dangerouslyAllowBrowser[[:space:]]*:[[:space:]]*true|anthropic-dangerous-direct-browser-access' . 2>/dev/null | head -10 | mask_keys
+  grep -rnoE "${EXA[@]}" '(NEXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|NUXT_PUBLIC|PUBLIC)_[A-Z0-9_]*(OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_AI|GOOGLE_GENERATIVE_AI|GROQ|MISTRAL|COHERE|DEEPSEEK|XAI|PERPLEXITY|OPENROUTER|HF_TOKEN|HUGGINGFACE|REPLICATE|TOGETHER|FIREWORKS)[A-Z0-9_]*' \
+    . 2>/dev/null | sort -u | head -10
+} | show
+echo "  ※ 出ていれば最優先。サーバー側の中継に移す（02 の C-1）"
+echo "  ※ Google の AIza… 鍵は、同じプロジェクトで Gemini を有効にすると呼べる API が増える。鍵の API 制限を 03 の 6 節で見る"
+
+# --------------------------------------------------------------------------
 hr "5. fail-open な既定値（未設定のとき有効側に倒れるもの）"
 {
   grep -rnE "${EXA[@]}" 'process\.env\.[A-Z0-9_]+\s*!==\s*["'"'"']false["'"'"']' . 2>/dev/null | head -20
@@ -454,7 +607,7 @@ hr "9. 第三者タグと同意管理（法令遵守の検討材料）"
 # URL を直に書く形だけでなく、フレームワークのラッパーコンポーネント経由の読み込みも見る。
 # <GoogleTagManager gtmId={...} /> のような書き方は、URL が現れないため
 # ドメイン名の grep だけでは取り逃す。実際にこれで見落としが起きる。
-TAGPAT='googletagmanager|google-analytics|gtag\(|adsbygoogle|pagead2|googlesyndication|doubleclick|connect\.facebook|fbq\(|clarity\.ms|hotjar|analytics\.tiktok|snap\.licdn|intercom|sentry|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts'
+TAGPAT='googletagmanager|google-analytics|gtag\(|adsbygoogle|pagead2|googlesyndication|doubleclick|connect\.facebook|fbq\(|clarity\.ms|hotjar|analytics\.tiktok|snap\.licdn|intercom|sentry|logrocket|LogRocket|fullstory|FullStory|posthog|datadogRum|browser-rum|mouseflow|_mfq|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts'
 
 echo "  --- 計測・広告タグの読み込み箇所 ---"
 {
@@ -500,6 +653,34 @@ echo "  --- 公開している文書（実装との突き合わせ対象）---"
 } | show
 
 # --------------------------------------------------------------------------
+REPLAYPAT='replayIntegration|new Replay\(|replaysSessionSampleRate|replaysOnErrorSampleRate|clarity\.ms|@microsoft/clarity|static\.hotjar\.com|@hotjar/browser|hotjar|logrocket|LogRocket\.init|@fullstory/browser|FullStory\.init|FS\.init|posthog-js|posthog\.init|@datadog/browser-rum|datadogRum\.init|sessionReplaySampleRate|mouseflow|_mfq'
+if grep -rqE "${EXA[@]}" "$REPLAYPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.mjs' \
+     --include='*.vue' --include='*.svelte' --include='*.html' --include='package.json' . 2>/dev/null; then
+  hr "9b. 画面操作を記録するツール（セッションリプレイ。08 の 1-2）"
+  echo "  --- 使っているツールと初期化の場所 ---"
+  {
+    grep -rnE "${EXA[@]}" "$REPLAYPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.mjs' \
+      --include='*.vue' --include='*.svelte' --include='*.html' --include='package.json' . 2>/dev/null | head -12 | mask
+  } | show
+  echo "  --- マスクを緩める・通信の本文を記録する設定（1 件ずつ読む）---"
+  {
+    grep -rnE "${EXA[@]}" 'maskAllText:[[:space:]]*false|maskAllInputs:[[:space:]]*false|blockAllMedia:[[:space:]]*false|unmask:|unblock:|networkDetailAllowUrls|networkCaptureBodies|networkRequestHeaders|networkResponseHeaders|sentry-unmask|data-clarity-unmask|data-hj-(allow|whitelist)|fs-unmask|inputSanitizer:[[:space:]]*false|textSanitizer:[[:space:]]*false|recordHeaders|recordBody|enable_recording_console_log|defaultPrivacyLevel|dd-privacy-allow' \
+      . 2>/dev/null | head -12
+  } | show
+  echo "  --- 利用者の特定（送信先で個人データと結び付く）---"
+  {
+    grep -rnE "${EXA[@]}" "Sentry\.setUser|LogRocket\.identify|FS\.identify|FullStory\.identify|posthog\.identify|clarity\(['\"](identify|set)|hj\(['\"]identify|datadogRum\.setUser" \
+      . 2>/dev/null | head -10
+  } | show
+  echo "  --- 自社ドメインを経由させる設定（送信先のドメインで数えると見えなくなる）---"
+  {
+    grep -rnE "${EXA[@]}" 'tunnel:|tunnelRoute|api_host|/ingest' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' . 2>/dev/null | head -5
+  } | show
+  echo "  ※ 何が記録されたかは、ツールの管理画面で録画を再生しないと分からない。依頼者に確かめてもらう（08 の 1-2）"
+  echo "  ※ 既定の記録範囲はツールで大きく違う（Sentry は全部マスク、LogRocket はマスクしない、Clarity は数字とメールだけ）"
+fi
+
+# --------------------------------------------------------------------------
 hr "10. 認証トークンの検証（署名を見ずに中身だけ取り出していないか）"
 echo "  --- 検証せずに復号しているもの（ここが穴になる）---"
 {
@@ -510,6 +691,29 @@ echo "  --- 検証しているもの ---"
   grep -rnE "${EXA[@]}" 'jwt\.verify\(|jwtVerify\(|verifyIdToken\(|createRemoteJWKSet|decode\([^)]*verify' . 2>/dev/null | head -15
 } | show
 echo "  ※ decode だけなら署名を見ていない。role を書き換えたトークンが通る。02 の B-4 を参照"
+
+hr "10b. サーバー側でセッションを検証せずに信じていないか"
+echo "  --- Supabase: サーバー側の getSession()（Cookie の中身を検証せずに返す。公式が非推奨）---"
+{
+  grep -rlE "${EXA[@]}" 'auth\.getSession\(' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' . 2>/dev/null \
+    | while IFS= read -r f; do
+        grep -qE "^[[:space:]]*['\"]use client['\"]" "$f" && continue
+        grep -nE 'auth\.getSession\(' "$f" | sed "s|^|  $f:|"
+      done
+} | show
+echo "  ※ proxy / middleware / Route Handler / Server Action で認可に使っていれば指摘。getClaims() か getUser() で検証する（02 の B-2）"
+
+echo "  --- Server Actions の送信元の許可（'null' やワイルドカードがあれば CSRF の防御が緩む）---"
+{
+  grep -HnE -A4 'allowedOrigins' next.config.* 2>/dev/null | grep -E "\*|'null'|\"null\"" | head -10
+} | show
+
+echo "  --- Host ヘッダから URL を組み立てていないか（再設定リンクの乗っ取り・SSRF）---"
+{
+  grep -rnE "${EXA[@]}" "\.get\(['\"](host|x-forwarded-host)['\"]\)|headers\.host|headers\[['\"](host|x-forwarded-host)['\"]\]|request\.host\b|getHeader\(['\"]host" \
+    . 2>/dev/null | head -10
+} | show
+echo "  ※ メールに載せる URL を組み立てていれば指摘。固定の設定値から組み立てる（02 の B-3）"
 
 hr "11. Webhook の受け口と署名検証"
 echo "  --- 受け口 ---"
@@ -688,6 +892,327 @@ if [[ -n "$mob" ]]; then
   } | show
   echo "  ※ 機能に対して過剰な権限が無いか。debuggable が本番に残っていないか"
   echo "  ※ 難読化・改竄検知の不在は、単独で挙げない。時間稼ぎであって防御ではない"
+fi
+
+if [[ -n "$baas" ]]; then
+  hr "19. マネージドの基盤（BaaS）の設定（02 の E 節・03 の 1 節）"
+
+  if [[ "$baas" == *Supabase* ]]; then
+    sqlfiles="$(find . \( -path '*/supabase/migrations/*.sql' -o -path '*/supabase/schemas/*.sql' -o -name 'schema.sql' \) \
+                 -not -path '*/node_modules/*' 2>/dev/null)"
+    # 空のまま grep に渡すと標準入力を待つ。無ければ空のファイルを渡す
+    [[ -z "$sqlfiles" ]] && sqlfiles=/dev/null
+    # SQL を「1 文 1 行」にする。コメントを落とし、改行をまたぐ文（2 行に分けた alter など）を 1 行にまとめる。
+    # 関数の本体（$$ の中）の ; でも切れるので、本体の中の create table は拾いうる（目で読む）
+    sqlstmts() { local f; for f in "$@"; do sed -E 's/--.*$//' "$f"; echo ';'; done | tr '\n' ' ' \
+                 | sed -E 's#/\*([^*]|\*[^/])*\*/##g' | tr ';' '\n'; }
+    echo "  --- Supabase: マイグレーションで作ったのに RLS を有効にしていないテーブル ---"
+    echo "      （ダッシュボードで作ると既定で有効、SQL で作ると無効のまま）"
+    {
+      if [[ -n "$sqlfiles" ]]; then
+        # 名前を正規化して突き合わせる（スキーマ省略時は public、引用符と大文字小文字を外す）
+        norm() { tr 'A-Z' 'a-z' | tr -d '"' | sed -E 's/^([a-z0-9_]+)$/public.\1/'; }
+        # shellcheck disable=SC2086
+        created="$(sqlstmts $sqlfiles | grep -oiE 'create[[:space:]]+(unlogged[[:space:]]+)?table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?"?[A-Za-z0-9_]+"?(\."?[A-Za-z0-9_]+"?)?' \
+                   | awk '{print $NF}' | norm | sort -u)"
+        # shellcheck disable=SC2086
+        enabled="$(sqlstmts $sqlfiles | grep -oiE 'alter[[:space:]]+table[[:space:]]+(only[[:space:]]+)?(if[[:space:]]+exists[[:space:]]+)?"?[A-Za-z0-9_]+"?(\."?[A-Za-z0-9_]+"?)?[[:space:]]+enable[[:space:]]+row[[:space:]]+level[[:space:]]+security' \
+                   | awk '{for(i=1;i<=NF;i++) if(tolower($i)=="enable") print $(i-1)}' | norm | sort -u)"
+        comm -23 <(printf '%s\n' "$created" | grep -v '^$') <(printf '%s\n' "$enabled" | grep -v '^$') \
+          | grep -vE '^(auth|storage|extensions|realtime|supabase_[a-z_]+|private|internal)\.' | sed 's/^/  ★ /'
+      fi
+    } | show
+    echo "  ※ API に出ないスキーマ（private など）に置いたテーブルは除いている。公開スキーマの設定は 03 の 1 節で確かめる"
+
+    echo "  --- Supabase: 定義者権限（security definer）の関数で search_path を固定していないもの ---"
+    {
+      # 別の文で alter function … set search_path している関数は、固定したものとして扱う
+      # shellcheck disable=SC2086
+      fixed="$(sqlstmts $sqlfiles | grep -iE 'alter[[:space:]]+function' | grep -iE 'set[[:space:]]+search_path' \
+               | sed -E 's/.*[Ff][Uu][Nn][Cc][Tt][Ii][Oo][Nn][[:space:]]+([^([:space:]]+).*/\1/' | tr 'A-Z' 'a-z' | tr -d '"' | tr '\n' ' ')"
+      for f in $sqlfiles; do
+        # コメントを落としてから読む（コメントの中の security definer / search_path に惑わされない）。
+        # 関数の終わり（本体の $$ を 2 つ数えたあとの ;）で状態を捨て、次の関数へ持ち越さない
+        sed -E 's/--.*$//' "$f" | awk -v F="$f" -v FIXED=" $fixed " '
+          function flush() {
+            if (name != "" && sd && !sp && index(FIXED, " " tolower(name) " ") == 0)
+              printf "  ★ %s: %s（search_path の固定なし）\n", F, name
+            name=""; sd=0; sp=0; dq=0 }
+          tolower($0) ~ /create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?function/ {
+            flush(); line=$0; sub(/.*[Ff][Uu][Nn][Cc][Tt][Ii][Oo][Nn][[:space:]]+/, "", line); sub(/\(.*/, "", line); gsub(/"/, "", line); name=line }
+          name != "" && tolower($0) ~ /security[[:space:]]+definer/ { sd=1 }
+          name != "" && tolower($0) ~ /search_path/ { sp=1 }
+          name != "" { dq += gsub(/\$\$/, "&") }
+          name != "" && dq >= 2 && /;/ { flush() }
+          END { flush() }'
+      done
+      grep -nHiE 'security[[:space:]]+definer' $sqlfiles 2>/dev/null | head -15 | sed 's/^/  定義者権限: /'
+    } | show
+    echo "  ※ 公開スキーマの定義者権限の関数は、ログイン済みの誰からでも RPC で呼べる。中で呼び出し元を確かめているかを読む"
+
+    echo "  --- Supabase: ビュー（security_invoker の無いものは RLS を迂回する）とマテリアライズドビュー ---"
+    {
+      # 文単位で読む（with (security_invoker …) が次の行にあっても拾う）。false / off は付けていないのと同じ
+      for f in $sqlfiles; do
+        sqlstmts "$f" | grep -iE 'create[[:space:]]+(or[[:space:]]+replace[[:space:]]+)?view' \
+          | grep -viE 'security_invoker[[:space:]]*=[[:space:]]*(true|on|1|yes)' \
+          | sed -E 's/.*[Vv][Ii][Ee][Ww][[:space:]]+([^([:space:]]+).*/\1/' | tr -d '"' \
+          | grep -viE '^(auth|storage|extensions|realtime|private|internal)\.' | sed "s|^|  ★ security_invoker なし: $f: |"
+      done
+      grep -nHiE 'create[[:space:]]+materialized[[:space:]]+view' $sqlfiles 2>/dev/null | sed 's/^/  ★ RLS が効かない: /'
+    } | show
+
+    echo "  --- Supabase: 利用者が書き換えられる値で認可していないか・公開バケット ---"
+    {
+      grep -nHiE 'user_meta_?data|raw_user_meta' $sqlfiles 2>/dev/null | grep -iE 'policy|using|check|role|admin' | head -10 \
+        | sed 's/^/  ★ user_metadata を認可に使っている: /'
+      grep -nHiE 'storage\.buckets' $sqlfiles 2>/dev/null | grep -iE 'true' | head -10 | sed 's/^/  公開バケットの疑い: /'
+    } | show
+
+    echo "  --- Supabase: JWT の検証を外した Edge Functions（中で自前の認証か署名検証が要る）---"
+    {
+      find . -name 'config.toml' -path '*supabase*' -not -path '*/node_modules/*' 2>/dev/null | while IFS= read -r c; do
+        awk -v C="$c" '/^\[functions\./{fn=$0; gsub(/^\[functions\.|\]$/,"",fn)} /verify_jwt[[:space:]]*=[[:space:]]*false/{printf "  ★ %s: %s\n", C, fn}' "$c"
+      done
+    } | show
+    echo "  ※ 実機の RLS・GRANT・Security Advisor の結果は 03 の 1 節。コードに無いテーブルは実機でしか分からない"
+  fi
+
+  if [[ "$baas" == *Firebase* ]]; then
+    echo "  --- Firebase: セキュリティルール ---"
+    {
+      find . \( -name 'firestore.rules' -o -name 'storage.rules' -o -name 'database.rules.json' \) -not -path '*/node_modules/*' 2>/dev/null | while IFS= read -r r; do
+        # コメント行（// で始まる）は除く。; の省略と、Realtime Database の文字列の "true" も拾う
+        nc() { grep -nE "$1" "$r" | grep -vE '^[0-9]+:[[:space:]]*//'; }
+        nc 'if[[:space:]]+true[[:space:]]*(;|$)|allow[[:space:]]+[a-z, ]+;|"\.(read|write)"[[:space:]]*:[[:space:]]*"?true"?' | sed "s|^|  ★ 誰でも: $r:|"
+        nc 'request\.time[[:space:]]*<[[:space:]]*timestamp' | sed "s|^|  ★ テストモードの期限付き: $r:|"
+        nc 'if[[:space:]]+request\.auth(\.uid)?[[:space:]]*!=[[:space:]]*null[[:space:]]*;?[[:space:]]*$' | sed "s|^|  ログイン済みなら誰でも: $r:|"
+        nc '"\.(read|write)"[[:space:]]*:[[:space:]]*"auth[[:space:]]*!=[[:space:]]*null"' | sed "s|^|  ログイン済みなら誰でも: $r:|"
+      done
+    } | show
+    echo "  ※ 「ログイン済みなら誰でも」は、所有者の照合が無ければ他人のデータに届く。App Check はルールの代わりにならない"
+  fi
+
+  if [[ "$baas" == *Clerk* ]]; then
+    echo "  --- Clerk: 何も保護しないミドルウェア ---"
+    {
+      grep -rnE "${EXA[@]}" 'clerkMiddleware\(\)' . 2>/dev/null | head -5 | sed 's/$/   ← 既定では何も保護しない/'
+    } | show
+    echo "  ※ Route Handler と Server Action の中で auth() を確かめているかは 2 節・2c 節で見る"
+  fi
+
+  if [[ "$baas" == *Convex* ]]; then
+    echo "  --- Convex: 公開の query / mutation / action と、認証の確認 ---"
+    {
+      # 関数ごとに見る。1 ファイルに確かめる関数と確かめない関数が混ざっていることがある
+      find convex -name '*.ts' -not -path '*/_generated/*' 2>/dev/null | while IFS= read -r f; do
+        awk -v F="$f" '
+          function flush() { if (name != "") printf "  %s: %-20s %s\n", F, name, (ok ? "認証の確認あり" : "★ 認証の確認なし"); name=""; ok=0 }
+          /export[[:space:]]+const[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*/ {
+            flush()
+            if ($0 ~ /=[[:space:]]*(query|mutation|action)\(/) { n=$0; sub(/.*export[[:space:]]+const[[:space:]]+/, "", n); sub(/[[:space:]]*=.*/, "", n); name=n }
+          }
+          name != "" && /getUserIdentity|getAuthUserId|ctx\.auth/ { ok=1 }
+          END { flush() }' "$f"
+      done
+    } | show
+    echo "  ※ 公開の関数は誰でも呼べる。内部からだけ呼ぶものは internalQuery / internalMutation にする"
+  fi
+fi
+
+if [[ -d .github/workflows ]]; then
+  hr "20. CI の定義（.github/workflows。秘密情報と本番への権限を持つ。10 の 3-3）"
+  W=.github/workflows
+  echo "  --- 版を固定していない Action（40 桁のハッシュ以外）---"
+  {
+    # 引用符で囲んだハッシュ固定と、ダイジェスト固定の docker:// は除く
+    grep -rnE 'uses:[[:space:]]*["'"'"']?[^[:space:]#]+@' "$W" 2>/dev/null | grep -vE '@[0-9a-f]{40}["'"'"']?([[:space:]]|$)' \
+      | grep -vE 'uses:[[:space:]]*["'"'"']?\./|@sha256:' | head -20
+  } | show
+  echo "  --- 他人のコードが秘密情報と同居しうるトリガー ---"
+  {
+    grep -rnE 'pull_request_target|workflow_run|issue_comment' "$W" 2>/dev/null
+    grep -rnE 'allow-unsafe-pr-checkout|head\.(sha|ref)|refs/pull/|gh pr checkout' "$W" 2>/dev/null
+  } | show
+  echo "  --- 外部から来る文字列の \${{ }} 展開（run: | の複数行や github-script の中ならシェル・JS への注入）---"
+  {
+    # 利用者が自由に書ける値だけに絞る（head.sha のような 16 進の値は注入に使えない）
+    grep -rnE '\$\{\{[[:space:]]*(github\.event\.(issue\.(title|body)|pull_request\.(title|body|head\.ref|head\.label|head\.repo\.default_branch)|comment\.body|review\.body|review_comment\.body|pages\.[^}]*page_name|commits\.[^}]*(message|author)|head_commit\.(message|author))|github\.head_ref)' \
+      "$W" 2>/dev/null
+  } | show
+  echo "  ※ run: や script: の中にあれば指摘。with: の引数として渡しているだけなら問題ない"
+  echo "  --- 権限と秘密情報 ---"
+  {
+    for f in "$W"/*.y*ml; do
+      [[ -f "$f" ]] || continue
+      grep -qE '^permissions:' "$f" || echo "  ★ $f: トップレベルの permissions が無い（既定の権限で動く）"
+    done
+    grep -rnE 'permissions:[[:space:]]*write-all|id-token:[[:space:]]*write' "$W" 2>/dev/null
+    grep -rnE '(echo|printf|cat|tee).*\$\{\{[[:space:]]*secrets\.|toJSON\(secrets\)|secrets:[[:space:]]*inherit' "$W" 2>/dev/null
+  } | show
+  echo "  --- 依存の入れ方（npm install はロックファイルを書き換えて進む）---"
+  {
+    # npm install -g（道具の導入）と、CI で既定がロックファイルを変えない pnpm は除く
+    grep -rnE 'npm (install|i)([[:space:]]|$)|yarn install[[:space:]]*$' "$W" 2>/dev/null \
+      | grep -vE -- '--frozen-lockfile|--immutable|[[:space:]](-g|--global)([[:space:]]|$)' | head -5
+  } | show
+  echo "  ※ 組織の設定（SHA 固定の強制、実行できる人とイベントの制限）はコードから見えない。取材で聞く"
+fi
+
+if [[ -f package.json ]]; then
+  hr "21. 依存のインストール時の防御（10 の 3-1）"
+  if [[ -f package-lock.json ]]; then
+    n_is="$(grep -c '"hasInstallScript": true' package-lock.json 2>/dev/null || true)"
+    echo "  インストール時にスクリプトが走る依存: ${n_is:-0} 件"
+    # 名前は直前に現れた "node_modules/<名前>" のキー。間の行数は決まっていないので -B では取れない
+    awk '/^[[:space:]]*"node_modules\//{k=$1} /"hasInstallScript": true/{gsub(/[":]/,"",k); sub(/.*node_modules\//,"",k); print k}' \
+      package-lock.json 2>/dev/null | sort -u | head -15 | sed 's/^/    /'
+    # スキームの付いた取得元だけを見る（ワークスペースの "resolved": "packages/ui" は除く）
+    nonreg="$(grep -E '"resolved": "[a-z+]+:' package-lock.json 2>/dev/null | grep -vE 'registry\.npmjs\.org|registry\.yarnpkg\.com' | head -5)"
+    # URL に認証情報（user:token@）が入っていることがあるので伏せる
+    [[ -n "$nonreg" ]] && { echo "  ★ 公式レジストリ以外から取っている依存:"; printf '%s\n' "$nonreg" | sed -E 's/^[[:space:]]*/    /; s#://[^/@"]+@#://<伏字>@#'; }
+  fi
+  echo "  --- 防御の設定（無ければ「無い」と出る）---"
+  {
+    grep -nE 'ignore-scripts|min-release-age|allow-(git|remote|scripts)|strict-allow-scripts' .npmrc 2>/dev/null | sed 's/^/  .npmrc:/'
+    grep -nE '"(allowScripts|overrides|resolutions|packageManager)"' package.json 2>/dev/null | sed 's/^/  package.json:/'
+    grep -nE 'minimumReleaseAge|allowBuilds|onlyBuiltDependencies|dangerouslyAllowAllBuilds|blockExoticSubdeps|npmMinimalAgeGate|enableScripts' \
+      pnpm-workspace.yaml .yarnrc.yml bunfig.toml 2>/dev/null | sed 's/^/  /'
+    grep -nE '"pnpm"[[:space:]]*:' package.json 2>/dev/null | sed 's/^/  package.json:/'
+    grep -nE 'cooldown' .github/dependabot.y*ml 2>/dev/null | sed 's/^/  dependabot:/'
+    grep -nE 'installCommand' vercel.json 2>/dev/null | sed 's/^/  vercel.json:/'
+  } | show
+  # 依存の欄だけを見る（repository / homepage / $schema の URL は依存ではない）
+  gitdeps="$(awk '/"(dev|optional|peer)?[Dd]ependencies"[[:space:]]*:/{f=1;next} f&&/}/{f=0} f&&/:[[:space:]]*"(git\+|git:|github:|https?:\/\/|file:)/{print}' package.json 2>/dev/null | mask)"
+  [[ -n "$gitdeps" ]] && { echo "  ★ package.json に git や URL から取る依存がある:"; printf '%s\n' "$gitdeps" | sed 's/^[[:space:]]*/    /'; }
+  echo "  ※ 手元の設定より、本番のビルドで動く npm / pnpm の版が効く（Vercel の既定は npm 10 の npm install）"
+fi
+
+if [[ -n "$agent_files" ]]; then
+  hr "22. AI エージェントの設定ファイル（開発者の端末で自動的に効く。10 の 3-5）"
+  echo "  存在:$agent_files"
+  echo "  --- 自動承認・権限の緩和・フック・フォルダを開くだけで走るもの ---"
+  {
+    grep -nHE '"hooks"|bypassPermissions|enableAllProjectMcpServers|apiKeyHelper|"defaultMode"' .claude/settings*.json 2>/dev/null | mask_keys
+    grep -nHE 'autoApprove|yolo' .vscode/settings.json .gemini/settings.json 2>/dev/null | mask_keys
+    grep -nHE '"runOn"[[:space:]]*:[[:space:]]*"folderOpen"' .vscode/tasks.json 2>/dev/null | mask_keys
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      git ls-files 2>/dev/null | grep -E 'settings\.local\.json$' | sed 's/^/  ★ 個人用の設定がコミットされている: /'
+    fi
+  } | show
+  echo "  --- MCP サーバーを版の固定なしで取ってくる定義 ---"
+  {
+    grep -nHE '"-y"|npx' .mcp.json .cursor/mcp.json .vscode/mcp.json 2>/dev/null | head -10 | mask_keys
+  } | show
+  echo "  --- 見えない Unicode（ゼロ幅・双方向制御・タグ文字）---"
+  {
+    if command -v perl >/dev/null 2>&1; then
+      for f in $agent_files; do
+        [[ -f "$f" ]] || continue
+        perl -Mutf8 -CSD -ne 'print "  ★ $ARGV:$.\n" if /[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{2069}\x{E0000}-\x{E007F}]/' "$f" 2>/dev/null
+      done
+      [[ -d .cursor/rules ]] && find .cursor/rules -type f -exec perl -Mutf8 -CSD -ne 'print "  ★ $ARGV:$.\n" if /[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{2069}\x{E0000}-\x{E007F}]/' {} \; 2>/dev/null
+    else
+      echo "  （perl が無いため省略）"
+    fi
+  } | show
+  echo "  ※ 見つかったこと自体は指摘ではない。開発者の端末で自動で動くものがあり、その端末に本番の秘密情報があるかを取材で聞く"
+fi
+
+if [[ -n "$rt" ]]; then
+  hr "23. リアルタイム通信（HTTP のガードを通らない入口。07 の 11 節）"
+  echo "  使っているもの:$rt"
+
+  if [[ "$rt" == *Supabase-Realtime* ]]; then
+    echo "  --- Supabase Realtime: private 指定の無い購読（public チャネル。公開鍵を持つ誰でも入れる）---"
+    {
+      # .channel( から、その購読の終わり（.subscribe( か、次の .channel(）までに private: true があるか
+      grep -rlE "${EXA[@]}" '\.channel\(' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | while IFS= read -r f; do
+        awk -v F="$f" '
+          function flush() { if (start && !priv) printf "  ★ %s:%d:%s\n", F, start, substr(first, 1, 150); start=0; priv=0 }
+          /\.channel\(/ { flush(); start=NR; first=$0; sub(/^[[:space:]]+/, "", first) }
+          start && /private:[[:space:]]*true/ { priv=1 }
+          start && (/\.subscribe\(/ || NR - start > 30) { flush() }
+          END { flush() }' "$f"
+      done
+    } | show
+    echo "  --- Supabase Realtime: テーブルの変更の購読と、publication・replica identity・チャネルのポリシー ---"
+    {
+      grep -rnE "${EXA[@]}" 'postgres_changes' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | head -10
+      grep -rniE "${EXA[@]}" 'supabase_realtime|replica identity full|on realtime\.messages|realtime\.topic\(' --include='*.sql' . 2>/dev/null | head -10
+    } | show
+    echo "  ※ 管理画面の「Allow public access」が有効なら、private: true を付けていても外して入り直せる（03 の 1 節）"
+    echo "  ※ publication に入れたテーブルの RLS が無効なら、全行の変更が流れる。DELETE には RLS が効かない"
+  fi
+
+  if [[ "$rt" == *WebSocket* || "$rt" == *Socket.IO* ]]; then
+    echo "  --- WebSocket: サーバーの定義 ---"
+    ws_def="$(grep -rnE "${EXA[@]}" 'new (WebSocketServer|WebSocket\.Server|Server)\(|upgradeWebSocket|experimental_upgradeWebSocket|defineWebSocketHandler|@app\.websocket' \
+      --include='*.ts' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null \
+      | grep -vE 'new (http|https)\.Server\(|new Server\(\{[[:space:]]*name|modelcontextprotocol' | head -10)"
+    printf '%s\n' "$ws_def" | grep -v '^$' | show
+    echo "  --- WebSocket: 認証と Origin の検証 ---"
+    ws_auth="$(grep -rnE "${EXA[@]}" 'io\.use\(|allowRequest|verifyClient|handleUpgrade|headers\.origin|headers\[.origin.\]|handshake\.(auth|headers)|onBeforeConnect' \
+      --include='*.ts' --include='*.js' --include='*.mjs' . 2>/dev/null | head -10)"
+    printf '%s\n' "$ws_auth" | grep -v '^$' | show
+    if [[ -n "$ws_def" ]] && ! printf '%s' "$ws_auth" | grep -qiE 'origin|allowRequest|verifyClient'; then
+      echo "  ★ サーバーの定義はあるが、Origin を検証している形跡が無い（Cookie で認証しているなら CSWSH）"
+    fi
+    echo "  --- WebSocket: ルームへの参加と切断 ---"
+    {
+      grep -rnE "${EXA[@]}" 'socket\.join\(|disconnectSockets\(|socket\.on\(["'"'"'](join|subscribe)' --include='*.ts' --include='*.js' . 2>/dev/null | head -10
+    } | show
+    echo "  ※ socket.join の引数がクライアントの送った値なら、そのルームに入る資格を確かめているかを読む"
+  fi
+
+  if [[ "$rt" == *配信サービス* ]]; then
+    echo "  --- 配信サービス: 鍵とチャネルの認可 ---"
+    {
+      grep -rnE "${EXA[@]}" 'authorizeChannel\(|/pusher/auth|publicApiKey|new Ably\.(Realtime|Rest)\(|capability|\.allow\(|onConnect|withFilter\(|connectionParams' \
+        --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | head -12 | mask
+    } | show
+    echo "  ※ 認可のエンドポイントがチャネル名を照合しているか。publicApiKey や API キーをブラウザに置いていないか"
+  fi
+
+  if [[ "$rt" == *SSE* ]]; then
+    echo "  --- SSE: 配信のハンドラ ---"
+    {
+      grep -rlE "${EXA[@]}" 'text/event-stream' --include='*.ts' --include='*.js' . 2>/dev/null | head -10 | sed 's/^/  /'
+      grep -rnE "${EXA[@]}" 'new EventSource\([^)]*(token|key|jwt)' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | head -5 \
+        | mask | sed 's/$/   ← トークンを URL に載せている/'
+    } | show
+    echo "  ※ 配信のハンドラも 2 節の表に載る。空欄なら、誰でも購読できる"
+  fi
+
+  if [[ "$rt" == *Firebase-購読* ]]; then
+    echo "  --- Firebase: 購読の場所（ルールは 19 節）---"
+    {
+      grep -rnE "${EXA[@]}" 'onSnapshot\(|onValue\(|onChildAdded\(|collectionGroup\(' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | head -10
+    } | show
+    echo "  ※ allow read を get と list に分けていないと、一覧で全件を購読できる"
+  fi
+fi
+
+# SMS を送る経路。1 通ごとに費用が出るので、認証不要の経路がそのまま攻撃の費用になる
+SMSPAT='messages\.create\(|verifications\.create|verify\.v2\.services|PublishCommand|SendTextMessageCommand|signInWithPhoneNumber|verifyPhoneNumber|PhoneAuthProvider|signInWithOtp\([^)]*phone|SignUpCommand|ResendConfirmationCodeCommand|sendSms|sendSMS|send_sms'
+sms_hit="$(grep -rlE "${EXA[@]}" "$SMSPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null | head -1)"
+sms_cfg="$(grep -nE '^\[auth\.sms' supabase/config.toml 2>/dev/null | head -1)"
+if [[ -n "$sms_hit$sms_cfg" ]]; then
+  hr "24. SMS の送信経路（SMS pumping。02 の F-4）"
+  echo "  --- SMS を送らせる箇所 ---"
+  {
+    grep -rnE "${EXA[@]}" "$SMSPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null | head -12
+    [[ -n "$sms_cfg" ]] && grep -nE '^\[auth\.(sms|rate_limit|captcha|hook\.send_sms)|sms_sent|enable_signup|enable_anonymous_sign_ins' supabase/config.toml 2>/dev/null | sed 's/^/  supabase\/config.toml:/'
+  } | show
+  echo "  --- 番号の検証・レート制限・CAPTCHA の手がかり（無いこと自体が材料）---"
+  {
+    grep -rnE "${EXA[@]}" 'libphonenumber|parsePhoneNumber|isValidPhoneNumber|isValidNumberForRegion|\+81' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.py' . 2>/dev/null | head -5
+    grep -rnE "${EXA[@]}" '@upstash/ratelimit|Ratelimit|rateLimit|rate-limit|turnstile|hcaptcha|recaptcha|RecaptchaVerifier|captchaToken' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | head -5
+  } | show
+  if grep -rqE "${EXA[@]}" 'messages\.create\(' --include='*.ts' --include='*.js' --include='*.py' . 2>/dev/null; then
+    echo "  ★ SMS の API を直接呼んでいる（messages.create）。確認用サービスの組み込みの防御（国の制限・送信回数の制限）が効かない"
+  fi
+  echo "  ※ 認証なしで届く経路を全部挙げる（サインアップ・再送・再設定・番号の変更・招待）。国の制限と上限は 03 の 3 節で基盤側も見る"
 fi
 
 hr "完了"

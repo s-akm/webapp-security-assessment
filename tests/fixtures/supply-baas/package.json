@@ -1,0 +1,14 @@
+{
+  "name": "supply-baas",
+  "private": true,
+  "dependencies": {
+    "next": "15.1.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "@clerk/nextjs": "^6.0.0",
+    "convex": "^1.17.0",
+    "firebase": "^11.0.0",
+    "stripe": "^17.0.0",
+    "@sveltejs/adapter-vercel": "6.3.1",
+    "internal-lib": "git+https://example.invalid/internal-lib.git"
+  }
+}
