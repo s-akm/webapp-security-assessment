@@ -130,7 +130,13 @@ mutate "scan_secrets: unzip が無いのを黙って飛ばす" "scripts/scan_sec
 mutate "scan_secrets: 大文字小文字を区別する（取りこぼし）" "scripts/scan_secrets.sh" "大文字の SELECT" \
   's = s.replace("[[ \"$opts\" == *i* ]] && gopt+=(-i)", ":")'
 mutate "scan_secrets: 数字の並びの境界を外す（誤検出）" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID" \
-  's = s.replace("full=\"(^|[^0-9A-Za-z_.+-])(${pattern})([^0-9A-Za-z_-]|$)\"", "full=\"(${pattern})\"")'
+  's = s.replace("full=\"(^|[^0-9A-Za-z_.+-]|[A-Za-z]\\\\.)(${pattern})([^0-9A-Za-z_-]|$)\"", "full=\"(${pattern})\"")'
+mutate "scan_secrets: 英字の後の「.」を境界に認めない（取りこぼし）" "scripts/scan_secrets.sh" "TEL. の直後" \
+  's = s.replace("|[A-Za-z]\\\\.)(${pattern})", ")(${pattern})")'
+mutate "scan_secrets: docx の断片を段落でつながない（取りこぼし）" "scripts/scan_secrets.sh" "書式で 2 つに分かれた番号" \
+  's = s.replace("      *)    (cd \"$DIR\" && unzip -p \"$f\" \"$m\" 2>/dev/null) | xml_para_text > \"$out\" ;;", "      *)    (cd \"$DIR\" && unzip -p \"$f\" \"$m\" 2>/dev/null) | xml_text > \"$out\" ;;")'
+mutate "scan_secrets: PDF を黙って飛ばす" "scripts/scan_secrets.sh" "PDF を黙って飛ばさず未検査と知らせる" \
+  's = s.replace("-iname \x27*.pdf\x27", "-iname \x27*.ZZZNOMATCH\x27")'
 mutate "scan_secrets: 日時の 12 桁を除外しない（誤検出）" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID" \
   's = s.replace("\x27^(19|20)[0-9]{2}(0[1-9]|1[0-2])", "\x27^ZZZNOMATCH(19|20)[0-9]{2}(0[1-9]|1[0-2])")'
 
@@ -193,7 +199,7 @@ mutate "audit_grep: private 指定の読み取りを壊す（誤検出）" "scri
 mutate "audit_grep: Origin の検証を読み取らない（誤検出）" "scripts/audit_grep.sh" "Origin を検証していれば咎めない" \
   's = s.replace("grep -iE \x27origin|allowRequest|verifyClient\x27", "grep -iE \x27ZZZNOMATCH\x27")'
 mutate "audit_grep: SMS の直接呼び出しの判定を外す" "scripts/audit_grep.sh" "API の直接呼び出し" \
-  's = s.replace("if grep -rqE \"${EXA[@]}\" \x27messages\\.create\\(\x27", "if grep -rqE \"${EXA[@]}\" \x27ZZZNOMATCH\x27")'
+  's = s.replace("twilio_direct=\"$(grep -rlE \"${EXA[@]}\" \x27messages\\.create\\(\x27", "twilio_direct=\"$(grep -rlE \"${EXA[@]}\" \x27ZZZNOMATCH\x27")'
 mutate "audit_grep: 伏字から URL の認証情報を外す" "scripts/audit_grep.sh" "設定の中の接続文字列の認証情報を伏せる" \
   's = "\n".join(l for l in s.split("\n") if "#://<伏字>@#g" not in l)'
 mutate "audit_grep: Convex の確認を次の関数へ持ち越す" "scripts/audit_grep.sh" "Convex の確認を次の関数へ持ち越さない" \
@@ -218,12 +224,30 @@ mutate "pre-push: LICENSE も案件語の照合に含める" "../build/hooks/pre
   's = s.replace(" -- . \x27:(exclude)LICENSE\x27", "")'
 mutate "pre-push: main 以外のブランチも通す" "../build/hooks/pre-push" "main 以外のブランチは止める" \
   's = s.replace("refs/heads/main|refs/tags/v[0-9]*) ;;", "refs/heads/*|refs/tags/v[0-9]*) ;;")'
+mutate "pre-push: 手元に無いリモートの先端でも検査を飛ばして通す" "../build/hooks/pre-push" "リモートの先端が手元に無ければ止める" \
+  's = s.replace("elif git cat-file -e \"${rsha}^{commit}\" 2>/dev/null; then", "elif true; then").replace("if ! git rev-list $range >/dev/null 2>&1; then", "if false; then")'
+mutate "audit_grep: ファイルの前に -- を置かない" "scripts/audit_grep.sh" "で始まるファイル名があっても" \
+  's = s.replace("xargs -0 grep \"$@\" -- /dev/null", "xargs -0 grep \"$@\" /dev/null")'
+mutate "audit_grep: 0 節だけ古いタグの一覧に戻す" "scripts/audit_grep.sh" "0 節も 9 節と同じ一覧でタグを判定する" \
+  's = s.replace("grep -rlE \"${EXA[@]}\" \"$TAGPAT|replayIntegration\"", "grep -rlE \"${EXA[@]}\" \x27googletagmanager|gtag\\(|hotjar\x27")'
+mutate "audit_grep: 短い関数名に語の境界を置かない（誤検出）" "scripts/audit_grep.sh" "紛らわしい語だけならタグを無と言う" \
+  's = s.replace("(^|[^A-Za-z0-9_$.])ytag\\(", "ytag\\(")'
+mutate "recon: タグの判定でパスを見ない（誤検出）" "scripts/recon.sh" "共有リンクの www.facebook.com で Meta ピクセルと言わない" \
+  's = s.replace("  \x27www.facebook.com|^/tr([/?#]|$)\x27\n", "")'
+mutate "build.sh: コミットしていない変更を見ない" "../build/build.sh" "コミットしていない変更があれば固めない" \
+  's = s.replace("if ! git -C \"$ROOT\" diff --quiet HEAD -- skill LICENSE VERSION; then", "if false; then")'
+mutate "recon: localhost でも DNS を引く" "scripts/recon.sh" "localhost なら DNS を引かない" \
+  's = s.replace("elif [[ \"$DOMAIN\" == \"localhost\" || \"$DOMAIN\" == *.localhost ]]; then", "elif false; then")'
+mutate "browser_probe: Playwright の版を 1 か所だけ上げる" "scripts/browser_probe.mjs" "Playwright の版が 3 か所で揃っている" \
+  's = s.replace("const PW_VERSION = \"1.63.0\";", "const PW_VERSION = \"1.64.0\";")'
 mutate "audit_grep: 画面操作の記録で 09 を読ませない" "scripts/audit_grep.sh" "画面操作の記録があれば 09 を読ませる" \
   's = s.replace("references/08-privacy-compliance.md references/09-browser-verification.md\"", "references/08-privacy-compliance.md\"")'
 mutate "audit_grep: X 広告の関数を送信先から外す" "scripts/audit_grep.sh" "X 広告のタグを拾う" \
-  's = s.replace("|ads-twitter|twq\\(|", "|")'
+  's = s.replace("|ads-twitter|(^|[^A-Za-z0-9_$.])twq\\(|", "|ads-twitter|")'
 mutate "recon: パイプで grep -Eq に渡す（確率的に誤る書き方）" "scripts/recon.sh" "パイプで grep -q に渡していない" \
   's = s.replace("| grep -E \x27^(ref:|[0-9a-f]{40})\x27 >/dev/null", "| grep -Eq \x27^(ref:|[0-9a-f]{40})\x27", 1)'
+mutate "資料: コマンド例でスクリプトの中の変数を使う" "references/02-code-audit.md" "スクリプトの中の変数に頼らない" \
+  's = s.replace("grep -rnE --exclude-dir=node_modules --exclude-dir=vendor \x27Math", "grep -rnE \"${EX}\" \x27Math", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("evaluateJavascript\x27 \\\n  -e \x27javaScriptEnabled", "evaluateJavascript|\njavaScriptEnabled", 1)'
 
@@ -247,7 +271,7 @@ mutate "recon: 相対パスの JS を拾わない（旧不具合）" "scripts/re
 mutate "recon: 一重引用符の src を拾わない（旧不具合）" "scripts/recon.sh" "一重引用符・相対パスの JS を拾う" \
   's = s.replace("(src|href)=[\\\"\x27][^\\\"\x27<> ]+\\.m?js", "(src|href)=[\\\"][^\\\"\x27<> ]+\\.m?js")'
 mutate "recon: 計測タグを第三者スクリプトの中身でも数える（旧不具合）" "scripts/recon.sh" "第三者スクリプトの中身で LogRocket" \
-  's = s.replace("url_hosts own_only.js >> tag_hosts.txt", "url_hosts all.js >> tag_hosts.txt")'
+  's = s.replace("url_refs own_only.js | tag_hosts_of >> tag_hosts.txt", "url_refs all.js | tag_hosts_of >> tag_hosts.txt")'
 mutate "recon: LLM の鍵を見ない（旧不具合）" "scripts/recon.sh" "OpenAI の鍵を検出する" \
   's = s.replace("\x27OpenAI|sk-(proj|svcacct|admin)-", "\x27OpenAI|ZZZNOMATCH-")'
 mutate "recon: SPF をホスト名で引く（旧不具合）" "scripts/recon.sh" "組織のドメインの SPF を見つける" \
@@ -257,6 +281,8 @@ mutate "recon: 重大な露出を 04 の優先度で言わない" "scripts/recon
 if command -v node >/dev/null 2>&1; then
   mutate "recon: 既知タグの一覧を browser_probe とずらす" "scripts/recon.sh" "既知タグの一覧が一致する" \
     's = s.replace("  \x27Mouseflow|(^|\\.)mouseflow\\.com$\x27\n", "")'
+else
+  printf '  \033[33m-\033[0m recon の 1 件（node が無いため省略）\n'; SKIP=$((SKIP+1))
 fi
 
 mutate "recon: DMARC の連絡先を伏せない" "scripts/recon.sh" "DMARC の連絡先アドレスを出力に混ぜない" \
@@ -277,6 +303,8 @@ if command -v node >/dev/null 2>&1; then
     's = s.replace("const name = tokens[0].toLowerCase();", "const name = tokens[0].toLowerCase().replace(/^script-src-(elem|attr)$/, \"script-src\");")'
   mutate "browser_probe: 評価対象に npm i -D させる（旧不具合）" "scripts/browser_probe.mjs" "評価対象の package.json を書き換える案内をしない" \
     's = s.replace("npm i --prefix \"$HOME/.cache/wsa-playwright\" playwright@${PW_VERSION}", "npm i -D playwright")'
+else
+  printf '  \033[33m-\033[0m browser_probe の部品の 3 件（node が無いため省略）\n'; SKIP=$((SKIP+3))
 fi
 
 # ---- browser_probe（Playwright がある環境でのみ）----
@@ -299,8 +327,13 @@ if node -e 'import("playwright")' >/dev/null 2>&1; then
     's = s.replace("c.httpOnly ? \"HttpOnly\" : \"**HttpOnly なし**\"", "!c.httpOnly ? \"HttpOnly\" : \"**HttpOnly なし**\"")'
   mutate "browser_probe: 既知タグのラベルを取り違える" "scripts/browser_probe.mjs" "既知タグのラベル付け" \
     's = s.replace("[\"Microsoft Clarity\", \"(^|\\\\.)clarity", "[\"Hotjar\", \"(^|\\\\.)clarity")'
+  mutate "browser_probe: 転送先を自サイトに含めない" "scripts/browser_probe.mjs" "転送先のホストを第三者と言わない" \
+    's = s.replace("  try { own.add(new URL(page.url()).hostname); } catch { /* 同上 */ }\n", "")'
+  mutate "browser_probe: コンソールの URL を伏せない" "scripts/browser_probe.mjs" "コンソールの URL のクエリを伏せる" \
+    's = s.replace("cspViolations.push(maskUrls(t).slice(0, 200))", "cspViolations.push(t.slice(0, 200))")'
 else
-  printf '  \033[33m-\033[0m browser_probe の 9 件（playwright が無いため省略）\n'; SKIP=$((SKIP+9))
+  # 件数は上の if の中の mutate の数と揃える（自己監査が README の件数と照合する）
+  printf '  \033[33m-\033[0m browser_probe の 11 件（playwright が無いため省略）\n'; SKIP=$((SKIP+11))
 fi
 
 printf '\n\033[1m結果\033[0m  生きている検査 %d / 生きていない %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIP"
