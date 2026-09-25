@@ -97,7 +97,8 @@ else warn "強い断定（必ず／絶対に）が $n_must 箇所" "多すぎる
 #      実際に「スクリプト 4 本」「52 の枠組み」が更新漏れで残っていた。
 n_ref="$(ls "$SKILL"/references/*.md | wc -l | tr -d ' ')"
 n_scr="$(ls "$SKILL"/scripts/* | wc -l | tr -d ' ')"
-n_fix="$(ls -d "$ROOT"/tests/fixtures/repo* | wc -l | tr -d ' ')"
+# realistic・iac・mobile は枠組みの題材ではない（README でも別に書いている）
+n_fix="$(ls -d "$ROOT"/tests/fixtures/repo* | grep -vcE '/repo-(realistic|iac|mobile)$')"
 n_run="$(printf '%s' "$out" | grep -oE '成功 [0-9]+' | tail -1 | grep -oE '[0-9]+')"
 n_mut="$(( $(grep -cE '^\s*mutate "' "$ROOT/tests/mutations.sh") + 1 ))"
 mism=""

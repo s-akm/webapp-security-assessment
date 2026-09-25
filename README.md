@@ -4,7 +4,7 @@ Web アプリケーションのセキュリティ評価スキルを保守する�
 
 スキル本体は [skill/](skill/) にある。コード監査から実行環境の実機確認、指摘台帳、
 フェーズ分けした修正指示書までを一通り進めるための手順と、それを支える読み取り専用の
-スクリプト 5 本と、依頼者に渡す文面 1 本で構成されている。
+スクリプト 5 本と、依頼者に渡す文面 3 本で構成されている。
 
 配布物は `.skill`（zip）1 個で、[build/build.sh](build/build.sh) が組み立てる。
 
@@ -29,22 +29,48 @@ skill/          スキル本体。ここだけが .skill になる
   SKILL.md      進め方と、評価中に判断へ迷ったときの拠り所
   references/   フェーズごとの詳細。読むタイミングは SKILL.md の表にある
   scripts/      収集・解析。すべて読み取り専用で対象の状態を変えない
-  templates/    依頼者に渡す文面
-build/          .skill を組み立てる
+  templates/    依頼者に渡す文面（ブラウザ・管理画面・SQL の確認依頼）
+build/
+  build.sh      .skill を組み立てる
+  hooks/        公開してはいけないものを push しないフック
+.github/        CI（macOS と Linux）、Dependabot、secret scanning の設定
 tests/          スキルを直したときに壊れていないかを見る
   run.sh        検査本体（404 件）
   mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（35 件）
   self-audit.sh 配布前の自己監査。上の 2 つに加え、方針の遵守と配布物を見る
+  docker/       Linux で検査するためのイメージ
   ngwords.local 依頼者を示す語（.gitignore 済み。手元にだけ置く）
 cases/          適用事例（.gitignore 済み。手元にだけ置く）
 CHANGELOG.md    どの案件がきっかけで何を直したか（案件は特定できない形で書く）
-VERSION         配布物のファイル名に付く版
+VERSION         版はここにだけ持つ。配布物のファイル名にも付く
+SECURITY.md     脆弱性の報告の窓口
+package.json ほか  検査に使う道具の版の固定（playwright・openpyxl・.npmrc）
 ```
 
 `skill/` を 1 階層下げているのは、ビルドが「`skill/` をそのまま固める」だけで済むようにするため。
 除外リストを書かずに済ませることで、機微情報の混入を書き忘れではなく構造で防いでいる。
+さらにビルドは **git が追跡している `skill/` のファイルだけ**を固め、`skill/` に未追跡や
+無視されたファイルがあれば止まる（手元に置いた `.env` や作業メモを固めないため）。
 
 ## 使う
+
+### 準備
+
+```bash
+npm ci
+```
+
+```bash
+npx playwright install chromium
+```
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+```
+
+`npm ci` は `package-lock.json` のとおりに入れる。ルートの `.npmrc` で、公開から 3 日経っていない版を
+入れないことと、導入時のスクリプトを走らせないことを指定している（乗っ取られた版を掴まないため）。
+Node.js は 20 以降。`openpyxl` は `make_register.py` の検査に使う。
 
 ### スキルを手元に入れる
 
@@ -52,8 +78,20 @@ VERSION         配布物のファイル名に付く版
 ./build/build.sh
 ```
 
-`dist/webapp-security-assessment.skill` ができる。これを Claude の設定から読み込む。
+`dist/webapp-security-assessment-v<版>.skill` と、同じ中身の `dist/webapp-security-assessment.skill` ができる。これを Claude の設定から読み込む。
 検査（`tests/run.sh`）を通ってからでないと組み立てない。急ぐときは `--skip-tests`。
+中のファイルの時刻を最後のコミットの時刻に揃えているので、**同じコミットからは同じ zip ができる**
+（出力の sha256 で確かめられる）。古い版は `dist/archive/` へ移す。
+
+### push する前に
+
+```bash
+git config core.hooksPath build/hooks
+```
+
+`build/hooks/pre-push` が、`main` と `v` で始まるタグ以外の push、`tests/ngwords.local` の語を含む追加行、
+noreply 以外のメールアドレスで作ったコミットを止める。**公開リポジトリなので、手元の作業ブランチや
+事例を誤って push しないため**に置いている。
 
 ### 検査する
 
@@ -69,13 +107,16 @@ VERSION         配布物のファイル名に付く版
 | 機密 | 案件固有語の混入、例示以外のドメイン、`scan_secrets.sh` の自己検査 |
 | 動作 | ダミーの題材に対して、期待する検出が出るか |
 
-動作の検査には 5 種類の題材を使う。
+動作の検査には 6 種類の題材を使う。
 
-- **54 の枠組みのダミーリポジトリ**（`tests/fixtures/repo*/`）— `audit_grep.sh` 用。
+- **51 の枠組みのダミーリポジトリ**（`tests/fixtures/repo*/` から下の realistic・iac・mobile を除いたもの）— `audit_grep.sh` 用。
   どれも「ガードのあるハンドラ」と「ガードの無いハンドラ」を 1 本ずつ持つ。
-  JS / TS 22、Python 5、Ruby 2、PHP 4、Go 5、JVM 5、.NET 3、Rust 3、Elixir 1、Swift 1、Scala 1
+  JS / TS 24、Python 5、Ruby 2、PHP 4、Go 3、Java / Kotlin 4、Scala 1、.NET 3、Rust 3、Elixir 1、Swift 1
 - **現実に近い構成の題材**（`tests/fixtures/repo-realistic/`）— 認可の層が 2 つあり、
   ミドルウェアの対象から外れたルートがあり、入れ子が深く、ルートを動的に組み立てる構成
+- **構成の判定の題材**（`tests/fixtures/repo-iac/`、`repo-mobile/`）— `audit_grep.sh` の 0 節用。
+  Terraform・Dockerfile・Kubernetes の定義だけを持つものと、Android と iOS の設定を持つもの。
+  **対象に無い技術の資料を読ませない**ための判定なので、「有」と「無」の両方が正しく出ることを見る
 - **基盤・CI・依存・エージェント設定の題材**（`tests/fixtures/supply-baas/`）— `audit_grep.sh` の
   1b / 4d / 9b / 10b / 19 節以降用。**AI エージェントの設定ファイルだけは置かず、検査が一時ディレクトリに作る**
   （開いた人のエディタやエージェントで実際に効いてしまうため）。Supabase のマイグレーション、Firebase のルール、GitHub Actions、
@@ -93,8 +134,9 @@ VERSION         配布物のファイル名に付く版
 クライアントに鍵が載っている。**第三者は `127.0.0.1` で模す**（ページは `localhost` で開くため、
 ブラウザから見て別ホストになる）。これで外部へ一切出ずに、検出の中身まで検査できる。
 
-`browser_probe.mjs` の検査には Playwright が要る。`npm install && npx playwright install chromium`
-を済ませてあれば自動で走り、無ければその部分だけ省略される。
+`browser_probe.mjs` の検査には Playwright が要る。「準備」を済ませてあれば自動で走り、無ければ
+その部分だけ省略される。**省略した件数は結果の行に出る**（`成功 N / 失敗 N / 省略 N`）。
+省略があると README の件数と合わなくなるので、配る前は省略 0 で回す。
 
 ### Linux で検査する
 
@@ -105,7 +147,14 @@ docker run --rm -v "$PWD":/src:ro wsa-linux
 
 **macOS（BSD の grep / sed / awk）だけで確かめていると、GNU との違いで壊れていても気づけない。**
 `tests/docker/Dockerfile` は Debian 系の Linux に mawk を既定の awk として置き、Playwright も入れてあるので、
-省略なしで全件を回せる。検査の検査も `docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'cp -r /src /work/r && cd /work/r && npm install --silent >/dev/null 2>&1; ./tests/mutations.sh'` で回せる。
+省略なしで全件を回せる。イメージは digest で固定してあり、依存は中で `npm ci` する。検査の検査は次で回せる。
+
+```bash
+docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r && cd /work/r && npm ci --ignore-scripts --no-audit --no-fund && ./tests/mutations.sh'
+```
+
+`.github/workflows/tests.yml` は同じ検査を push のたびに macOS（bash 3.2 に揃える）と Ubuntu で回し、
+週に 1 度は検査の検査まで回す。
 
 ### 検査の検査
 
@@ -161,7 +210,7 @@ docker run --rm -v "$PWD":/src:ro wsa-linux
 | `audit_grep.sh` | `grep`、`git`（任意） |
 | `scan_secrets.sh` | `grep`、`iconv`（任意） |
 | `make_register.py` | `openpyxl` |
-| `browser_probe.mjs` | Node.js 18 以降、`playwright` |
+| `browser_probe.mjs` | Node.js 20 以降、`playwright` |
 
 `openpyxl` が入っていない `python3` は珍しくない。`make_register.py` はその場合、導入コマンドと、
 すでに `openpyxl` を持つ別の `python3` の場所を探して案内する。
@@ -210,9 +259,13 @@ grep -rnE 'の 2[a-z] 節|の 2[a-z]（|=== 2[a-z]' skill/ tests/   # 例: 2 系
 
 ## 分かっている課題
 
-- **`references/12` / `13` / `14`、07 の 11 節（リアルタイム通信）、`audit_grep.sh` の 19 節以降は実案件で使っていない。** 外部の基準と公開されている
-  事例から起こしたもので、実際に当てると過不足が出るはず。検出（構成の判定）は題材で
-  確かめてある
+- **`references/12` / `13` / `14`、07 の 11 節（リアルタイム通信）、09 の 8〜11 節、`audit_grep.sh` の 19 節以降、
+  テンプレートの `client-console-checklist.md` と `client-sql-request.md` は実案件で使っていない。**
+  外部の基準と公開されている事例から起こしたもので、実際に当てると過不足が出るはず。
+  検出（構成の判定）は題材で確かめてある
+- **戻るボタンで認可後の画面が見えるか（09 の 6 節）は、ブラウザと版と経過時間で結果が変わる。**
+  Chrome は `Cache-Control: no-store` のページも条件付きで bfcache に入れるようになった。
+  依頼者に確かめてもらうときは、ブラウザの版と、ログアウトしてから戻るまでの時間を書いてもらう
 - **発火台が模しているのは 2 構成だけ。** 穴のある側と、正しく作られている側。
   画面遷移を JavaScript で行う構成、外部の同意管理サービスを使う構成は模していない
 - **現実に近い題材は 1 つだけ。** Next.js を題材にしたもので、他の枠組みで
