@@ -228,11 +228,11 @@ grep -m1 -A2 '"node_modules/next"' package-lock.json 2>/dev/null
 | 公表 | 識別子 | 迂回の条件 | 修正版 |
 |---|---|---|---|
 | 2025-03 | CVE-2025-29927（Next.js） | `x-middleware-subrequest` ヘッダ | 上記 |
-| 2025-11 | CVE-2025-64765（Astro） | `/%61dmin` のような URL エンコード | 5.15.8 では不十分（修正を迂回する続報がある）。続報の修正版を公式の一覧で確かめる |
+| 2025-11〜12 | CVE-2025-64765、続報 CVE-2025-66202（Astro） | `/%61dmin` のような URL エンコード。続報は二重エンコード（`/%2561dmin`） | 5.15.8 では不十分。続報の勧告は修正版の欄が空のため、公式のリリースノートで確かめる |
 | 2026-05 | CVE-2026-44574（Next.js） | クエリで動的ルートの値を差し替える | 15.5.16 / 16.2.5（同時期の続報を含めると 15.5.18 / 16.2.6） |
-| 2026-05 | CVE-2026-44575（Next.js） | App Router の `.rsc` や segment-prefetch の URL が matcher に掛からない | 同上 |
-| 2026-07 | CVE-2026-64642（Next.js） | Turbopack でビルドし、`i18n.locales` が 1 件 | 15.5.21 / 16.2.11 |
-| 2026-06〜07 | CVE-2026-53721 ほか（Nuxt） | 大文字小文字の違いで `routeRules` を迂回（初回の修正が不完全） | 3.21.10 / 4.5.1 |
+| 2026-05 | CVE-2026-44575、続報 CVE-2026-45109（Next.js） | App Router の `.rsc` や segment-prefetch の URL が matcher に掛からない（初回の修正が不完全） | 15.5.18 / 16.2.6 |
+| 2026-07 | CVE-2026-64642（Next.js） | App Router を Turbopack でビルドし、`i18n.locales` が 1 件 | 16.2.11（**16.x だけが対象**） |
+| 2026-06〜08 | CVE-2026-53721、続報 CVE-2026-71315（Nuxt） | 大文字小文字の違いで `routeRules` を迂回（初回の修正が不完全） | 3.21.10 / 4.5.1 |
 
 ```bash
 grep -nE 'i18n|locales' next.config.* 2>/dev/null
@@ -527,8 +527,8 @@ grep -rnoE 'dangerouslyAllowBrowser:\s*true|NEXT_PUBLIC_[A-Z_]*(OPENAI|ANTHROPIC
 
 | 基盤 | 見ること |
 |---|---|
-| Supabase | RLS は 03 の 1 節で実機を見る。コード側では**マイグレーションで作ったテーブルに RLS を有効にしているか**（ダッシュボードで作ると既定で有効、SQL で作ると無効のまま）、`GRANT` を明記しているか（2026-10-30 から既存プロジェクトでも新規テーブルへの自動 `GRANT` が止まる）、`supabase/config.toml` で `verify_jwt = false` の Edge Function が自前で認証か署名検証をしているか |
-| Firebase | ルールに `allow read, write: if true` や期限付きのテストモードが残っていないか。**`request.auth != null` だけで認可したつもりになっていないか**（ログインした誰でも通る）。メールのドメインで判定するなら `email_verified` も見ているか。**App Check は認証やルールの代わりにならない**（公式が明記） |
+| Supabase | RLS は 03 の 1 節で実機を見る。コード側では**マイグレーションで作ったテーブルに RLS を有効にしているか**（ダッシュボードで作ると既定で有効、SQL で作ると無効のまま）、`GRANT` を明記しているか（2026-10-30 から既存プロジェクトでも新規テーブルへの自動 `GRANT` が止まる）、`supabase/config.toml` で `verify_jwt = false` の Edge Function が自前で認証か署名検証をしているか（**`false` であること自体は指摘にしない。** 新しい API キーへの移行で公式が `false` を勧めるページがあり、公式の文書の間でも推奨が食い違っている） |
+| Firebase | ルールに `allow read, write: if true` や期限付きのテストモードが残っていないか。**`request.auth != null` だけで認可したつもりになっていないか**（ログインした誰でも通る）。メールのドメインで判定するなら `email_verified` も見ているか。**App Check は認証やルールの代わりに数えない**（公式はこれらを「補う」ものと位置づけている）。HTTP の関数（`onRequest`）は `invoker` を書かなければ公開され、呼び出し可能な関数（`onCall`）は常に公開される。**関数の中で `request.auth` などで認証しているか**を見る |
 | Clerk | **`clerkMiddleware()` は既定で何も保護しない。** Route Handler と Server Action の中で `auth()` を確かめているか |
 | Convex | **公開の `query` / `mutation` は誰でも呼べる。** すべての関数で引数の検証と `ctx.auth.getUserIdentity()` を行っているか。内部からだけ呼ぶ関数を `internal` にしているか |
 | Auth0 など外部の認証基盤 | API 側でアクセストークンの `aud` / `iss` / `exp` / `scope` を検証しているか。**ID トークンで API を呼んでいないか** |
@@ -651,7 +651,8 @@ grep -rnE 'libphonenumber|parsePhoneNumber|isValidPhoneNumber|\+81' --include='*
 **枠組み本体の脆弱性は `npm audit` に頼らず、公式のアドバイザリ一覧を直接見る。** 件数が多く、
 修正が出た直後はスキャンのデータベースに載っていないことがある。とくに次の 2 つは重い。
 
-- **React Server Components の RCE（CVE-2025-55182、いわゆる React2Shell。Next.js 側は CVE-2025-66478）。**
+- **React Server Components の RCE（CVE-2025-55182、いわゆる React2Shell）。** Next.js の公式は CVE-2025-66478 で案内しているが、
+  **この番号は CVE-2025-55182 の重複として取り下げられている**（NVD で Rejected）。KEV やスキャンの照合は 55182 で行われるので、台帳には 55182 で書く。
   CVSS 10.0、認証不要。App Router を使う Next.js 15.x / 16.x（修正は 15.0.5 / 15.1.9 / 15.2.6 / 15.3.6 /
   15.4.8 / 15.5.7 / 16.0.7）、`react-server-dom-*` 19.0〜19.2.0 を使う他の枠組みも該当する。回避策は無く、
   公式は **「2025-12-04 13:00（太平洋時間）の時点で未修正のまま公開していたなら、秘密情報をすべて入れ替える」**

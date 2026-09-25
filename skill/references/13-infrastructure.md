@@ -163,8 +163,10 @@ git log --all --oneline -- '*.tfstate' 2>/dev/null | head
 - タイムアウトと同時実行数の上限。**無制限なら、費用が青天井になる**（02 の F 節）
 
 ```bash
-# 認証なしで公開される関数の URL（SAM / CloudFormation / CDK / Terraform / Serverless Framework / Firebase）
-grep -rnE 'AuthType.*NONE|authType:.*NONE|FunctionUrlAuthType|authorization_type[[:space:]]*=[[:space:]]*"NONE"|aws_lambda_function_url|^[[:space:]]*url:[[:space:]]*true|invoker:[[:space:]]*.?public' \
+# 認証なしで公開される関数の URL（SAM / CloudFormation / CDK / Terraform / Serverless Framework / Firebase）。
+# Firebase の HTTP 関数は invoker を書かなければ公開になるので、明示の public だけでなく onRequest / onCall も数え、
+# 関数の中で認証しているかを読む
+grep -rnE 'AuthType.*NONE|authType:.*NONE|FunctionUrlAuthType|authorization_type[[:space:]]*=[[:space:]]*"NONE"|aws_lambda_function_url|^[[:space:]]*url:[[:space:]]*true|invoker:[[:space:]]*.?public|https\.onRequest\(|https\.onCall\(|onRequest\(|onCall\(' \
   --include='*.y*ml' --include='*.ts' --include='*.json' --include='*.tf' . 2>/dev/null | grep -v node_modules
 ```
 
