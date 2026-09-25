@@ -200,3 +200,5 @@ grep -rnE 'AuthType.*NONE|authType:.*NONE|FunctionUrlAuthType|authorization_type
 ```
 
 **「先に調べること」を手順に書く。** これを書かない指摘は、実行されないか、事故になる。
+
+**台帳の列との対応**（`references/04-findings-register.md`）: 「事実」は指摘事項、「影響」は想定される影響、「是正」と「注意」は是正案（注意は先頭に置く）。修正指示書では「戻し方」の欄を必ず埋める（`references/05-remediation-plan.md` の「戻し方」）。確認の方法は、定義ファイルなら「コード」、管理画面で作った資源なら「実機」か「依頼者の確認」。

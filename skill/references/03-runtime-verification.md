@@ -4,6 +4,22 @@
 
 このフェーズの目的は、フェーズ 1 で「要確認」にした項目を、**事実として確定させる**ことだけ。判断や修正は後の工程でやる。
 
+## 目次
+
+- [2 つのモード](#2-つのモード) — モード A（自分で見る）/ モード B（手順を渡して結果を受け取る）
+- [確認項目](#確認項目)
+- [1. データ層の権限](#1-データ層の権限) — RLS・GRANT・ポリシーの中身・迂回経路・Supabase の Realtime と Storage
+- [2. 外形テストで裏を取る](#2-外形テストで裏を取る)
+- [3. 認証ポリシー](#3-認証ポリシー) — 管理コンソールの多要素認証、SMS を送っている場合
+- [4. バックアップと復旧](#4-バックアップと復旧)
+- [5. ネットワークとアクセス経路](#5-ネットワークとアクセス経路)
+- [6. 鍵の構成](#6-鍵の構成)
+- [7. 環境の分離](#7-環境の分離) — Vercel の Deployment Protection と Secret
+- [8. エッジ・WAF・流量制御](#8-エッジwaf流量制御)
+- [9. DNS とメール送信ドメイン](#9-dns-とメール送信ドメイン) — DMARC・サブドメインの乗っ取り・証明書
+- [10. 本番エンドポイントの外形テスト](#10-本番エンドポイントの外形テスト) — ヘッダ・URL の揺れ・外から見えてはいけないもの・curl で見えないところ
+- [記録のしかた](#記録のしかた) — 一覧表と、確認できなかったこと
+
 ---
 
 ## 2 つのモード
@@ -25,6 +41,8 @@
 - **貼り付けてそのまま実行できる形**で SQL とコマンドを渡す
 - 「結果を要約して」ではなく「返ってきた行をそのまま貼って」と頼む。要約されると、判定に必要な情報が落ちる
 - 画面の設定値は、項目名を列挙して「それぞれの値」を聞く
+- 渡す文面は `templates/` にある。SQL は `templates/client-sql-request.md`、管理画面の設定は `templates/client-console-checklist.md`、
+  ログインが要るブラウザの確認は `templates/client-browser-checklist.md`
 
 **混在してよい。** SQL は依頼者に実行してもらい、外形テストは自分でやる、という分け方は普通に起きる。
 
@@ -41,7 +59,7 @@
 ### 問い
 
 1. 全テーブルで行レベルの権限制御が有効になっているか
-2. 匿名／一般利用者の資格に、業務データへの読み書き権限が付いていないか
+2. 匿名／一般利用者の資格に付いた業務データへの読み書き権限が、行レベルの権限制御で絞られているか（RLS を使わない構成なら、権限そのものが付いていないか）
 3. 権限ポリシーの対象に、公開ロールが含まれていないか
 4. コードに定義が無かったテーブルは実在するか。実在するならその設定はどうなっているか
 
@@ -97,7 +115,32 @@ where table_schema = 'public' and grantee in ('anon', 'authenticated')
 group by table_name, grantee order by table_name, grantee;
 ```
 
-**読み方の注意**: 付与されている権限の種類を区別する。`SELECT` / `INSERT` / `UPDATE` / `DELETE` は行のデータに届く権限で、これが公開ロールに付いていれば直ちに指摘になる。一方 `REFERENCES` / `TRIGGER` / `TRUNCATE` はデータを読む権限ではない。ただし `TRUNCATE` は**行レベルのポリシーで止まらない**操作なので、DB への直接接続経路と併せて評価する。
+**読み方の注意**: 付与があることだけでは判定しない。**`GRANT` と RLS は別に見る**（この節の末尾）。
+
+- **RLS を前提にした構成**（Supabase のように、公開ロールのまま API からテーブルを読む構成）では、
+  `authenticated` への `SELECT` / `INSERT` / `UPDATE` / `DELETE` の付与は**正常**で、守りは RLS のポリシーが担う。
+  公開データを未ログインで読ませるなら `anon` への `SELECT` も正常
+- **指摘になるのは、RLS が無効なテーブル（1 番で `rowsecurity = false`）、または素通しのポリシー（次の小節）がある
+  テーブルに、公開ロールへの `SELECT` / `INSERT` / `UPDATE` / `DELETE` の付与があるとき。** 付与と RLS の穴が揃うと、
+  公開鍵だけで行に届く
+- **RLS を使わない構成**（アプリが特権資格で接続し、アプリのガードで守る構成。02 の E-1）では、公開ロールへの付与は
+  そもそも要らない。付与があれば、それ自体を指摘にする
+- `REFERENCES` / `TRIGGER` / `TRUNCATE` はデータを読む権限ではない。ただし `TRUNCATE` は**行レベルのポリシーで止まらない**
+  操作なので、DB への直接接続経路と併せて評価する
+
+```sql
+-- 公開ロールへのデータの権限があり、RLS が無効なテーブル（RLS 前提の構成では、ここに出たものが指摘になる）
+select g.table_name, g.grantee, string_agg(g.privilege_type, ' / ' order by g.privilege_type) as privs
+from information_schema.role_table_grants g
+join pg_tables t on t.schemaname = g.table_schema and t.tablename = g.table_name
+where g.table_schema = 'public'
+  and g.grantee in ('anon', 'authenticated', 'PUBLIC')
+  and g.privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+  and not t.rowsecurity
+group by g.table_name, g.grantee order by g.table_name, g.grantee;
+```
+
+素通しのポリシーがあるテーブルは、次の小節のクエリで洗い出し、この付与の一覧と突き合わせる。
 
 ### 有効なだけでは足りない。ポリシーの中身を読む
 
@@ -224,6 +267,8 @@ select policyname, cmd, roles, qual, with_check from pg_policies where schemanam
 **`GRANT` と RLS は別に見る。** Supabase は新規テーブルへの公開ロールの自動 `GRANT` を止める方向に変わった
 （2026-05 に新規プロジェクトの既定、**2026-10-30 から既存プロジェクトにも適用**）。`GRANT` が無ければ RLS より
 手前で拒否される。逆に、変更前に作ったテーブルには `GRANT` が付いたままなので、RLS の中身が全てになる。
+**どちらの場合も、付与の有無だけで指摘にしない。** 指摘になるのは、付与と RLS の穴（無効、または素通しのポリシー）が
+同じテーブルで揃ったときで、判定のしかたは 2 番のクエリの「読み方の注意」にまとめてある。
 
 ---
 
@@ -245,7 +290,7 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   "https://<endpoint>/rest/v1/<table>?select=id&limit=0"
 ```
 
-期待値は 401 か 403。**200 が返れば、その時点で最優先の指摘**になる。
+期待値は 401 か 403。**200 が返れば、個人情報を持つテーブルに公開鍵だけで届いている**ので、`references/04-findings-register.md` の問い 1 で P0 になる。**報告書を待たずに依頼者へ知らせる**（SKILL.md の「重大な露出は、見つけた時点で知らせる」）。
 
 ### 実データを取らない
 
@@ -572,7 +617,8 @@ curl -s https://<domain>/ | grep -oE '/_next/static/[^"]+\.js' | head -3 \
 curl -s "https://<domain>/sectest-$(date +%s)" | grep -iE 'stack|trace|exception|at .*\(.*:[0-9]+' | head -3
 ```
 
-- **`.git` や `.env` が 200 を返せば最優先の指摘。** ただし SPA の構成では、存在しないパスにも 200 で
+- **`.git` や `.env` の中身が返れば P0**（04 の問い 1。`.env` の鍵や `.git` の履歴から、認証の無い第三者がデータに届く）。
+  **報告書を待たずに依頼者へ知らせる。** ただし SPA の構成では、存在しないパスにも 200 で
   トップページを返すことがある。**中身の先頭数バイトだけで判定し、値は出さない**
 
 ```bash
@@ -612,7 +658,7 @@ curl -s -r 0-200 "https://<domain>/.env" | grep -qE '^[A-Z_]+=' && echo '.env �
 
 **実行した結果をそのまま残す。** 「問題ありませんでした」ではなく、返ってきた行、HTTP ステータス、画面の設定値を書く。
 
-```markdown
+````markdown
 ### 確認: 全テーブルの行レベルセキュリティ
 
 実行:
@@ -626,7 +672,7 @@ select schemaname, tablename, rowsecurity from pg_tables where schemaname = 'pub
 |---|---|---|
 | public | accounts | true |
 | ... | ... | ... |
-```
+````
 
 集約や整形をした場合は、**元の行数と、何をしたか**を添える。「<n> 行返ったが読みづらいので、テーブル×ロールで集約した結果を以下に示す（集約後 <m> 行、権限の総数は一致）」のように書く。
 
@@ -640,7 +686,8 @@ select schemaname, tablename, rowsecurity from pg_tables where schemaname = 'pub
 | 認証 | 多要素認証の登録状況 | 登録済み要素 0 件（管理者 <n> 名全員が未登録） | 問題あり | S-xx |
 | 事業継続 | バックアップ | 無償プランのため機能自体が無い | 問題あり | S-xx |
 
-判定は 3 値（問題なし／問題あり／判断保留）。参考情報として記録するだけの行には「参考」を使ってよい。
+判定は 3 値（問題なし／問題あり／判断保留）で、指摘の台帳と同じ意味で使う（`references/04-findings-register.md` の「判定・優先度・状態は別の軸」）。
+**「参考」は使わない。** 事実として記録しておくだけのもの（保有件数、最古の登録日など）は、この表ではなく台帳の「気づいたこと」に置く。
 
 ### 確認できなかったことを残す
 
