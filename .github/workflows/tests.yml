@@ -1,0 +1,79 @@
+# 検査を push と pull request のたびに回す。
+# このスキルが評価対象に求める基準（references/10-dependencies.md の 3-3）を、自分にも当てる:
+#   - Action はコミットハッシュで固定する（タグは差し替えられる）
+#   - 権限は読み取りだけ。pull_request_target は使わない（他人のコードが秘密情報と同居する）
+#   - checkout の認証情報をディスクに残さない。キャッシュは使わない（信頼できない入力で汚される）
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * 0'   # 週 1 回、検査の検査（mutations.sh）まで回す
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS は評価者の標準の環境（bash 3.2、BSD の grep / sed）。Linux は GNU の道具と mawk
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Python の依存（openpyxl）
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet -r requirements-dev.txt
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Linux の道具（dig・mawk・zip）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends dnsutils mawk zip unzip
+          sudo update-alternatives --set awk /usr/bin/mawk || true
+
+      - name: macOS では bash 3.2 で回す
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          ln -sf /bin/bash "$RUNNER_TEMP/bin/bash"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Node の依存（ロックファイルどおり、インストール時のスクリプトは動かさない）
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Playwright のブラウザ
+        run: npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
+
+      - name: 道具の版
+        run: |
+          bash --version | head -1
+          ls -l "$(command -v awk)"   # awk -W version は BSD の awk で標準入力を待つので使わない
+          node --version
+
+      - name: 自己監査（検査を含む）
+        if: github.event_name != 'schedule'
+        run: ./tests/self-audit.sh
+
+      - name: 自己監査（検査の検査を含む）
+        if: github.event_name == 'schedule'
+        run: ./tests/self-audit.sh --full

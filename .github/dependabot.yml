@@ -1,0 +1,22 @@
+# 依存の更新。題材（tests/fixtures）の依存の定義ファイルは .fixture を付けてあるので対象にならない。
+# 公開直後の版は入れない（references/10-dependencies.md の 3-1 のクールダウン）。
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
