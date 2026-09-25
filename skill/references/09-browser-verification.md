@@ -99,13 +99,14 @@ Object.keys(localStorage)
 
 ### 4. CSP が実際に効いているか
 
-ヘッダに CSP があっても、効いていないことがある。`unsafe-inline` が入っていれば、XSS に対しては実質的に効かない。
+ヘッダに CSP があっても、効いていないことがある。**nonce も hash も `strict-dynamic` も無いまま** `unsafe-inline` が入っていれば、XSS に対しては実質的に効かない。
 
 **手順**: ページを開いてコンソールを見る。CSP 違反があれば `Refused to ...` が出る。**違反が 1 件も出ないこと自体は、効いている証拠にならない**（違反する記述が無いだけかもしれない）。
 
 **ヘッダの中身を読むほうが確実**。次の 3 つを見る。
 
-- `script-src` に `unsafe-inline` / `unsafe-eval` があるか → あれば XSS に対しては効いていない
+- `script-src`（無ければ `default-src`）に `unsafe-eval` があるか、**nonce・hash・`strict-dynamic` の無いまま** `unsafe-inline` があるか → あれば XSS に対しては効いていない。nonce や hash と並んでいる `unsafe-inline` はブラウザが無視するので指摘しない（`references/07-web-vulnerabilities.md` の 1-6）
+- `base-uri` と `object-src` があるか
 - `Content-Security-Policy-Report-Only` になっていないか → 観測中で、ブロックはしていない
 - `frame-ancestors` しか無い CSP → クリックジャッキング対策であって、XSS 対策ではない
 

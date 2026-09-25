@@ -16,6 +16,7 @@
 8. [競合と二重送信](#8-競合と二重送信)
 9. [業務ロジックの欠陥](#9-業務ロジックの欠陥)
 10. [言語・処理系に固有のもの](#10-言語処理系に固有のもの)
+11. [リアルタイム通信](#11-リアルタイム通信websocket購読チャネル)
 
 ---
 
@@ -90,12 +91,29 @@ CSP は XSS を防ぐものではなく、**成立したときの被害を狭め
 
 | 指令 | 無いとどうなるか |
 |---|---|
-| `script-src` | 外部への任意のスクリプト読み込みを止められない。**`frame-ancestors` だけの CSP は XSS に対して無力** |
-| `connect-src` | 盗んだデータの外部送信を止められない |
-| `frame-ancestors` | クリックジャッキングを防げない |
-| `object-src` | 古いプラグイン経由の実行を防げない |
+| `script-src` | 外部への任意のスクリプト読み込みを止められない。**`frame-ancestors` だけの CSP は XSS に対して無力**。無ければ `default-src` が使われるので、**実際に効く値で判定する** |
+| `connect-src` | 盗んだデータの外部送信を止められない（同じく `default-src` に委ねられる） |
+| `object-src` | 古いプラグイン経由の実行を防げない（同じく `default-src` に委ねられる）。推奨は `'none'` |
+| `base-uri` | `<base>` を差し込まれると相対パスのスクリプトの読み込み先が変わる。**`default-src` に委ねられない**ので、別に要る。推奨は `'none'` か `'self'` |
+| `frame-ancestors` | クリックジャッキングを防げない。**`default-src` に委ねられない** |
 
-`unsafe-inline` や `unsafe-eval` が入っていると、`script-src` があっても効果が大きく落ちる。ただし**既存サイトにいきなり厳格な CSP を入れると壊れる**ので、是正案は `Content-Security-Policy-Report-Only` での観測から始める段取りにする。
+**`'unsafe-inline'` は、あるだけで判定しない。** 同じ `script-src` に nonce・hash・`'strict-dynamic'` の
+いずれかがあれば、ブラウザは `'unsafe-inline'` を**無視する**（CSP Level 3）。古いブラウザ向けに
+並べて書くのは推奨されている形で、指摘にはならない。**問題になるのは「nonce も hash も
+`'strict-dynamic'` も無いのに `'unsafe-inline'` がある」とき。** `'unsafe-eval'` はこの打ち消しの対象外なので、
+あれば効果が落ちる。
+
+**許可リスト型（`script-src cdn.example.com`）の CSP は迂回されやすい。** 許可したドメインに
+JSONP や古いライブラリがあれば、それを踏み台にされる。推奨は nonce または hash と `'strict-dynamic'`、
+`object-src 'none'`、`base-uri 'none'` の組み合わせ（いわゆる strict CSP）。Next.js で nonce を使うと
+そのページは動的レンダリングになる点を是正案に書き添える。
+
+**Trusted Types が主要ブラウザで揃った**（2026-02 に Baseline）。`require-trusted-types-for 'script'` が
+あれば、`innerHTML` などへの文字列の代入そのものが止まる。是正案として `innerHTML` の代わりに
+Sanitizer API の `setHTML()` を示せる（`setHTMLUnsafe()` は安全側ではない）。**`setHTML()` はまだ全ブラウザで
+揃っていない**ので、是正案に書く前に MDN で対応状況を確かめ、未対応のブラウザでの代替（DOMPurify など）を添える。
+
+ただし**既存サイトにいきなり厳格な CSP を入れると壊れる**ので、是正案は `Content-Security-Policy-Report-Only` での観測から始める段取りにする。
 
 ### 1-7. 検証
 
@@ -114,10 +132,32 @@ curl -s "https://<domain>/search?q=SECTEST-1234%3Cb%3E" | grep -o 'SECTEST-1234[
 
 **探し方**: 状態を変えるエンドポイントの認証方式を確認する。
 
-- **Cookie でセッションを持っている** → CSRF の対象。トークン検証か、`SameSite` 属性による防御があるか
-- **`Authorization` ヘッダでトークンを送る** → ブラウザが自動送信しないので、原則として成立しない
+- **Cookie でセッションを持っている** → CSRF の対象。トークン検証、`Sec-Fetch-Site` / `Origin` の照合、`SameSite` 属性のどれで防いでいるか
+- **`Authorization` ヘッダでトークンを送る** → ブラウザが自動送信しないので、古典的な CSRF は成立しにくい。
+  ただし**画面の JS が URL の値をそのまま API のパスに連結している**と、正規の呼び出しを別のエンドポイントへ
+  向け直せる（クライアントサイドのパストラバーサル。CSPT2CSRF）。トークンごと送られるので防げない
+
+```bash
+# 枠組みの防御と Fetch Metadata
+grep -rnE 'Sec-Fetch-Site|sec-fetch-site|checkOrigin|allowedOrigins|csrf' --include='*.ts' --include='*.js' --include='*.mjs' . | head
+# CSPT: URL の値を API のパスへ直に連結している箇所
+grep -rnE 'fetch\(`[^`]*\$\{(params|searchParams|query|router\.query|slug|id)' --include='*.ts' --include='*.tsx' . | head
+```
 
 **判定**: `SameSite=Lax` が付いていれば、クロスサイトからの POST は送られない。多くの構成でこれが実質的な防御になっている。**その場合は「対策済み」ではなく「`SameSite` に依存している」と書く。** 将来 `SameSite=None` が必要になったとき（別ドメインへの埋め込み、決済からの戻りなど）に前提が崩れるため。
+
+**`SameSite` を「付いている」と読む前に、明示されているかを確かめる。** 属性の無い Cookie を Lax として
+扱うのは Chromium 系だけで、**Firefox と Safari では付いていないのと同じ**になる。Chrome の既定 Lax にも、
+発行から 2 分以内は POST でも送る例外がある。**明示の `SameSite=Lax` / `Strict` が無ければ、防御は無いものとして判定する。**
+
+**`SameSite` はサブドメインからの攻撃を止めない。** 同じ登録ドメインの別サブドメイン（利用者がコンテンツを
+置けるもの、乗っ取られたもの）からの要求は same-site 扱いで送られる。OWASP も `SameSite` を多層防御の 1 つと
+位置づけ、CSRF 対策の代わりにはしていない。推奨の順は、**枠組みの組み込み対策 → トークン →
+Fetch Metadata（`Sec-Fetch-Site` で cross-site の状態変更を拒否し、`Origin` と `Host` の照合を予備にする）**。
+
+**Server Actions は枠組みが `Origin` と `Host` を照合している。** `next.config` の
+`serverActions.allowedOrigins` に `'null'` やワイルドカードが入っていないかを見る
+（16.0.1〜16.1.6 には `Origin: null` がこの照合を素通りする不具合があった。CVE-2026-27978）。
 
 `GET` で状態が変わるエンドポイントがあれば、`SameSite` でも防げない。02 の A-4 と併せて見る。
 
@@ -162,6 +202,17 @@ grep -rnE 'redirect|redirectTo|returnTo|next=|callbackUrl' --include='*.ts' . | 
 **判定**: 送信先が定数、または環境変数で固定されていれば低リスク。そう書く。可変なら、許可リストの有無とスキーム制限を見る。
 
 **見落としやすい経路**: リクエストの `Host` ヘッダや、フレームワークが提供する「現在のオリジン」から URL を組み立てている箇所。リバースプロキシの設定次第で、`Host` は攻撃者が指定できる。PDF 生成のフォント取得、画像の取り込み、OGP の取得でよく出る。
+
+**枠組みの設定が SSRF の入口になることがある。** Next.js では、`rewrites()` / `redirects()` の宛先を要求の値から
+組み立てている、ミドルウェアで要求ヘッダをそのまま `NextResponse.next({ headers })` に渡している、
+画像最適化の `remotePatterns` にワイルドカードがある、の 3 つが 2025〜2026 年の SSRF の条件になった
+（CVE-2025-57822、CVE-2026-64645 ほか）。自前でホストしている場合は WebSocket の upgrade 経由のもの
+（CVE-2026-44578）もある。
+
+```bash
+grep -nE 'rewrites|redirects|destination:|remotePatterns|domains:' next.config.* 2>/dev/null
+grep -rn 'NextResponse.next({ *headers' middleware.* proxy.* src/ 2>/dev/null
+```
 
 ---
 
@@ -219,7 +270,9 @@ curl -sI https://<domain>/<認証が要るパス> | grep -iE 'cache-control|vary
 **何が問題か**:
 
 - **利用者ごとに違う内容を返すページが、CDN やプロキシでキャッシュされる**と、他人の画面が配られる。`Cache-Control: private` か `no-store` が付いているかを確認する
-- フレームワークの既定が「できる限りキャッシュする」側に倒れている構成では、動的なページに明示の指定が要る
+- フレームワークの既定が「できる限りキャッシュする」側に倒れている構成では、動的なページに明示の指定が要る。
+  **既定は版で違う。** Next.js は 14 以前が「既定でキャッシュする」側で、15 から `GET` の Route Handler と
+  クライアント側のルーターキャッシュが既定でキャッシュしなくなった。**版を確かめてから判定する**
 - `Vary` の指定漏れ。認証状態やロールで内容が変わるのに `Vary` が無いと、混ざる
 - **エラーページやリダイレクトがキャッシュされる**ケースもある
 
@@ -246,10 +299,25 @@ for p in "/mypage" "/mypage/x.css" "/mypage;x.js" "/mypage%2Fx.css" "/mypage/..%
 done
 ```
 
-**中身が返るうえに、共有キャッシュ可の指定が付いていれば成立する。** 2026 年には、
-あるフレームワークとホスティングの組み合わせで、クエリ引数を検証していなかったために
-認証済みの応答が公開キャッシュへ入る不具合が公表されている。**枠組み側の問題なので、
-アプリのコードを読むだけでは見つからない。** 版と、ホスティング側の告知を確認する。
+**中身が返るうえに、共有キャッシュ可の指定が付いていれば成立する。** 上のループに、
+区切り文字と正規化の食い違いを突く形（`%23`、`%3F`、`%00`）と、RSC の応答を取る形
+（末尾に `.rsc`、クエリに `?_rsc=x`）も足す。
+
+**枠組みとホスティング側の不具合で起きることがある。アプリのコードを読むだけでは見つからない。**
+版で当たりを付ける。
+
+| 公表 | 識別子 | 条件 | 修正版 |
+|---|---|---|---|
+| 2026-02 | CVE-2026-27118 | `@sveltejs/adapter-vercel` の ISR 用の内部クエリ引数がすべてのルートで効き、認証済みの応答が他人へ配られる | 6.3.2 |
+| 2025-08 | CVE-2025-57752 | Next.js の画像最適化が、Cookie で内容の変わる API ルートの画像をキャッシュして他人へ配る | 14.2.31 / 15.4.5 |
+
+```bash
+grep -A1 -E '"node_modules/(@sveltejs/adapter-vercel|next|nuxt|astro)"' package-lock.json 2>/dev/null | grep '"version"' | head
+# scripts/audit_grep.sh の 1b 節が版を出し、上の 2 件は機械的に判定する
+```
+
+**同種の不具合は毎月のように出ている。** 枠組みの公式アドバイザリ一覧（github.com の各リポジトリの
+`security/advisories`）で、キャッシュに関わるものが対象の版に当たらないかを評価のたびに見る。
 
 **エッジで認可を判定してキャッシュする構成**は、この観点で特に丁寧に見る。
 判定結果ごとキャッシュされると、権限の違う利用者へ同じ応答が配られる。
@@ -262,7 +330,15 @@ done
 
 **何が問題か**: アプリ側で件数を数えてから書き込む実装は、同時に叩かれると両方が通る。
 
-**判定**: DB の一意制約、トランザクション、行ロック、DB トリガーのいずれかで担保されているか。アプリのチェックだけなら指摘になる。**担保されていれば、それは評価できる実装として記録する。**
+**判定**: DB の一意制約、トランザクション、行ロック、DB トリガーのいずれかで担保されているか。アプリのチェックだけなら指摘になる。
+**「同時に叩かれることは滅多にない」は成り立たない。** 1 つの TCP パケットに 20〜30 本の要求を詰めて
+1 ミリ秒未満の差で同時に届ける手法（single-packet attack）が一般的な道具に入っている。
+数えてから書く実装は、狙われればほぼ確実に破られる前提で判定する。
+
+**このスキルでは試さない。** 同時に書き込む試験は状態を変える。確かめる必要があるなら、
+依頼者に検証環境での確認を依頼する（`references/03-runtime-verification.md` のモード B）。
+
+**担保されていれば、それは評価できる実装として記録する。**
 
 ---
 
@@ -282,17 +358,150 @@ done
 grep -rnE '\.update\(\s*(body|req\.body|data|input)\s*\)|\.update\(\{\s*\.\.\.' --include='*.ts' .
 ```
 
+**検索条件を利用者に組み立てさせていないか（ORM Leak）。** 絞り込みの項目名や演算子を外部入力から取り、
+そのまま ORM の `where` に渡していると、関連を辿って**パスワードのハッシュやトークンを 1 文字ずつ漏らせる**
+（`password: { startsWith: "a" }` を繰り返す形）。Prisma・Django・Sequelize に加え、Supabase が使う
+PostgREST でも成立する（2025-12 の研究）。**PostgREST 系では、公開鍵で呼べる API が任意の列で絞り込めること
+自体がこの経路になる**ので、03 の 1 節で機微な列が読める状態に無いかを併せて見る。
+
+```bash
+grep -rnE 'where:\s*(body|input|req\.body|params|query|filters?)\b|findMany\(\{\s*where:\s*[a-z]+\s*\}|\.filter\(\*\*(request|data)' --include='*.ts' --include='*.py' . | head
+```
+
 ---
 
 ## 10. 言語・処理系に固有のもの
 
 該当する構成のときだけ見る。
 
-- **プロトタイプ汚染**（JavaScript）: 外部入力の深いマージ、`Object.assign` の再帰実装、クエリ文字列のパース
+- **プロトタイプ汚染**（JavaScript）: 外部入力の深いマージ、`Object.assign` の再帰実装、クエリ文字列のパース。
+  **2026 年には枠組み自身の不具合として RCE の前段になった例がある**（React Router・SvelteKit）ので、優先度を低く見積もらない
+- **Unicode の正規化**: 検証した後で `normalize('NFKC')` などをかけていないか。検証を通った文字列が、正規化で `/` や `<` に化ける
 - **安全でないデシリアライズ**: `pickle`（Python）、`Marshal`（Ruby）、`ObjectInputStream`（Java）に外部入力を渡していないか
 - **テンプレートインジェクション**: テンプレート文字列自体を外部入力から組み立てていないか
 - **正規表現の破滅的後退**: 外部入力を受ける正規表現に、入れ子の量指定子（`(a+)+` の形）が無いか
-- **GraphQL**: イントロスペクションの公開、クエリの深さ・複雑度の制限、型を跨いだ到達
+- **GraphQL**: イントロスペクションの公開、クエリの深さ・複雑度の制限、型を跨いだ到達。**バッチやエイリアスで 1 回の要求に
+  確認コードを大量に詰め、要求単位のレート制限をすり抜ける**形も見る
+- **HTTP の要求の食い違い（desync）**: 自前のリバースプロキシを前段に置き、上流を HTTP/1.1 で繋いでいる構成だけが対象。
+  マネージドのホスティングならアプリ側の論点は小さい。**本番では絶対に試さない**（他の利用者の応答が混ざる）
+
+---
+
+## 11. リアルタイム通信（WebSocket・購読・チャネル）
+
+**HTTP の認可をどれだけ丁寧に見ても、ここは別の入口として残る。** チャット、通知、共同編集、
+管理画面の即時更新のような機能は、画面に出すデータを購読の経路でも配っている。
+**AI で作ったアプリでは、公式のサンプルをそのまま写して、認証の無い購読が本番に出ている**ことが多い。
+
+`scripts/audit_grep.sh` の 23 節が、使っている仕組みと認可の手がかりを出す。
+
+### 11-1. どの仕組みでも共通して見ること
+
+| 問い | なぜ |
+|---|---|
+| 接続のときに認証しているか | 公式のサンプルの多くは無認証のエコーサーバー |
+| **購読（チャネル・ルーム・トピック）ごとに認可しているか** | 接続の認証だけでは「ログインした誰でも、どのルームにも入れる」 |
+| ルーム名・トピック名を**クライアントから受け取ってそのまま使っていないか** | `user:<他人の ID>` を指定すれば他人宛ての配信を受け取れる |
+| メッセージごとに認可しているか（送信できる操作） | 接続した後の送信は HTTP のガードを通らない |
+| **ログアウトや権限の剥奪で接続が切れるか** | 多くの仕組みは接続時にしか判定しない |
+| メッセージの大きさと頻度に上限があるか | 1 本の接続で資源を使い切れる |
+
+### 11-2. Cookie で認証する WebSocket は Origin を検証する（CSWSH）
+
+**WebSocket のハンドシェイクには CORS が掛からない。** ブラウザは別サイトのページからでも、
+利用者の Cookie を付けて接続する。サーバーが `Origin` ヘッダを許可リストで照合していなければ、
+攻撃者のページが利用者の権限で購読・送信できる（Cross-Site WebSocket Hijacking）。
+Socket.IO の `cors` オプションは long-polling にしか効かず、WebSocket の Origin を絞るには
+`allowRequest` を使う（公式が明記）。2025 年にも開発サーバー（Vite、webpack-dev-server）や
+IDE の拡張機能で、Origin を検証していなかったことによる CVE が出ている。
+
+```bash
+# WebSocket のサーバーと、認証・Origin 検証の手がかり
+grep -rnE 'new (WebSocketServer|Server)\(|WebSocket\.Server|upgradeWebSocket|experimental_upgradeWebSocket|defineWebSocketHandler|@app\.websocket' \
+  --include='*.ts' --include='*.js' --include='*.py' . | grep -v node_modules
+grep -rnE 'io\.use\(|allowRequest|verifyClient|handleUpgrade|headers\.origin|handshake\.(auth|headers)' --include='*.ts' --include='*.js' . | grep -v node_modules
+# クライアントの指定したルームにそのまま入れていないか
+grep -rnE 'socket\.join\(|disconnectSockets\(' --include='*.ts' --include='*.js' . | grep -v node_modules
+```
+
+**サーバーの定義があるのに Origin の検証が 1 件も無ければ、それだけで当たりが付く。**
+Socket.IO の `io.use()` は接続ごとに 1 回しか走らないので、**接続後に権限が変わっても反映されない**。
+ログアウトで `disconnectSockets()` などを呼んで切っているかを見る。
+
+**Vercel の Functions が WebSocket に対応した**（2026-06 に公開ベータ）。公式のサンプルは認証も Origin の検証も
+無いエコーサーバーで、**写せばそのまま無認証の入口になる**。
+
+### 11-3. Supabase Realtime
+
+**既定では開いている。** チャネルは `private: true` を付けない限り public で、公式の言い方では
+「認証無しに誰でもそのトピックを購読できる」。**クライアントで `private: true` を付けていても、
+管理画面の「Allow public access」を無効にしない限り、`private` を外して同じトピックに入り直せる**
+（公式は「private を強制するには、この設定を無効にする」と書いている）。
+
+| 経路 | 何が起きるか |
+|---|---|
+| Broadcast / Presence の public チャネル | 公開鍵（ブラウザに配られている）を持つ誰でも、**トピック名さえ分かれば受信も送信もできる**。トピック名が `room:<連番>` のように推測できれば、全部屋に入れる |
+| private チャネルのポリシー | `realtime.messages` の RLS。**`to authenticated using (true)` のようにトピックを照合していない**と、ログインした誰でも全チャネルに入れる。`realtime.topic()` を照合しているかを読む |
+| Postgres Changes（テーブルの変更の購読） | `supabase_realtime` の publication に入れたテーブルの変更が流れる。RLS が有効なら読める行だけが届く。**RLS が無効なテーブルを入れると、全行の変更が公開鍵の購読者に流れる** |
+| Postgres Changes の DELETE | **公式に「DELETE には RLS が適用されない」とある。** RLS が有効なテーブルでは削除前の行は主キーだけになるが、RLS が無効で `replica identity full` のテーブルでは、**削除された行の全列が購読者全員に届く** |
+| 権限の変化 | 購読の可否は**接続して購読した時点と、新しい JWT を送った時点でしか判定されない**（公式に「接続の間キャッシュされる」とある）。ロールを剥奪しても、JWT の期限が切れるまで受信が続く |
+
+**Realtime 自体の勧告も続いている。** 2026-09-24 に公開された勧告（High、2.137.14 以下、2026-09-25 の確認時点で修正版の記載なし）は、
+public チャネルでは「いかなる認可も関与しない」と明記したうえで、Broadcast を送れる者が他の購読者へ
+テーブルの変更のイベントを偽造して配れる、としている。**public チャネルを使っていれば、その時点で影響を受ける前提で見る。**
+
+```bash
+grep -rnE '\.channel\(|postgres_changes|private:[[:space:]]*(true|false)|setAuth\(' --include='*.ts' --include='*.tsx' --include='*.js' . | grep -v node_modules
+grep -rniE 'supabase_realtime|replica identity full|realtime\.(messages|topic|send|broadcast_changes)' --include='*.sql' .
+```
+
+実機で見ることは `references/03-runtime-verification.md` の 1 節。
+
+### 11-4. Firebase
+
+- **Realtime Database の `.read` / `.write` は下の階層へ継承され、子で取り消せない。** 親に
+  `".read": "auth != null"` があれば、子でどれだけ絞っても効かない
+- **ルールは絞り込みではない。** Firestore の `onSnapshot` にも普通のクエリと同じルールが掛かるが、
+  `allow read` を `get`（1 件）と `list`（一覧）に分けていないと、ID を知らなくても一覧で全件を購読できる。
+  逆に `get` だけ絞って `list` を開けたままにしている形もある
+- テストモードで作ったデータベースは、期限まで**誰でも読み書きできる**
+
+`scripts/audit_grep.sh` の 19 節がルールの危ない書き方を、23 節が購読の場所を出す。
+
+### 11-5. マネージドの配信サービスと SSE
+
+| 仕組み | 既定 | 見落とされる穴 |
+|---|---|---|
+| Pusher | 接頭辞の無いチャネルは認可不要。`private-` / `presence-` だけが認可のエンドポイントを通る | 認可のエンドポイントが**チャネル名を照合せずに署名する**（公式のサンプルがそうなっていて「本番でやるな」と注記されている）。個人宛ての配信を public チャネルで流している |
+| Ably | 公式は「API キーをクライアントに置くな」としている | キーをブラウザに置いている。トークンの capability に `"*"`（全チャネル）を渡している |
+| Liveblocks | `publicApiKey` は「利用者がどの部屋のデータにも触れる」もので、試作か公開ページ用 | 本番で `publicApiKey` を使っている。`allow("org:*", ...)` のような広いワイルドカード |
+| PartyKit | 既定で認証無しに接続を受け付ける | `onBeforeConnect` で検証していない |
+| Convex | 関数は既定で公開。リアクティブクエリも公開の `query` そのもの | `query` の中で `ctx.auth.getUserIdentity()` を見ていない（`scripts/audit_grep.sh` の 19 節） |
+| GraphQL Subscriptions | 購読は HTTP の context を通らない | WebSocket 側の `onConnect` / `context` で認証していない。`withFilter` が無く全購読者に配っている |
+| SSE（`text/event-stream`） | 通常の Route Handler と同じ | ハンドラの中で認可していない。**トークンを URL に載せている**（`EventSource` はヘッダを付けられないので起きやすい） |
+
+### 11-6. 検証
+
+**ハンドシェイクと参加の応答だけを見る。** 購読を維持しない。送信（publish・broadcast・track）をしない。
+依頼者の許可を得た対象に限る。
+
+```bash
+# 正規の Origin と、無関係の Origin の 2 本を送り、応答を比べる（どちらも Cookie は付けない）
+for o in "https://<domain>" "https://example.invalid"; do
+  printf '%-28s ' "$o"
+  curl -si --http1.1 -m 5 -H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" \
+    -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" -H "Origin: $o" \
+    "https://<domain>/<WebSocket のパス>" | head -1
+done
+```
+
+- **両方 101** → Origin を検証しておらず、認証も無しに接続できる。最優先
+- **正規の Origin だけ 101** → Origin は検証している
+- **両方 401 / 403** → 認証で拒否している。Origin の検証の有無はこれだけでは分からないので、コードで確かめる
+
+Socket.IO なら `/socket.io/?EIO=4&transport=websocket` に送る。**認証が要る確かめ方
+（他人のチャネル名で Pusher の認可エンドポイントを呼ぶ、など）は評価者が行わない。**
+依頼者が用意した試験用のアカウントで、依頼者自身に確かめてもらう（`references/03-runtime-verification.md` のモード B）。
 
 ---
 
