@@ -5,7 +5,7 @@
 ## 目次
 
 1. [進め方](#進め方)
-2. [A. 認可 — 最優先](#a-認可--最優先) — A-1 ハンドラごとのガード / A-2 ロール判定の根拠 / A-3 IDOR / A-4 GET での状態変更 / A-5 ミドルウェアと枠組みの迂回
+2. [A. 認可 — 最初に見る](#a-認可--最初に見る) — A-1 ハンドラごとのガード / A-2 ロール判定の根拠 / A-3 IDOR / A-4 GET での状態変更 / A-5 ミドルウェアと枠組みの迂回
 3. [B. 認証と資格情報](#b-認証と資格情報) — B-1 パスワード / B-2 セッション / B-3 周辺経路と多要素 / B-4 JWT / B-5 OAuth・OIDC
 4. [C. 秘密情報の扱い](#c-秘密情報の扱い) — C-1 クライアントへの露出（LLM の鍵、AIza の鍵）/ C-2 履歴 / C-3 用途の分離 / C-4 URL
 5. [D. 入力と出力](#d-入力と出力) — D-1 インジェクション / D-2 XSS / D-3 出力の無害化 / D-4 検証の位置
@@ -109,7 +109,7 @@ git log --all --oneline | wc -l   # 走査した履歴の本数を報告書に�
 
 ---
 
-## A. 認可 — 最優先
+## A. 認可 — 最初に見る
 
 事故の大半はここで起きる。他のどの観点よりも時間を使う。
 
@@ -249,7 +249,7 @@ grep -m1 -A2 '"node_modules/next"' package-lock.json 2>/dev/null
 | 公表 | 識別子 | 迂回の条件 | 修正版 |
 |---|---|---|---|
 | 2025-03 | CVE-2025-29927（Next.js） | `x-middleware-subrequest` ヘッダ | 上記 |
-| 2025-11〜12 | CVE-2025-64765、続報 CVE-2025-66202（Astro） | `/%61dmin` のような URL エンコード。続報は二重エンコード（`/%2561dmin`） | 5.15.8 では不十分で、続報の修正は **5.16.3**（公式の CHANGELOG に二重エンコードによる迂回の修正として記載。続報の勧告の修正版の欄は空のまま。2026-09-25 に確認） |
+| 2025-11〜12 | CVE-2025-64765、続報 CVE-2025-66202（Astro） | `/%61dmin` のような URL エンコード。続報は二重エンコード（`/%2561dmin`） | 5.15.8 では不十分で、続報の修正は **5.16.3**（公式の CHANGELOG に二重エンコードによる迂回の修正として記載。続報の勧告の修正版の欄は空のまま。2026-09-25 に確認）。**GitHub の勧告データベース（npm audit と Dependabot が使うもの）は 5.15.8 を修正版として扱うので、5.15.8〜5.16.2 はスキャンで検出されない。** ロックファイルの版で判定する |
 | 2026-05 | CVE-2026-44574（Next.js） | クエリで動的ルートの値を差し替える | 15.5.16 / 16.2.5（同時期の続報を含めると 15.5.18 / 16.2.6） |
 | 2026-05 | CVE-2026-44575、続報 CVE-2026-45109（Next.js） | App Router の `.rsc` や segment-prefetch の URL が matcher に掛からない（初回の修正が不完全） | 15.5.18 / 16.2.6 |
 | 2026-07 | CVE-2026-64642（Next.js） | App Router を Turbopack でビルドし、`i18n.locales` が 1 件 | 16.2.11（**16.x だけが対象**） |
@@ -573,7 +573,7 @@ RLS を有効にしていないテーブル、`search_path` を固定しない�
 grep -rhoE 'from\(["'"'"']([a-z_]+)["'"'"']\)' --include=*.ts . | sort -u
 ```
 
-**何が問題か**: 定義がリポジトリに無いテーブルは、**本番の設定が誰にも分からない状態**にある。コードから権限設定を検証できないので、実機確認の最優先対象になる。この時点では「要確認」として起票し、実機で確定させる。
+**何が問題か**: 定義がリポジトリに無いテーブルは、**本番の設定が誰にも分からない状態**にある。コードから権限設定を検証できないので、実機確認で最初に見る対象になる。この時点では判定を付けず、「監査の成果物」の 3（実機確認が必要な項目の一覧）に載せて、実機で確定させる。確かめられなければ未確認事項（U-x）に残す。
 
 ### E-3. 一貫性の担保
 
@@ -678,7 +678,7 @@ grep -rnE 'libphonenumber|parsePhoneNumber|isValidPhoneNumber|\+81' --include='*
   15.4.8 / 15.5.7 / 16.0.7）、`react-server-dom-*` 19.0〜19.2.0 を使う他の枠組みも該当する。回避策は無く、
   公式は **「2025-12-04 13:00（太平洋時間）の時点で未修正のまま公開していたなら、秘密情報をすべて入れ替える」**
   と書いている。**是正は版上げと秘密情報の入れ替えの二段にする。** 版上げだけでは、既に抜かれた鍵が生きている。入れ替えと、露出していた期間の悪用の調査は、元の指摘の枝番で別のタスクにする（`references/05-remediation-plan.md` の「秘密情報の入れ替え」）。
-  後続の DoS とソース露出（CVE-2025-55183 / 55184 / 67779）もあるので、React 側は 19.0.4 / 19.1.5 / 19.2.4 以上
+  後続の DoS とソース露出（CVE-2025-55183 / 55184 / 67779。修正は 19.0.3 / 19.1.4 / 19.2.3）と、さらに続く CVE-2026-23864（修正は 19.0.4 / 19.1.5 / 19.2.4）があるので、React 側は 19.0.4 / 19.1.5 / 19.2.4 以上
 - **サポートの切れた版。** Next.js は 16.x（Active LTS）と 15.x（Maintenance LTS）だけに修正が出る。14 以前には出ない。
   15.x の修正は最新の 15.x に minor として出るので、**15 系でも古い minor に留まっていれば修正は入らない**。
   **サポート外の版を使っていること自体が指摘になる**
@@ -747,7 +747,7 @@ grep -rnE 'catch\s*\([^)]*\)\s*\{\s*\}|catch:\s*pass|except[^:]*:\s*pass|\.catch
   --include='*.ts' --include='*.py' . | head -20
 ```
 
-**認可・認証・署名検証の周りで例外を握りつぶしていないかを最優先で見る。**
+**認可・認証・署名検証の周りで例外を握りつぶしていないかを、いちばん先に見る。**
 「トークンの検証が例外で落ちたが、`catch` して先へ進む」は、検証していないのと同じになる。
 
 - 検証が失敗したときと、**検証そのものが実行できなかったとき**で、同じ結果になっているか
@@ -822,11 +822,11 @@ grep -rnE 'constructEvent|verifySignature|createHmac|hmac\.new|compare_digest|ti
 
 ```bash
 # 予測できる乱数。トークンや ID に使っていれば指摘
-grep -rnE "${EX}" 'Math\.random\(|\brandom\.random\(|\brand\(\)|mt_rand\(|uniqid\(|Random\(\)' \
+grep -rnE --exclude-dir=node_modules --exclude-dir=vendor 'Math\.random\(|\brandom\.random\(|\brand\(\)|mt_rand\(|uniqid\(|Random\(\)' \
   --include='*.ts' --include='*.js' --include='*.py' --include='*.php' --include='*.java' .
 
 # 暗号として使える乱数
-grep -rnE 'crypto\.randomBytes|crypto\.randomUUID|getRandomValues|secrets\.token|SecureRandom|random_bytes' .
+grep -rnE --exclude-dir=node_modules --exclude-dir=vendor 'crypto\.randomBytes|crypto\.randomUUID|getRandomValues|secrets\.token|SecureRandom|random_bytes' .
 ```
 
 **何が問題か**: **`Math.random()` は暗号用ではない。** 生成された値から次を予測できる。
@@ -875,7 +875,7 @@ B-1 で「弱くないか」を見た。**どう直すか**まで書けるよう
 **探し方**: 証明書の検証を切っていないか。**「動かないからとりあえず無効化」がそのまま残る。**
 
 ```bash
-grep -rnE "${EX}" \
+grep -rnE --exclude-dir=node_modules --exclude-dir=vendor \
   'rejectUnauthorized[[:space:]]*:[[:space:]]*false|verify[[:space:]]*=[[:space:]]*False|InsecureSkipVerify[[:space:]]*:[[:space:]]*true|CURLOPT_SSL_VERIFYPEER[[:space:]]*,[[:space:]]*(false|0)|NODE_TLS_REJECT_UNAUTHORIZED|ServerCertificateValidationCallback' .
 ```
 

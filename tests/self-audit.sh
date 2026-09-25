@@ -81,6 +81,12 @@ vague="$(grep -rnE 'おそらく問題な|たぶん大丈夫|多分大丈夫|や
 if [[ -z "$vague" ]]; then ok "判定を丸投げする表現（おそらく問題ない／やや懸念）が、禁止の文脈以外に無い"
 else ng "判定を丸投げする表現が残っている" "$(printf '%s' "$vague" | head -3 | cut -c1-120 | tr '\n' ' ')"; fi
 
+# 3-2b. 04 の 3 軸の外の言い回し。「最優先」は優先度（P0〜P4）と別の尺度に見え、「要確認」は判定の 4 つ目の値に見える。
+#       どちらも 2.18.0 で全資料から外した（監査の順序は「最初に見る」、確かめる前のものは実機確認が必要な項目の一覧か U-x）
+axis="$(grep -rnE '最優先|「要確認」' "$SKILL"/SKILL.md "$SKILL"/references/*.md "$SKILL"/templates/*.md "$SKILL"/scripts/make_register.py 2>/dev/null || true)"
+if [[ -z "$axis" ]]; then ok "04 の 3 軸の外の言い回し（最優先・「要確認」）が無い"
+else ng "04 の 3 軸の外の言い回しが残っている" "$(printf '%s' "$axis" | head -3 | cut -c1-120 | tr '\n' ' ')"; fi
+
 # 3-3. 作業メモ
 memo="$(grep -rnE '\bTODO\b|\bFIXME\b|\bTBD\b|仮置き|後で直す|あとで直す' \
           "$SKILL"/SKILL.md "$SKILL"/references/*.md "$SKILL"/templates/*.md 2>/dev/null \

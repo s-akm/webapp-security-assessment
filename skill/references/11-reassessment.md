@@ -20,7 +20,7 @@
 
 ### 0. 前回の成果物を読む
 
-**台帳・修正指示書・サマリの 3 つを先に読む。** 特に次の 3 つを取り出しておく。
+**台帳・修正指示書・サマリの 3 つを先に読む。** 特に次のものを取り出しておく。
 
 - **未確認事項（U-x）の一覧** — 前回「調べれば分かる」と書いたものは、今回こそ確定させる
 - **見送りと判断保留の一覧** — 前提が変わっていないかを見る（利用者数が増えた、扱う情報が増えた）
@@ -61,7 +61,7 @@ Server Actions の関数、マイグレーションで足したテーブルと�
 ```bash
 bash scripts/audit_grep.sh <repo> > audit-grep-<今回の日付>.txt
 bash scripts/recon.sh https://<domain> > recon-<今回の日付>.txt
-node scripts/browser_probe.mjs https://<domain> > browser-<今回の日付>.txt   # Playwright があれば
+NODE_PATH="$HOME/.cache/wsa-playwright/node_modules" node scripts/browser_probe.mjs https://<domain> > browser-<今回の日付>.txt   # 09 の「自動化」の手順で入れた Playwright
 diff audit-grep-<前回の日付>.txt audit-grep-<今回の日付>.txt | grep -E '^[<>]' | head -80
 ```
 

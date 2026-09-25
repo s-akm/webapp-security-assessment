@@ -2,6 +2,8 @@
 評価者へ（渡す前にこのコメントを消す）
 - SQL は references/03-runtime-verification.md の 1 節・3 節のものを、依頼者が一度に流せる形にしたもの
   （ポリシーは storage・realtime のスキーマも一度に取る）。03 を直したら、ここも合わせる
+- Q2 の（a）は 03 の 2 番の集約版。Q3 で素通しのポリシーが見つかったテーブルは、（b）ではなく（a）と突き合わせる
+  （（b）は行ごとの権限制御が無効なテーブルだけを出す）
 - 対象の構成に無いもの（Storage・Realtime・多要素認証を使っていない等）は、番号ごと消してから渡す
 - ロール名（anon / authenticated）とスキーマ名（public）は構成に合わせて書き換える
 - 返ってきた結果は台帳に戻す（references/04-findings-register.md の「依頼者の確認の結果を戻す」）
@@ -57,7 +59,26 @@ order by rowsecurity, tablename;
 
 ```
 
-## Q2. 公開の権限があり、行ごとの権限制御が無効なテーブル
+## Q2. 公開の権限（全件と、行ごとの権限制御が無効なもの）
+
+2 つの SQL を順に実行し、それぞれの結果を貼ってください。
+
+（a）公開の権限の全件（テーブルと相手ごとにまとめたもの）
+
+```sql
+select table_name, grantee, string_agg(privilege_type, ' / ' order by privilege_type) as privs
+from information_schema.role_table_grants
+where table_schema = 'public' and grantee in ('anon', 'authenticated', 'PUBLIC')
+group by table_name, grantee order by table_name, grantee;
+```
+
+```
+返ってきた行数:
+結果（そのまま貼り付け）:
+
+```
+
+（b）公開の権限があり、行ごとの権限制御が無効なテーブル
 
 ```sql
 select g.table_name, g.grantee, string_agg(g.privilege_type, ' / ' order by g.privilege_type) as privs

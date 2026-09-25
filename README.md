@@ -208,7 +208,7 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 |---|---|
 | `recon.sh` | `curl`、`dig`（無くても DNS 以外は動く） |
 | `audit_grep.sh` | `grep`、`git`（任意） |
-| `scan_secrets.sh` | `grep`、`iconv`（任意）、`unzip`（xlsx を見るとき） |
+| `scan_secrets.sh` | `grep`、`iconv`（任意）、`unzip`（Office の文書を見るとき） |
 | `make_register.py` | `openpyxl` |
 | `browser_probe.mjs` | Node.js 20 以降、`playwright` 1.63（評価対象のリポジトリには入れず、`NODE_PATH` で渡す） |
 
@@ -273,8 +273,8 @@ grep -rnE 'の 2[a-z] 節|の 2[a-z]（|=== 2[a-z]' skill/ tests/   # 例: 2 系
 - **`audit_grep.sh` の 19 節以降はファイルに書かれたものしか見ない。** 管理画面で作ったテーブル、
   管理画面の Realtime の設定、組織単位の GitHub の設定はコードに現れない。題材で確かめてあるのは
   「書かれていれば拾う」ことまで
-- **`audit_grep.sh` は大きなリポジトリで遅い。** 3 万ファイル規模（約 800 MB）で約 11 分（1 節と 2 節の書き方を
-  直す前は約 17 分）。macOS の grep は選択肢の多い正規表現が遅く、1 本で 30 秒かかる。残りは読む量そのものが
+- **`audit_grep.sh` は大きなリポジトリで遅い。** 数万ファイル規模で 10 分前後（1 節と 2 節の書き方を
+  直す前は 1.6 倍かかった）。macOS の grep は選択肢の多い正規表現が遅く、1 本で 30 秒かかる。残りは読む量そのものが
   原因なので、モノレポなら対象のアプリのディレクトリだけを渡す（SKILL.md にも書いた）
 - **単一の入口で自前にルーティングする構成**（Cloudflare Workers の `fetch`、Lambda）は、
   ハンドラの数を機械的に数えられない。分岐を目で追う必要がある

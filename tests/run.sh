@@ -117,6 +117,11 @@ else ng "パイプで grep -q に渡していない（pipefail のもとで確�
 ml="$(LC_ALL=C awk '/^```/ { inb = !inb; next }
   inb && /grep/ { l = $0; n = gsub(/\047/, "", l); if (n % 2 == 1 && $0 ~ /\|\\?$/) print FILENAME ":" FNR }' \
   "$SKILL"/SKILL.md "$SKILL"/references/*.md "$SKILL"/templates/*.md)"
+# 資料のコマンド例が、スクリプトの中でしか定義していない変数（audit_grep.sh の EX / EXA）を使っていないか。
+# 空の変数がパターンになり、本来のパターンはファイル名として扱われ、全行に一致する（02 の N・O 節がそうだった）
+ex="$(grep -nE '"\$\{?EXA?[}\[@"]' "$SKILL"/SKILL.md "$SKILL"/references/*.md "$SKILL"/templates/*.md 2>/dev/null || true)"
+if [[ -z "$ex" ]]; then ok "資料のコマンド例が、スクリプトの中の変数に頼らない"
+else ng "資料のコマンド例が、スクリプトの中の変数に頼らない" "$(printf '%s' "$ex" | head -3 | cut -c1-120)"; fi
 if [[ -z "$ml" ]]; then ok "資料の grep の例で、パターンを引用符の中で改行していない"
 else ng "資料の grep の例で、パターンを引用符の中で改行していない" "$(printf '%s' "$ml" | head -3 | tr '\n' ' ')（-e で分けて書く）"; fi
 if [[ -z "$mb" ]]; then ok "変数名の直後に全角文字が続かない（bash 3.2 で止まる書き方）"

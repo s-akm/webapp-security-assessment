@@ -2,7 +2,7 @@
 
 コードを読んでも分からないことがある。DB の権限が実際にどう設定されているか、バックアップが本当に取れているか、WAF が有効か。**リポジトリに答えが書いていない項目は、実環境を見るまで確定しない。**
 
-このフェーズの目的は、フェーズ 1 で「要確認」にした項目を、**事実として確定させる**ことだけ。判断や修正は後の工程でやる。
+このフェーズの目的は、フェーズ 1 で実機確認が必要な項目に挙げたもの（`references/02-code-audit.md` の「監査の成果物」の 3）を、**事実として確定させる**ことだけ。判断や修正は後の工程でやる。
 
 ## 目次
 
@@ -140,7 +140,8 @@ where g.table_schema = 'public'
 group by g.table_name, g.grantee order by g.table_name, g.grantee;
 ```
 
-素通しのポリシーがあるテーブルは、次の小節のクエリで洗い出し、この付与の一覧と突き合わせる。
+素通しのポリシーがあるテーブルは、次の小節のクエリで洗い出し、**2 番のクエリ（公開ロールへの付与の全件）**と突き合わせる。
+直前のクエリは行レベルの権限が無効なテーブルだけを出すので、有効で素通しのポリシーを持つテーブルは載らない。
 
 ### 有効なだけでは足りない。ポリシーの中身を読む
 
@@ -153,13 +154,18 @@ group by g.table_name, g.grantee order by g.table_name, g.grantee;
 | `auth.uid() = user_id` | 本人の行だけ。意図どおり |
 | `user_id = current_setting('...')` のような**クライアント由来の値** | **利用者が自分で名乗った値で絞っている。** 詐称できるなら意味がない |
 | `cmd` が `ALL` で `with_check` が無い | 読めるだけのつもりが、書き込みも通る |
+| `WITH CHECK (true)`（`INSERT`・`UPDATE`・`ALL`） | **誰でも任意の中身の行を書き込める**（対象ロール次第）。`INSERT` のポリシーは `USING` を持たないので、`qual` ではなく `with_check` を読む |
 
 ```sql
--- 素通しになっているポリシーを洗い出す
+-- 素通しになっているポリシーを洗い出す。見る列はコマンドで違う:
+--   読む・消す・書き換える行の条件は qual（USING）。INSERT は USING を持たず、qual はいつも空
+--   書き込む行の中身の条件は with_check（WITH CHECK）。INSERT はここだけ。UPDATE と ALL は省けば USING が使われる
 select tablename, policyname, roles, cmd, qual, with_check
 from pg_policies
 where schemaname = 'public'
-  and (qual is null or btrim(qual) in ('true', '(true)'))
+  and (   (cmd <> 'INSERT' and (qual is null or btrim(qual) in ('true', '(true)')))
+       or (cmd = 'INSERT' and (with_check is null or btrim(with_check) in ('true', '(true)')))
+       or (cmd in ('UPDATE', 'ALL') and btrim(coalesce(with_check, '')) in ('true', '(true)')))
 order by tablename;
 ```
 
@@ -206,7 +212,7 @@ where n.nspname not in ('pg_catalog', 'information_schema') and p.prosecdef
 order by n.nspname, p.proname;
 
 -- 1b. その関数を公開ロールが実行できるか。PostgreSQL は既定で関数の実行権限を PUBLIC に与える
---     search_path を固定していない（proconfig が空の）定義者権限の関数も要確認
+--     search_path を固定していない（proconfig が空の）定義者権限の関数も、中身を読む対象にする
 select n.nspname, p.proname, p.proconfig,
        -- anon / authenticated は Supabase のロール。他の構成では、API が使うロール名に置き換える
        has_function_privilege('anon', p.oid, 'execute')          as anon_exec,
@@ -216,7 +222,7 @@ where p.prosecdef and n.nspname not in ('pg_catalog', 'information_schema');
 
 -- 2. ビューとマテリアライズドビュー。information_schema.views では security_invoker の有無が分からない
 --    reloptions の security_invoker が true / on / 1 / yes のどれでもないビューと、
---    マテリアライズドビュー（relkind = 'm'）はすべて要確認
+--    マテリアライズドビュー（relkind = 'm'。行レベルの権限が効かない）は、すべて中身を読む対象にする
 select n.nspname, c.relname, c.relkind, c.reloptions
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
 where c.relkind in ('v', 'm') and n.nspname not in ('pg_catalog', 'information_schema');
