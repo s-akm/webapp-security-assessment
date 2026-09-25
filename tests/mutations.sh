@@ -42,7 +42,7 @@ trap restore_all EXIT
 # 土台が壊れていると（出力が化けて節を切り出せない、など）、誤検出の検査は何も見ずに通り、
 # 「生きている」「生きていない」の両方が誤った結論になる（実際に起きた）。
 base="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-if printf '%s' "$base" | grep -q '✗'; then
+if printf '%s' "$base" | grep '✗' >/dev/null; then
   echo "変異を入れる前の run.sh が失敗している。先に直す:" >&2
   printf '%s\n' "$base" | grep '✗' | head -5 >&2
   exit 1
@@ -77,7 +77,7 @@ PY
   local out; out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   cp -p "$bak" "$target"; rm -f "$bak"; BACKUPS=("${BACKUPS[@]/$bak::$target/}")
 
-  if printf '%s' "$out" | grep -qE "✗ .*${expect}"; then
+  if printf '%s' "$out" | grep -E "✗ .*${expect}" >/dev/null; then
     printf '  \033[32m✓\033[0m %-52s → 「%s」が落ちた\n' "$name" "$expect"
     PASS=$((PASS+1))
   else
@@ -96,7 +96,7 @@ if [[ -z "$ONLY" || "実行権限" == *"$ONLY"* ]]; then
   chmod 644 "$SKILL/scripts/scan_secrets.sh"
   out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   chmod 755 "$SKILL/scripts/scan_secrets.sh"
-  if printf '%s' "$out" | grep -qE "✗ .*実行権限: scan_secrets.sh"; then
+  if printf '%s' "$out" | grep -E "✗ .*実行権限: scan_secrets.sh" >/dev/null; then
     printf '  \033[32m✓\033[0m %-52s → 「%s」が落ちた\n' "スクリプトの実行権限を外す" "実行権限"; PASS=$((PASS+1))
   else
     printf '  \033[31m✗\033[0m %-52s → 落ちなかった\n' "スクリプトの実行権限を外す"; FAIL=$((FAIL+1))
@@ -148,13 +148,15 @@ mutate "audit_grep: ハッシュ固定の除外を外す（誤検出）" "script
 mutate "audit_grep: private 指定の読み取りを壊す（誤検出）" "scripts/audit_grep.sh" "private: true のチャネルは咎めない" \
   's = s.replace("start && /private:[[:space:]]*true/ { priv=1 }", "start && /ZZZNOMATCH/ { priv=1 }")'
 mutate "audit_grep: Origin の検証を読み取らない（誤検出）" "scripts/audit_grep.sh" "Origin を検証していれば咎めない" \
-  's = s.replace("grep -qiE \x27origin|allowRequest|verifyClient\x27", "grep -qiE \x27ZZZNOMATCH\x27")'
+  's = s.replace("grep -iE \x27origin|allowRequest|verifyClient\x27", "grep -iE \x27ZZZNOMATCH\x27")'
 mutate "audit_grep: SMS の直接呼び出しの判定を外す" "scripts/audit_grep.sh" "API の直接呼び出し" \
   's = s.replace("if grep -rqE \"${EXA[@]}\" \x27messages\\.create\\(\x27", "if grep -rqE \"${EXA[@]}\" \x27ZZZNOMATCH\x27")'
 mutate "audit_grep: 伏字から URL の認証情報を外す" "scripts/audit_grep.sh" "設定の中の接続文字列の認証情報を伏せる" \
   's = "\n".join(l for l in s.split("\n") if "#://<伏字>@#g" not in l)'
 mutate "audit_grep: Convex の確認を次の関数へ持ち越す" "scripts/audit_grep.sh" "Convex の確認を次の関数へ持ち越さない" \
   's = s.replace("(ok ? \"認証の確認あり\" : \"★ 認証の確認なし\"); name=\"\"; ok=0 }", "(ok ? \"認証の確認あり\" : \"★ 認証の確認なし\"); name=\"\" }")'
+mutate "audit_grep: パスを空白でも分割する（旧不具合）" "scripts/audit_grep.sh" "空白を含むパスのマイグレーションも読む" \
+  's = s.replace("IFS=$\x27\\n\x27; set -f", "set -f")'
 mutate "audit_grep: React2Shell の修正版を取り違える" "scripts/audit_grep.sh" "React2Shell の修正前を判定" \
   's = s.replace("15.1) fix=15.1.9", "15.1) fix=15.1.0")'
 

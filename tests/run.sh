@@ -26,14 +26,14 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 # 期待する文字列が出力に含まれるか
 contains() {
   local label="$1" needle="$2" hay="$3"
-  if printf '%s' "$hay" | grep -qF -- "$needle"; then ok "$label"
+  if printf '%s' "$hay" | grep -F -- "$needle" >/dev/null; then ok "$label"
   else ng "$label" "「${needle}」が出力に無い"; fi
 }
 
 # 出力に含まれてはいけない文字列。誤検出していないかを見るのに使う。
 absent() {
   local label="$1" needle="$2" hay="$3"
-  if printf '%s' "$hay" | grep -qF -- "$needle"; then ng "$label" "「${needle}」を誤って出している"
+  if printf '%s' "$hay" | grep -F -- "$needle" >/dev/null; then ng "$label" "「${needle}」を誤って出している"
   else ok "$label"; fi
 }
 
@@ -41,7 +41,7 @@ absent() {
 head_ "1. 構造 — SKILL.md と実態が合っているか"
 
 # frontmatter
-if head -1 "$SKILL/SKILL.md" | grep -q '^---$'; then ok "SKILL.md に frontmatter がある"
+if head -1 "$SKILL/SKILL.md" | grep '^---$' >/dev/null; then ok "SKILL.md に frontmatter がある"
 else ng "SKILL.md に frontmatter がある"; fi
 for key in name description; do
   if grep -qE "^$key: " "$SKILL/SKILL.md"; then ok "frontmatter に $key がある"
@@ -87,6 +87,13 @@ done
 # その文字まで変数名として読み、set -u で止まる。実際に 1b 節がロックファイルの無い構成で止まっていた。
 # 構文検査（bash -n）では見つからないので、書き方で捕まえる。${v} と書けば起きない。
 mb="$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+# pipefail のもとで「… | grep -q」と書くと、grep -q が見つけた時点で終わり、書き手が SIGPIPE で落ちて
+# パイプライン全体が失敗扱いになる。見つかったのに「無い」と判定することが確率的に起きる（Linux で 200 回に 1 回）。
+# 検査の absent では、本当は出ている文字列を「出ていない」として素通りさせる。grep ... >/dev/null で読み切らせる。
+gq="$(grep -nE '(^|[^|])\|[[:space:]]*grep[[:space:]]+-q' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh 2>/dev/null \
+      | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#|s = s\.replace\(' || true)"
+if [[ -z "$gq" ]]; then ok "パイプで grep -q に渡していない（pipefail のもとで確率的に誤る書き方）"
+else ng "パイプで grep -q に渡していない（pipefail のもとで確率的に誤る書き方）" "$(printf '%s' "$gq" | head -3 | cut -c1-120)"; fi
 if [[ -z "$mb" ]]; then ok "変数名の直後に全角文字が続かない（bash 3.2 で止まる書き方）"
 else ng "変数名の直後に全角文字が続かない（bash 3.2 で止まる書き方）" "$(printf '%s' "$mb" | head -3 | cut -c1-120)"; fi
 if python3 -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" \
@@ -208,7 +215,7 @@ contains "audit_grep: 弱いハッシュ"               "createHash('md5')" "$A"
 contains "audit_grep: 証明書の検証を切っている"    "rejectUnauthorized" "$A"
 contains "audit_grep: XML の解析"                 "xml2js"            "$A"
 # 鍵の値がそのまま出ていないこと（伏字が効いているか）
-if printf '%s' "$A" | grep -qF 'sk_live_00000000000000000000TESTDUMMY'; then
+if printf '%s' "$A" | grep -F 'sk_live_00000000000000000000TESTDUMMY' >/dev/null; then
   ng "audit_grep: 鍵の値を伏字にする" "値がそのまま出力されている"
 else ok "audit_grep: 鍵の値を伏字にする"; fi
 # 同じ行が二重に出ていないこと
@@ -287,9 +294,9 @@ while IFS=: read -r fw mark guard danger; do
   # 免除する代わりに、そのことを資料（02 の A-1）に書いてある。
   if [[ "$fw" == "cloudflare-workers" ]]; then
     printf '  \033[33m-\033[0m audit_grep[%s]: 単一の入口のため数を数えない（設計どおり）\n' "$fw"
-  elif printf '%s' "$F" | grep -qF "← ガード検出なし"; then
+  elif printf '%s' "$F" | grep -F "← ガード検出なし" >/dev/null; then
     ok "audit_grep[$fw]: ガードの無いハンドラを名指しする"
-  elif printf '%s' "$F" | grep -qE '\(定義 [0-9]+ / ガード [0-9]+\)'; then
+  elif printf '%s' "$F" | grep -E '\(定義 [0-9]+ / ガード [0-9]+\)' >/dev/null; then
     ok "audit_grep[$fw]: 定義数とガード数の差で示す"
   else
     ng "audit_grep[$fw]: ガードの無いハンドラを示す" "空欄も定義／ガードの併記も出ていない"
@@ -325,16 +332,16 @@ if [[ -d "$ROOT/tests/fixtures/repo-realistic" ]]; then
   contains "audit_grep[realistic]: 生 SQL の組み立て" "name like" "$RE"
   # Server Actions。関数ごとにガードの有無を出せること。
   contains "audit_grep[realistic]: Server Actions のファイルを拾う" "app/actions/cart.ts" "$RE"
-  if printf '%s' "$RE" | sed -n '/=== 2c\./,/=== 2d\./p' | grep -qE 'addToCart[[:space:]]+ガードあり'; then
+  if printf '%s' "$RE" | sed -n '/=== 2c\./,/=== 2d\./p' | grep -E 'addToCart[[:space:]]+ガードあり' >/dev/null; then
     ok "audit_grep[realistic]: Server Action のガードありを関数単位で示す"
   else ng "audit_grep[realistic]: Server Action のガードありを関数単位で示す" "addToCart がガードありと出ない"; fi
-  if printf '%s' "$RE" | sed -n '/=== 2c\./,/=== 2d\./p' | grep -qE 'clearCart[[:space:]]+← ガード検出なし'; then
+  if printf '%s' "$RE" | sed -n '/=== 2c\./,/=== 2d\./p' | grep -E 'clearCart[[:space:]]+← ガード検出なし' >/dev/null; then
     ok "audit_grep[realistic]: Server Action のガードなしを関数単位で示す"
   else ng "audit_grep[realistic]: Server Action のガードなしを関数単位で示す" "clearCart が空欄と出ない"; fi
   # export していない内部関数は入口ではないので出さない
   absent "audit_grep[realistic]: 内部関数を入口に数えない" "recalc" "$RE"
   # ユーティリティをハンドラとして数えないこと（偽陽性）
-  if printf '%s' "$RE" | sed -n '/=== 2\. /,/=== 2b/p' | grep -qF "lib/db.ts"; then
+  if printf '%s' "$RE" | sed -n '/=== 2\. /,/=== 2b/p' | grep -F "lib/db.ts" >/dev/null; then
     ng "audit_grep[realistic]: ユーティリティをハンドラに数えない" "lib/db.ts が一覧に出ている"
   else ok "audit_grep[realistic]: ユーティリティをハンドラに数えない"; fi
 fi
@@ -375,7 +382,7 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   contains "audit_grep[基盤]: カード決済なら 06 を読ませる"          "references/06-frameworks.md"    "$S0"
   # 1b. 枠組みの版
   contains "audit_grep[版]: ミドルウェア迂回の修正前を判定"          "CVE-2025-29927 の修正前"        "$S1B"
-  contains "audit_grep[版]: React2Shell の修正前を判定"              "CVE-2025-66478）の修正前"       "$S1B"
+  contains "audit_grep[版]: React2Shell の修正前を判定"              "React2Shell（CVE-2025-55182"      "$S1B"
   contains "audit_grep[版]: adapter-vercel のキャッシュ不具合"       "CVE-2026-27118 の修正前"        "$S1B"
   absent   "audit_grep[版]: 15 系をサポート外と言わない"             "サポート外"                     "$S1B"
   # 4d. LLM の鍵
@@ -388,7 +395,7 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   contains "audit_grep[セッション]: Host ヘッダから URL を組む"      "app/api/reset/route.ts"         "$S10B"
   # 19. BaaS
   contains "audit_grep[基盤]: RLS を有効にしていないテーブル"        "★ public.profiles"              "$S19"
-  if printf '%s' "$S19" | grep -qE '★ public\.orders$'; then ng "audit_grep[基盤]: RLS を有効にしたテーブルを咎めない" "orders が★で出ている"
+  if printf '%s' "$S19" | grep -E '★ public\.orders$' >/dev/null; then ng "audit_grep[基盤]: RLS を有効にしたテーブルを咎めない" "orders が★で出ている"
   else ok "audit_grep[基盤]: RLS を有効にしたテーブルを咎めない"; fi
   absent   "audit_grep[基盤]: API に出ないスキーマは除く"            "audit_log"                      "$S19"
   contains "audit_grep[基盤]: search_path を固定しない定義者権限"    "admin_list_profiles（search_path の固定なし）" "$S19"
@@ -399,18 +406,18 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   contains "audit_grep[基盤]: user_metadata による認可"              "user_metadata を認可に使っている" "$S19"
   contains "audit_grep[基盤]: 公開バケット"                          "公開バケットの疑い"             "$S19"
   contains "audit_grep[基盤]: JWT の検証を外した Edge Function"      "stripe-hook"                    "$S19"
-  if printf '%s' "$S19" | grep -qE 'config\.toml: api$'; then ng "audit_grep[基盤]: verify_jwt = true の関数を咎めない" "api が出ている"
+  if printf '%s' "$S19" | grep -E 'config\.toml: api$' >/dev/null; then ng "audit_grep[基盤]: verify_jwt = true の関数を咎めない" "api が出ている"
   else ok "audit_grep[基盤]: verify_jwt = true の関数を咎めない"; fi
   contains "audit_grep[基盤]: Firebase の誰でも読めるルール"         "★ 誰でも: ./firestore.rules:5" "$S19"
   contains "audit_grep[基盤]: ログイン済みなら誰でも"               "ログイン済みなら誰でも: ./firestore.rules:8" "$S19"
   absent   "audit_grep[基盤]: 所有者を照合するルールは咎めない"      "firestore.rules:11"            "$S19"
   contains "audit_grep[基盤]: 何も保護しない clerkMiddleware"        "既定では何も保護しない"         "$S19"
-  if printf '%s' "$S19" | grep -qE 'convex/messages\.ts: list +★ 認証の確認なし'; then ok "audit_grep[基盤]: 認証を確かめない Convex の関数"
+  if printf '%s' "$S19" | grep -E 'convex/messages\.ts: list +★ 認証の確認なし' >/dev/null; then ok "audit_grep[基盤]: 認証を確かめない Convex の関数"
   else ng "audit_grep[基盤]: 認証を確かめない Convex の関数" "messages.ts の list が★で出ない"; fi
-  if printf '%s' "$S19" | grep -qE 'convex/tasks\.ts: mine +認証の確認あり'; then ok "audit_grep[基盤]: 認証を確かめる Convex の関数は咎めない"
+  if printf '%s' "$S19" | grep -E 'convex/tasks\.ts: mine +認証の確認あり' >/dev/null; then ok "audit_grep[基盤]: 認証を確かめる Convex の関数は咎めない"
   else ng "audit_grep[基盤]: 認証を確かめる Convex の関数は咎めない" "tasks.ts の mine が確認ありと出ない"; fi
   # 同じファイルの中でも関数ごとに見る。前の関数の確認を次の関数へ持ち越さない
-  if printf '%s' "$S19" | grep -qE 'convex/tasks\.ts: all +★ 認証の確認なし'; then ok "audit_grep[基盤]: Convex の確認を次の関数へ持ち越さない"
+  if printf '%s' "$S19" | grep -E 'convex/tasks\.ts: all +★ 認証の確認なし' >/dev/null; then ok "audit_grep[基盤]: Convex の確認を次の関数へ持ち越さない"
   else ng "audit_grep[基盤]: Convex の確認を次の関数へ持ち越さない" "tasks.ts の all が★で出ない"; fi
   # 20. CI
   contains "audit_grep[CI]: 固定していない Action"                   "actions/checkout@v4"            "$S20"
@@ -483,6 +490,12 @@ JS
   contains "audit_grep[版]: ロックファイルが無くても止まらない"      "package.json の宣言。解決結果ではない" "$NL"
   contains "audit_grep[版]: ロックファイルが無くても最後まで出す"    "=== 完了 ==="                   "$NL"
   absent   "audit_grep[版]: 宣言の範囲では版を判定しない"           "修正前"                            "$(printf '%s' "$NL" | sed -n '/=== 1b/,/=== 2\./p')"
+  # マイグレーションのパスに空白があっても読み飛ばさない（空白で分割していた旧不具合）
+  mkdir -p "$TMP/sp ace/supabase/migrations"
+  printf '{"dependencies":{"@supabase/supabase-js":"2"}}\n' > "$TMP/sp ace/package.json"
+  printf 'create table public.secrets (id int);\n' > "$TMP/sp ace/supabase/migrations/001 init.sql"
+  SPC="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/sp ace" 2>&1)"
+  contains "audit_grep[基盤]: 空白を含むパスのマイグレーションも読む" "★ public.secrets"          "$SPC"
   # 依存名は、実際のロックファイルのように間に integrity / dev が入っても取れること
   absent   "audit_grep[依存]: 取得元の URL の認証情報を伏せる"       "user:secret"                    "$S21"
   # 題材に無い構成では、これらの節を出さない（見たことにしない）
@@ -506,13 +519,13 @@ for fw in iac mobile; do
       contains "audit_grep[iac]: インフラの定義を検出"   "Terraform"                    "$C"
       contains "audit_grep[iac]: コンテナを検出"         "Dockerfile"                   "$C"
       contains "audit_grep[iac]: Kubernetes を検出"      "Kubernetes"                   "$C"
-      if printf '%s' "$C" | sed -n '/追加で読む資料:/,/※/p' | grep -qF "references/13-infrastructure.md"; then
+      if printf '%s' "$C" | sed -n '/追加で読む資料:/,/※/p' | grep -F "references/13-infrastructure.md" >/dev/null; then
         ok "audit_grep[iac]: 読む資料を名指しする"
       else ng "audit_grep[iac]: 読む資料を名指しする" "「追加で読む資料」に 13 が無い"; fi
       absent   "audit_grep[iac]: モバイルは要らないと言える" "references/14-mobile.md"  "$C" ;;
     mobile)
       contains "audit_grep[mobile]: モバイルを検出"       "android/"                     "$C"
-      if printf '%s' "$C" | sed -n '/追加で読む資料:/,/※/p' | grep -qF "references/14-mobile.md"; then
+      if printf '%s' "$C" | sed -n '/追加で読む資料:/,/※/p' | grep -F "references/14-mobile.md" >/dev/null; then
         ok "audit_grep[mobile]: 読む資料を名指しする"
       else ng "audit_grep[mobile]: 読む資料を名指しする" "「追加で読む資料」に 14 が無い"; fi
       absent   "audit_grep[mobile]: IaC は要らないと言える" "references/13-infrastructure.md" "$C" ;;
@@ -533,7 +546,7 @@ for fw in iac mobile; do
       # ここが最も大事。イメージに焼き込まれる値を出力に混ぜないこと。
       leaked=""
       for v in "npm_dummytokenfortest0000000000" "dummy_password_value"; do
-        printf '%s' "$C" | grep -qF -- "$v" && leaked="$leaked $v"
+        printf '%s' "$C" | grep -F -- "$v" >/dev/null && leaked="$leaked $v"
       done
       if [[ -z "$leaked" ]]; then ok "audit_grep[iac]: ビルド引数の値を伏字にする"
       else ng "audit_grep[iac]: ビルド引数の値を伏字にする" "出力に含まれた:$leaked"; fi ;;
@@ -583,7 +596,7 @@ done
 # 検出内容が読める形で出ているか（長いパスに食われて消えていないか）
 # 検出行が "./" で始まる（検査対象からの相対パス）こと。絶対パスのままだと、
 # パスの長さしだいで肝心の検出内容が表示幅から押し出される。
-if printf '%s' "$S" | grep -qE '^  \./README\.md:[0-9]+:'; then
+if printf '%s' "$S" | grep -E '^  \./README\.md:[0-9]+:' >/dev/null; then
   ok "scan_secrets: 検出行の中身が表示される（相対パスで出る）"
 else ng "scan_secrets: 検出行の中身が表示される" "検出行が相対パスで始まっていない"; fi
 # 日本語が文字化けしていないか
@@ -645,7 +658,7 @@ if n != 10: bad.append(f"API シートが {n} 行（10 のはず）")
 print("ALL OK" if not bad else " / ".join(bad))
 PYEOF
 )"
-  if printf '%s' "$V2" | grep -q '^ALL OK$'; then ok "make_register: 版と構成ごとの中身が正しい（2021/2025 の A10、個人情報 11 区分、IPA 6 大項目、API 10 行）"
+  if printf '%s' "$V2" | grep '^ALL OK$' >/dev/null; then ok "make_register: 版と構成ごとの中身が正しい（2021/2025 の A10、個人情報 11 区分、IPA 6 大項目、API 10 行）"
   else ng "make_register: 版と構成ごとの中身" "$V2"; fi
 
   # 集計数式が、その構成の指摘一覧シートを正しく指しているか
@@ -664,7 +677,7 @@ for path, expect in ((sys.argv[1], "6_指摘事項一覧"), (sys.argv[2], "3_指
     print(("OK " if found else "NG ") + path.rsplit("/", 1)[-1] + " -> " + expect)
 PY
 )"
-  if printf '%s' "$V" | grep -q '^NG'; then
+  if printf '%s' "$V" | grep '^NG' >/dev/null; then
     ng "make_register: 集計数式が指摘一覧シートを正しく指す" "$V"
   else ok "make_register: 集計数式が指摘一覧シートを正しく指す"; fi
 fi
@@ -708,7 +721,7 @@ for (const host of ["example.com", "cdn.example.com", "notgoogle.example.com"]) 
 console.log(bad === 0 ? "ALL OK" : `${bad} 件失敗`);
 NODE
 )"
-  if printf '%s' "$T" | grep -q '^ALL OK$'; then ok "browser_probe: 既知タグのラベル付け（12 種・誤判定 3 例）"
+  if printf '%s' "$T" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: 既知タグのラベル付け（12 種・誤判定 3 例）"
   else ng "browser_probe: 既知タグのラベル付け" "$T"; fi
 else
   printf '  \033[33m-\033[0m browser_probe（node が無いため省略）\n'
@@ -737,11 +750,11 @@ else
   contains "recon[実地]: 第三者オリジンを列挙"             "127.0.0.1:$PORT"      "$R1"
   contains "recon[実地]: 追加パスのステータスを出す"       "403"                  "$R1"
   # 自サイトの絶対 URL（canonical）が第三者に混ざらないこと。ポート付きでも同じ。
-  if printf '%s' "$R1" | sed -n '/第三者オリジン/,/既知タグ/p' | grep -qF "localhost:$PORT"; then
+  if printf '%s' "$R1" | sed -n '/第三者オリジン/,/既知タグ/p' | grep -F "localhost:$PORT" >/dev/null; then
     ng "recon[実地]: 自サイトを第三者に数えない" "localhost:$PORT が第三者として出ている"
   else ok "recon[実地]: 自サイトを第三者に数えない"; fi
   # 鍵の値をそのまま出していないこと
-  if printf '%s' "$R1" | grep -qE 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}'; then
+  if printf '%s' "$R1" | grep -E 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}' >/dev/null; then
     ng "recon[実地]: 鍵の値を伏字にする" "JWT がそのまま出力されている"
   else ok "recon[実地]: 鍵の値を伏字にする"; fi
 
@@ -771,7 +784,7 @@ else
     contains "recon[DNS]: DKIM セレクタを検出"              "resend._domainkey"       "$R3"
     contains "recon[DNS]: NS を取得"                        "ns1.example.invalid"     "$R3"
     # CAA と DS は返さない = 空で出ること（誤って何かを表示しない）
-    if printf '%s' "$R3" | grep -qE '^  CAA    : *$'; then ok "recon[DNS]: CAA が無ければ空で出す"
+    if printf '%s' "$R3" | grep -E '^  CAA    : *$' >/dev/null; then ok "recon[DNS]: CAA が無ければ空で出す"
     else ng "recon[DNS]: CAA が無ければ空で出す" "CAA の行に何か出ている"; fi
     # DMARC の rua に入っているアドレスを、出力に出さないこと（報告書に不要な個人情報）
     absent "recon[DNS]: DMARC の連絡先アドレスを出力に混ぜない" "dmarc@example.invalid" "$R3"
@@ -826,7 +839,7 @@ else
     for v in "dummy-token-value-should-not-be-printed" \
              "dummy-csrf-should-not-be-printed" \
              "dummyvalue123"; do
-      printf '%s' "$P" | grep -qF -- "$v" && leaked="$leaked $v"
+      printf '%s' "$P" | grep -F -- "$v" >/dev/null && leaked="$leaked $v"
     done
     if [[ -z "$leaked" ]]; then ok "browser_probe[実地]: Cookie と保存領域の値を出力しない"
     else ng "browser_probe[実地]: Cookie と保存領域の値を出力しない" "出力に含まれた:$leaked"; fi

@@ -35,7 +35,7 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 head_ "1. 検査が通るか"
 out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
 res="$(printf '%s' "$out" | grep -oE '成功 [0-9]+ / 失敗 [0-9]+' | tail -1)"
-if printf '%s' "$res" | grep -qE '失敗 0$'; then ok "tests/run.sh: $res"
+if printf '%s' "$res" | grep -E '失敗 0$' >/dev/null; then ok "tests/run.sh: $res"
 else ng "tests/run.sh: $res" "$(printf '%s' "$out" | grep -E '✗' | head -5 | tr '\n' ' ')"; fi
 
 # ==========================================================================
@@ -43,7 +43,7 @@ head_ "2. 検査が生きているか"
 if [[ $FULL -eq 1 ]]; then
   mout="$(bash "$ROOT/tests/mutations.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   mres="$(printf '%s' "$mout" | grep -oE '生きている検査 [0-9]+ / 生きていない [0-9]+' | tail -1)"
-  if printf '%s' "$mres" | grep -qE '生きていない 0'; then ok "tests/mutations.sh: $mres"
+  if printf '%s' "$mres" | grep -E '生きていない 0' >/dev/null; then ok "tests/mutations.sh: $mres"
   else ng "tests/mutations.sh: $mres" "$(printf '%s' "$mout" | grep -E '✗|\?' | head -5 | tr '\n' ' ')"; fi
 else
   warn "tests/mutations.sh は省略（--full で実行。8 分ほどかかる）" \
@@ -115,7 +115,7 @@ if [[ "$ver" == "$chlog" ]]; then ok "VERSION（${ver}）と CHANGELOG の先頭
 else ng "VERSION（${ver}）と CHANGELOG の先頭（${chlog}）が違う" "どちらかを更新し忘れている"; fi
 
 if [[ -f "$ROOT/dist/webapp-security-assessment-v$ver.skill" ]]; then
-  if unzip -l "$ROOT/dist/webapp-security-assessment-v$ver.skill" | grep -qE 'cases/|tests/|\.env'; then
+  if unzip -l "$ROOT/dist/webapp-security-assessment-v$ver.skill" | grep -E 'cases/|tests/|\.env' >/dev/null; then
     ng "配布物に cases/ tests/ .env が混入" "build.sh の除外を見直す"
   else ok "配布物（v${ver}）に cases/ tests/ が入っていない"; fi
 else
