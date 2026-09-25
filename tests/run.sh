@@ -661,8 +661,70 @@ JWT: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlhdCI6MTYwMH0.zz
 カード: 4111 1111 1111 1111
 select * from users を実行した。
 EOF
-# LC_ALL=C で走らせる。cut -c はロケールによってバイト単位で動き、日本語を
-# 途中で切って文字化けさせる。その条件を再現しないと、この検査は素通りする。
+# 鍵の形式と、個人情報の書き方の揺れ。1 行に 1 つだけ置き、行番号で「どの形式を拾えたか」を見る。
+# 拡張子で絞っていたころに素通りしていた .yml / .env / .har / .log / 大文字の .MD に分けて置く。
+# 値はすべて架空（DUMMY / FIXTURE を含む）。ドメインは .test / example.com だけを使う。
+cat > "$REP/keys.yml" <<'EOF'
+openai: sk-proj-FIXTUREDUMMY0123456789abcdefXYZ
+openai_old: sk-FIXTUREDUMMY0123456789abcdefFIXTUREDUMMY01234567
+anthropic: sk-ant-api03-FIXTUREDUMMY0123456789abcdef
+gh1: github_pat_11FIXTUREDUMMY0123456789_abcdefFIXTURE
+gh2: gho_FIXTUREDUMMY0123456789abcdefABCD
+twilio_sid: AC<HEX32>
+twilio_key: SK<HEX32>
+stripe_r: rk_live_FIXTUREDUMMY0123456789
+stripe_t: sk_test_FIXTUREDUMMY0123456789
+whsec: whsec_FIXTUREDUMMY0123456789abcdef
+npm: npm_FIXTUREDUMMY0123456789abcdefABCDEF
+slackapp: xapp-1-AFIXTUREDUMMY0-0123456789-abcdef
+slackhook: https://hooks.slack.test/services/TFIXTURE0/BFIXTURE0/DUMMYDUMMYDUMMYDUMMY
+aws: ASIAFIXTUREDUMMY0123
+sendgrid: SG.FIXTUREDUMMY01234567.FIXTUREDUMMY0123456789abcdef
+url: https://admin:FIXTUREDUMMYPASS9@api.example.com/v1
+EOF
+# Twilio の形の架空の値は、実行時に組み立ててから書く。鍵の形のままリポジトリに置くと、
+# GitHub の push protection が本物の鍵として push を止める（2.18.0 の公開で実際に止まった）
+H32=0123456789abcdef0123456789abcdef
+sed "s/<HEX32>/${H32}/" "$REP/keys.yml" > "$REP/keys.yml.t" && mv "$REP/keys.yml.t" "$REP/keys.yml"
+printf '%s\n' '{ "type": "service_account", "project_id": "fixture-dummy" }' > "$REP/sa.json"
+cat > "$REP/.env" <<'EOF'
+API_KEY=FIXTUREDUMMY0123456789abcdef
+aws_secret_access_key = FIXTUREDUMMY0123456789abcdefFIXTURE
+PASSWORD="FIXTUREDUMMYPassword0123"
+EOF
+printf '%s\n' '{"name": "Authorization", "value": "Bearer FIXTUREDUMMYTOKEN0123456789abcdef"}' > "$REP/req.har"
+printf '%s\n' '-----BEGIN PGP PRIVATE KEY BLOCK-----' > "$REP/pgp.log"
+cat > "$REP/NOTES.MD" <<'EOF'
+SELECT * FROM users;
+電話 09000000000
+電話 (03)0000-0000
+電話 03(0000)0000
+電話 +81 90 0000 0000
+電話 ０９０－００００－００００
+番号 １２３４５６７８９０１２
+アメックス 3782 822463 10005
+住所 渋谷区神南1-2-3
+住所 横浜市西区みなとみらい2丁目3番1号
+〒150-0000 へ送付
+EOF
+# xlsx の台帳。grep はバイナリとして読み飛ばすので、展開して見ているかを確かめる。
+# 空白を含むパスに置く。セルの文字列・インライン文字列・コメントの 3 か所に 1 つずつ置く。
+mkdir -p "$REP/台帳 dir"
+python3 - "$REP/台帳 dir/台帳 v1.xlsx" <<'PYEOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("[Content_Types].xml", "<Types/>")
+    z.writestr("xl/sharedStrings.xml",
+               '<?xml version="1.0"?><sst><si><t>接続: postgresql://fixture:FIXTUREDUMMY0@db.example.com/app</t></si>'
+               '<si><t xml:space="preserve">鍵 AKIAFIXTUREDUMMY0123 &amp; 電話 090-0000-0000</t></si></sst>')
+    z.writestr("xl/worksheets/sheet1.xml",
+               '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>'
+               'sk-proj-FIXTUREDUMMY0123456789abcdefXYZ</t></is></c></row></sheetData></worksheet>')
+    z.writestr("xl/comments1.xml",
+               '<comments><commentList><comment ref="B2"><text><t>〒150-0000</t></text></comment></commentList></comments>')
+PYEOF
+# LC_ALL=C で走らせる。伏字の前に残す部分はバイト単位で切るため、日本語の途中で切れる。
+# 不完全なバイト列を落とす処理が効いているかは、この条件でないと確かめられない。
 S="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"
 for pair in "JWT 形式のトークン" "接続文字列" "メールアドレス" "電話番号らしき並び" \
             "クレジットカード番号らしき並び" "住所らしき記述" "select * の使用"; do
@@ -675,12 +737,95 @@ if printf '%s' "$S" | grep -E '^  \./README\.md:[0-9]+:' >/dev/null; then
   ok "scan_secrets: 検出行の中身が表示される（相対パスで出る）"
 else ng "scan_secrets: 検出行の中身が表示される" "検出行が相対パスで始まっていない"; fi
 # 日本語が文字化けしていないか
-# 切り詰めが文字の途中で起きると、不正なバイト列が出力に混ざる。
+# 伏字の前に残す部分が文字の途中で切れると、不正なバイト列が出力に混ざる。
 # 特定の文字があるかではなく「出力全体が正しい UTF-8 か」で見る。
-# 長い行は 200 文字で切られるので、末尾の文字を期待値にすると正しい実装でも落ちる。
 if printf '%s' "$S" | python3 -c "import sys; sys.stdin.buffer.read().decode('utf-8')" 2>/dev/null; then
   ok "scan_secrets: 日本語が壊れない（出力が正しい UTF-8）"
 else ng "scan_secrets: 日本語が壊れない" "出力に不正な UTF-8 バイト列が混ざっている"; fi
+
+# 形式ごとに、正しい種類の節に、その行が出ているか。
+# 種類の見出しがあるだけでは、どの形式を取りこぼしたかが分からない。
+ss_sec() { printf '%s\n' "$S" | awk -v l="[検出] $1" '$0 == l { f = 1; next } /^\[検出\]/ { f = 0 } /^$/ { f = 0 } f'; }
+while IFS='|' read -r label loc what; do
+  [[ -n "$label" ]] || continue
+  contains "scan_secrets[形式]: $what" "  $loc: " "$(ss_sec "$label")"
+done <<'EOF'
+LLM の鍵（OpenAI・Anthropic）|./keys.yml:1|OpenAI（sk-proj-）
+LLM の鍵（OpenAI・Anthropic）|./keys.yml:2|OpenAI（旧形式の sk-）
+LLM の鍵（OpenAI・Anthropic）|./keys.yml:3|Anthropic（sk-ant-）
+コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:4|GitHub（github_pat_）
+コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:5|GitHub（gho_）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:6|Twilio（AC）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:7|Twilio（SK）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:8|Stripe（rk_live_）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:9|Stripe（sk_test_）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:10|Stripe（whsec_）
+コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:11|npm（npm_）
+チャットの鍵と Webhook（Slack）|./keys.yml:12|Slack（xapp-）
+チャットの鍵と Webhook（Slack）|./keys.yml:13|Slack の Webhook URL
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:14|AWS（ASIA）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:15|SendGrid（SG.）
+URL に埋め込んだ認証情報（user:pass@）|./keys.yml:16|URL の user:pass@
+Google・Supabase の鍵|./sa.json:1|GCP のサービスアカウント
+key/secret への値の代入|./.env:1|引用符なしの API_KEY=
+key/secret への値の代入|./.env:2|引用符なしの aws_secret_access_key =
+key/secret への値の代入|./.env:3|大文字の PASSWORD=
+Authorization ヘッダの値|./req.har:1|HAR の Authorization: Bearer
+秘密鍵ブロック|./pgp.log:1|PGP の秘密鍵ブロック
+select * の使用|./NOTES.MD:1|大文字の SELECT * FROM
+電話番号らしき並び|./NOTES.MD:2|電話番号（ハイフンなし）
+電話番号らしき並び|./NOTES.MD:3|電話番号（(03) の括弧付き）
+電話番号らしき並び|./NOTES.MD:4|電話番号（03(…) の括弧付き）
+電話番号らしき並び|./NOTES.MD:5|電話番号（+81 と空白）
+電話番号らしき並び|./NOTES.MD:6|電話番号（全角）
+12 桁の数字の並び（マイナンバー等）|./NOTES.MD:7|全角の 12 桁
+クレジットカード番号らしき並び|./NOTES.MD:8|American Express の 15 桁
+住所らしき記述（都道府県なし）|./NOTES.MD:9|都道府県の無い住所（区＋番地）
+住所らしき記述（都道府県なし）|./NOTES.MD:10|都道府県の無い住所（市＋丁目。ひらがなを挟む）
+郵便番号|./NOTES.MD:11|単独の郵便番号
+接続文字列|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:1|xlsx の台帳（セルの文字列）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（同じセルの 2 つ目の値）
+電話番号らしき並び|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（実体参照 &amp; の後ろ）
+LLM の鍵（OpenAI・Anthropic）|./台帳 dir/台帳 v1.xlsx[xl/worksheets/sheet1.xml]:1|xlsx の台帳（インライン文字列）
+郵便番号|./台帳 dir/台帳 v1.xlsx[xl/comments1.xml]:1|xlsx の台帳（セルのコメント）
+EOF
+
+# 検出した値そのものを出さない。位置と種類と、先頭の数バイトだけを出す。
+# 題材の値は、先頭 4 バイトより後ろに DUMMY を含むように作ってある。
+for leak in "DUMMY" "456789abcdef" "yamada" "0000-0000" "神南" "みなとみらい" "５６７８" "822463" "150-0000" "4111 1111"; do
+  absent "scan_secrets: 検出した値を出さない（${leak}）" "$leak" "$S"
+done
+contains "scan_secrets: 伏字にした形で出す" "…<伏字>" "$S"
+contains "scan_secrets: 説明用のドメインならメールのドメインを見せる" "ta…<伏字>@example.invalid" "$S"
+
+# 誤検出しない。日時・UUID・バージョン番号・英単語の連なり・説明文の変数名・鍵の接頭辞だけ。
+# 数字の並びの検査は、境界を緩めるとここに当たる。
+CLEAN="$TMP/clean-report"
+mkdir -p "$CLEAN"
+cat > "$CLEAN/clean.md" <<'EOF'
+# 誤検出の題材（どれも検出されてはいけない）
+日時 2026-09-25 10:00:00 / 2026-09-25T10:00:00+09:00 / 202609251030 / 1727246400
+UUID 550e8400-e29b-41d4-a716-446655440000 / 550e8400-e29b-41d4-a716-123456789012
+版 v1.2.3 / 10.0.19045.3803 / 2.17.3 / 1.0.123456789012
+task-management-system-overview-for-the-assessment-document
+API_KEY=process.env.API_KEY / password: string / token = getToken()
+区分 1-2 を参照。3 区分の 1-2-3 節。市区町村まではマスクする
+sb_publishable_... という鍵、sk_live_ で始まる鍵、Bearer <トークン>
+接続先は postgresql://<伏字>@db.example.com
+EOF
+C="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$CLEAN" 2>&1)"
+if printf '%s' "$C" | grep '^検出なし。$' >/dev/null; then
+  ok "scan_secrets: 誤検出しない（日時・UUID・版・説明文）"
+else ng "scan_secrets: 誤検出しない（日時・UUID・版・説明文）" "$(printf '%s' "$C" | grep -A2 '^\[検出\]' | head -6 | tr '\n' ' ')"; fi
+
+# unzip が無い環境では、xlsx を黙って素通りさせず、見ていないことを出す。
+# unzip だけを除いた PATH を作って走らせる。
+NB="$TMP/no-unzip-bin"; mkdir -p "$NB"
+for t in grep sed cut iconv find sort mktemp rm awk tr head; do
+  p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$NB/$t"
+done
+U2="$(PATH="$NB" "$BASH" "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"
+contains "scan_secrets: unzip が無いと xlsx を未検査と知らせる" "台帳 v1.xlsx（unzip が無い）" "$U2"
 
 # --- make_register.py ---
 PY_BIN=""
@@ -688,11 +833,18 @@ for c in python3 /usr/bin/python3 python; do
   command -v "$c" >/dev/null 2>&1 || continue
   "$c" -c 'import openpyxl' 2>/dev/null && { PY_BIN="$c"; break; }
 done
+# openpyxl が無いときの案内。import で失敗する openpyxl を PYTHONPATH の先頭に置いて、
+# どの環境でも「無い」状態を作る。Homebrew の python3.13 / 3.14 は PEP 668 で pip install が
+# 失敗するので、pip だけを案内すると、利用者は案内どおりにして失敗する。
+FAKE="$TMP/no-openpyxl/openpyxl"; mkdir -p "$FAKE"
+printf '%s\n' 'raise ImportError("題材: openpyxl が無い状態を作る")' > "$FAKE/__init__.py"
+msg="$(PYTHONPATH="$TMP/no-openpyxl" python3 "$SKILL/scripts/make_register.py" "$TMP/x.xlsx" 2>&1 || true)"
+contains "make_register: openpyxl 不在時に案内を出す" "openpyxl が見つからない" "$msg"
+contains "make_register: 導入の案内に venv がある（PEP 668 の環境向け）" "python3 -m venv" "$msg"
+contains "make_register: 導入の案内に uv がある" "uv run --with openpyxl" "$msg"
+contains "make_register: 導入の案内に apt がある" "apt install python3-openpyxl" "$msg"
 if [[ -z "$PY_BIN" ]]; then
   skip "make_register: openpyxl を持つ python が無いため省略"
-  # 依存が無いときに、素の ImportError ではなく案内を出すことだけは確かめる
-  msg="$(python3 "$SKILL/scripts/make_register.py" "$TMP/x.xlsx" 2>&1 || true)"
-  contains "make_register: openpyxl 不在時に案内を出す" "openpyxl が見つからない" "$msg"
 else
   for mode in none owasp full; do
     M="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-$mode.xlsx" --frameworks "$mode" 2>&1)"
@@ -706,8 +858,18 @@ else
   # オプションごとの中身。シート数だけでは、中の項目が消えても気づけない
   M2="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-2021.xlsx" --owasp 2021 2>&1)"
   contains "make_register: --owasp 2021 が選べる" "OWASP 2021 版" "$M2"
+  # --api は一般の Top 10 と両方を並べない。OWASP のシートを同じ番号のまま置き換える。
+  # 以前は owasp / full で両方が並んでいた（コメントと 06 は「並べない」と書いていた）。
   M3="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api.xlsx" --frameworks full --api 2>&1)"
-  contains "make_register: --api で API シートが増える" "4b_API_Top10" "$M3"
+  contains "make_register: --api（full）で OWASP のシートを API のシートに置き換える" "4_API_Top10" "$M3"
+  contains "make_register: --api（full）でもシートは 9 枚" "シート 9 枚" "$M3"
+  absent "make_register: --api（full）で一般の Top 10 と両方を並べない" "OWASP_Top10," "$M3"
+  M4="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api-owasp.xlsx" --api 2>&1)"
+  contains "make_register: --api（owasp）で OWASP のシートを API のシートに置き換える" "7_API_Top10" "$M4"
+  contains "make_register: --api（owasp）でもシートは 7 枚" "シート 7 枚" "$M4"
+  absent "make_register: --api（owasp）で一般の Top 10 と両方を並べない" "7_枠組みへの当てはめ" "$M4"
+  M5="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api-none.xlsx" --frameworks none --api 2>&1)"
+  contains "make_register: --api（none）で API のシートが 1 枚増える" "シート 7 枚" "$M5"
   V2="$("$PY_BIN" - "$TMP/r-2021.xlsx" "$TMP/r-full.xlsx" "$TMP/r-api.xlsx" <<'PYEOF' 2>&1
 import sys
 from openpyxl import load_workbook
@@ -720,20 +882,29 @@ w = wb["4_OWASP_Top10"]
 a10 = [w.cell(r,2).value for r in range(5,15) if w.cell(r,1).value == "A10"]
 if not a10 or "Exceptional" not in a10[0]: bad.append("2025 版の A10 が例外処理でない")
 ws = wb["3_個人情報セキュリティ"]
-kub = {ws.cell(r,1).value for r in range(6, ws.max_row+1) if ws.cell(r,1).value and ws.cell(r,2).value}
-if len(kub) < 11: bad.append(f"個人情報シートの区分が {len(kub)}（11 以上のはず）")
-n = sum(1 for r in range(6, ws.max_row+1) if ws.cell(r,2).value)
+# 区分は個人情報保護委員会ガイドライン（通則編）10（別添）の 7 区分と一致すること
+AREAS = {"基本方針の策定", "取扱いに係る規律の整備", "組織的安全管理措置", "人的安全管理措置",
+         "物理的安全管理措置", "技術的安全管理措置", "外的環境の把握"}
+kub = {ws.cell(r,1).value for r in range(6, ws.max_row+1) if ws.cell(r,1).value and ws.cell(r,3).value}
+if kub != AREAS: bad.append(f"個人情報シートの区分が 7 区分と一致しない（余分: {sorted(kub - AREAS)} / 不足: {sorted(AREAS - kub)}）")
+n = sum(1 for r in range(6, ws.max_row+1) if ws.cell(r,3).value)
 if n < 50: bad.append(f"個人情報シートの項目が {n}（50 以上のはず）")
+# 人的・物理的はコードから見えない。既定値を「範囲外（取材で聞く）」にして、未確認と混同させない
+for r in range(6, ws.max_row+1):
+    if ws.cell(r,1).value in ("人的安全管理措置", "物理的安全管理措置") and ws.cell(r,4).value != "範囲外（取材で聞く）":
+        bad.append(f"{ws.cell(r,1).value} の既定の判定が「範囲外（取材で聞く）」でない（{ws.cell(r,4).value!r}）")
+    if ws.cell(r,1).value == "技術的安全管理措置" and ws.cell(r,4).value:
+        bad.append("技術的安全管理措置に既定の判定が入っている"); break
 ws = wb["5_IPA非機能要求グレード"]
 dai = {ws.cell(r,1).value for r in range(13, ws.max_row+1) if ws.cell(r,1).value and ws.cell(r,2).value}
 if len(dai) < 6: bad.append(f"IPA の大項目が {len(dai)}（6 のはず）")
-ws = load_workbook(sys.argv[3])["4b_API_Top10"]
+ws = load_workbook(sys.argv[3])["4_API_Top10"]
 n = sum(1 for r in range(5, ws.max_row+1) if str(ws.cell(r,1).value or "").startswith("API"))
 if n != 10: bad.append(f"API シートが {n} 行（10 のはず）")
 print("ALL OK" if not bad else " / ".join(bad))
 PYEOF
 )"
-  if printf '%s' "$V2" | grep '^ALL OK$' >/dev/null; then ok "make_register: 版と構成ごとの中身が正しい（2021/2025 の A10、個人情報 11 区分、IPA 6 大項目、API 10 行）"
+  if printf '%s' "$V2" | grep '^ALL OK$' >/dev/null; then ok "make_register: 版と構成ごとの中身が正しい（2021/2025 の A10、個人情報は通則編の 7 区分で人的・物理的は範囲外、IPA 6 大項目、API 10 行）"
   else ng "make_register: 版と構成ごとの中身" "$V2"; fi
 
   # 集計数式が、その構成の指摘一覧シートを正しく指しているか
@@ -755,6 +926,138 @@ PY
   if printf '%s' "$V" | grep '^NG' >/dev/null; then
     ng "make_register: 集計数式が指摘一覧シートを正しく指す" "$V"
   else ok "make_register: 集計数式が指摘一覧シートを正しく指す"; fi
+
+  # 総合評価の副題が、その構成の指摘一覧シートの名前を書いているか。
+  # full で「3_指摘事項一覧から自動集計」と書かれていた（full の 3 枚目は個人情報のシート）。
+  SUB="$("$PY_BIN" -c 'import sys; from openpyxl import load_workbook; wb = load_workbook(sys.argv[1]); print(wb[wb.sheetnames[0]]["A2"].value)' "$TMP/r-full.xlsx" 2>&1)"
+  contains "make_register: full の副題が 6_指摘事項一覧 を指す" "『6_指摘事項一覧』から自動集計" "$SUB"
+  absent "make_register: full の副題に 3_指摘事項一覧 と書かない" "3_指摘事項一覧" "$SUB"
+
+  # 既にあるファイルを黙って上書きしない。書きかけの台帳が雛形で潰れる。
+  printf '%s' "書きかけの台帳（題材）" > "$TMP/r-exist.xlsx"
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-exist.xlsx" >/dev/null 2>&1; then
+    ng "make_register: 既にあるファイルは上書きせずに止まる" "終了コードが 0"
+  elif [[ "$(cat "$TMP/r-exist.xlsx")" != "書きかけの台帳（題材）" ]]; then
+    ng "make_register: 既にあるファイルは上書きせずに止まる" "中身が書き換わった"
+  else ok "make_register: 既にあるファイルは上書きせずに止まる"; fi
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-exist.xlsx" --force >/dev/null 2>&1 \
+     && [[ "$(cat "$TMP/r-exist.xlsx" 2>/dev/null)" != "書きかけの台帳（題材）" ]]; then
+    ok "make_register: --force なら上書きする"
+  else ng "make_register: --force なら上書きする"; fi
+  # 拡張子が .xlsx でなければ止める（中身は xlsx なのに、表計算ソフトが別の形式として開こうとする）
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-ext.xls" >/dev/null 2>&1 || [[ -e "$TMP/r-ext.xls" ]]; then
+    ng "make_register: 拡張子が .xlsx でなければ止まる"
+  else ok "make_register: 拡張子が .xlsx でなければ止まる"; fi
+
+  # 台帳の構成（references/04-findings-register.md）。判定・優先度・状態は別の軸で、
+  # 見送りとクローズは状態の値。集計は「判定が問題ありで、状態がクローズでも見送りでもないもの」。
+  M6="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-card.xlsx" --card --skill-version 9.9.9-FIXTURE 2>&1)"
+  contains "make_register: --card でカード決済のシートが末尾に増える（owasp なら 8 枚目）" "8_カード決済" "$M6"
+  M7="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-card-full.xlsx" --frameworks full --card 2>&1)"
+  contains "make_register: --card（full）は番号を飛ばさない（6b_ があっても 9_カード決済）" "9_カード決済" "$M7"
+  V3="$("$PY_BIN" - "$TMP/r-owasp.xlsx" "$TMP/r-full.xlsx" "$TMP/r-card.xlsx" "$TMP/r-card-full.xlsx" <<'PYEOF' 2>&1
+import re, sys
+from openpyxl import load_workbook
+res = []
+def check(name, cond, detail=""):
+    res.append(("OK|" + name) if cond else ("NG|" + name + "|" + detail))
+
+def lists(ws):
+    out = {}
+    for dv in ws.data_validations.dataValidation:
+        vals = (dv.formula1 or "").strip('"').split(",")
+        for rng in str(dv.sqref).split():
+            out[rng.split(":")[0].rstrip("0123456789")] = (vals, dv.showErrorMessage)
+    return out
+
+owasp, full, card, cardfull = (load_workbook(p) for p in sys.argv[1:5])
+for label, wb, fname in (("owasp", owasp, "3_指摘事項一覧"), ("full", full, "6_指摘事項一覧")):
+    fs = wb[fname]
+    heads = {fs.cell(3, c).value: fs.cell(3, c).column_letter for c in range(1, fs.max_column + 1) if fs.cell(3, c).value}
+    need = {"ID", "判定", "優先度", "状態", "確認の方法", "指摘事項", "AI実装(h)", "人手(h)", "是正案"}
+    check(f"指摘事項一覧に 判定・優先度・状態・確認の方法 の列がある（{label}）", need <= set(heads), f"不足: {sorted(need - set(heads))}")
+    check(f"「対応状況」は「状態」に改名されている（{label}）", "対応状況" not in heads)
+    lv = lists(fs)
+    j = lv.get(heads.get("判定"), ([], None))
+    check(f"判定は 問題あり／問題なし／判断保留 の入力規則（{label}）", set(j[0]) == {"問題あり", "問題なし", "判断保留"} and j[1], str(j))
+    p = lv.get(heads.get("優先度"), ([], None))
+    check(f"優先度に 見送り・クローズ を入れない（{label}）",
+          {"P0", "P1", "P2", "P3", "P4"} <= set(p[0]) and not any(("見送り" in v or "クローズ" in v) for v in p[0]) and p[1], str(p))
+    s = lv.get(heads.get("状態"), ([], None))
+    check(f"状態は クローズ を 2 つに分けた 5 値の入力規則（{label}）",
+          set(s[0]) == {"未対応", "対応中", "クローズ（解消）", "クローズ（該当なし）", "見送り"} and s[1], str(s))
+    m = lv.get(heads.get("確認の方法"), ([], None))
+    check(f"確認の方法の候補に コード・実機・依頼者の確認・取材 がある（{label}）",
+          {"コード", "実機", "依頼者の確認", "取材"} <= set(m[0]), str(m))
+
+    # 集計の数式が、正しい列に正しい条件を当てているか。列を並べ替えても、数式の列の文字だけが
+    # 取り残されると、別の列を数える（件数は数式なので、生成直後の値では気づけない）。
+    sm = wb[wb.sheetnames[0]]
+    col_of = {v: k for k, v in heads.items()}
+    rows = {}
+    for r in range(1, sm.max_row + 1):
+        a = sm.cell(r, 1).value
+        if isinstance(a, str) and a.startswith("P0（"):
+            rows = {c: sm.cell(r, c).value for c in (2, 4, 5)}
+            break
+    def pairs(f):
+        return re.findall(r"'[^']+'!\$([A-Z]+)\$4:\$[A-Z]+\$\d+,\"([^\"]*)\"", f or "")
+    def sumcol(f):
+        m_ = re.match(r"=SUMIFS\('[^']+'!\$([A-Z]+)\$4", f or "")
+        return col_of.get(m_.group(1)) if m_ else None
+    want = {("判定", "問題あり"), ("優先度", "P0"), ("状態", "<>クローズ*"), ("状態", "<>見送り")}
+    got = {(col_of.get(c), v) for c, v in pairs(rows.get(2))}
+    check(f"P0 の件数は 判定=問題あり・状態≠クローズ*・状態≠見送り の COUNTIFS（{label}）",
+          str(rows.get(2, "")).startswith("=COUNTIFS(") and got == want, f"{rows.get(2)} → {sorted(map(str, got))}")
+    ai = rows.get(4); hu = rows.get(5)
+    check(f"P0 の工数は AI実装(h)・人手(h) の列を同じ条件で SUMIFS（{label}）",
+          sumcol(ai) == "AI実装(h)" and sumcol(hu) == "人手(h)"
+          and {(col_of.get(c), v) for c, v in pairs(ai)} == want and {(col_of.get(c), v) for c, v in pairs(hu)} == want,
+          f"{ai} / {hu}")
+
+    # 評価の前提・気づいたこと・実機確認・ロードマップ
+    texts = [str(sm.cell(r, 1).value or "") for r in range(1, sm.max_row + 1)]
+    check(f"総合評価に「確認の範囲」の欄がある（{label}）", "確認の範囲" in texts)
+    check(f"総合評価に「気づいたこと」の置き場所がある（{label}）", any("気づいたこと" in t for t in texts))
+    allv = " ".join(str(c.value) for row in sm.iter_rows() for c in row if c.value)
+    check(f"総合評価に「脆弱性診断の代わりではない」と書く（{label}）", "脆弱性診断" in allv and "代わりではない" in allv)
+    rt = wb["2_実機確認サマリ"]
+    check(f"実機確認サマリの説明に「参考」の値を残さない（{label}）", "参考" not in str(rt["A2"].value))
+    rj = lists(rt).get("D", ([], None))
+    check(f"実機確認サマリの判定は 3 値の入力規則（{label}）", set(rj[0]) == {"問題あり", "問題なし", "判断保留"}, str(rj))
+    rm = wb[[n for n in wb.sheetnames if n.endswith("対応ロードマップ")][0]]
+    ids = [str(rm.cell(r, 3).value or "") for r in range(5, rm.max_row + 1)]
+    check(f"対応ロードマップに前提タスク（T-x）の置き場所がある（{label}）", any(i.startswith("T-") for i in ids), str(ids))
+    check(f"--card を付けなければカード決済のシートを作らない（{label}）", not any("カード" in n for n in wb.sheetnames), str(wb.sheetnames))
+
+def premise(wb, key):
+    sm = wb[wb.sheetnames[0]]
+    for r in range(1, 20):
+        if sm.cell(r, 1).value == key:
+            return sm.cell(r, 2).value
+    return "（欄が無い）"
+check("--skill-version の値が「評価に使ったスキルの版」に入る", premise(card, "評価に使ったスキルの版") == "9.9.9-FIXTURE", str(premise(card, "評価に使ったスキルの版")))
+check("--skill-version が無ければ「評価に使ったスキルの版」は空欄", premise(owasp, "評価に使ったスキルの版") is None, str(premise(owasp, "評価に使ったスキルの版")))
+
+cs = card["8_カード決済"]
+ct = " ".join(str(c.value) for row in cs.iter_rows() for c in row if c.value)
+for kw in ("6.4.3", "11.6.1", "SAQ A", "EMV 3-D セキュア", "6.1 版"):
+    check(f"カード決済のシートに {kw} がある", kw in ct)
+n5 = sum(1 for r in range(5, cs.max_row + 1) if str(cs.cell(r, 2).value or "").startswith("脆弱性対策 "))
+check("カード決済のシートに EC 加盟店の脆弱性対策が 5 項目ある", n5 == 5, str(n5))
+check("カード決済のシートは full でも末尾に 1 枚", cardfull.sheetnames[-1] == "9_カード決済", str(cardfull.sheetnames))
+print("\n".join(res))
+PYEOF
+)"
+  if ! printf '%s' "$V3" | grep -E '^(OK|NG)\|' >/dev/null; then
+    ng "make_register: 台帳の構成の検査を実行できた" "$(printf '%s' "$V3" | tail -3)"
+  fi
+  while IFS='|' read -r st name detail; do
+    case "$st" in
+      OK) ok "make_register: $name" ;;
+      NG) ng "make_register: $name" "$detail" ;;
+    esac
+  done <<< "$V3"
 fi
 
 # --- recon.sh / browser_probe.mjs は実サイトへ出る。発火台を立てて確かめる ---

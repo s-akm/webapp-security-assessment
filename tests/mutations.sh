@@ -116,9 +116,51 @@ mutate "基準の最終確認日を消す" "references/06-frameworks.md" "基準
 
 # ---- scan_secrets ----
 mutate "scan_secrets: 絶対パスのまま検索する（旧不具合）" "scripts/scan_secrets.sh" "検出行の中身が表示される" \
-  's = s.replace("cd \"$DIR\" && grep -rnIE \"${TARGETS[@]}\" -e \"$pattern\" . ", "grep -rnIE \"${TARGETS[@]}\" -e \"$pattern\" \"$DIR\" ")'
+  's = s.replace("(cd \"$DIR\" && grep -rnoI \"${gopt[@]}\" -e \"$full\" . 2>/dev/null)", "grep -rnoI \"${gopt[@]}\" -e \"$full\" \"$DIR\" 2>/dev/null")'
 mutate "scan_secrets: iconv を外す（日本語が壊れる）" "scripts/scan_secrets.sh" "日本語が壊れない" \
-  's = s.replace("cut -c1-200 | iconv -c -f UTF-8 -t UTF-8", "cut -c1-160")'
+  's = s.replace("    iconv -c -f UTF-8 -t UTF-8 2>/dev/null\n", "    cat\n")'
+mutate "scan_secrets: 検出した値をそのまま出す" "scripts/scan_secrets.sh" "検出した値を出さない" \
+  's = s.replace("else v=\"$(mask_value \"$v\")\"; fi", "fi")'
+mutate "scan_secrets: 拡張子で絞る（旧不具合）" "scripts/scan_secrets.sh" "scan_secrets\\[形式\\]: HAR の Authorization" \
+  's = s.replace("grep -rnoI \"${gopt[@]}\"", "grep -rnoI --include=\x27*.md\x27 --include=\x27*.json\x27 \"${gopt[@]}\"")'
+mutate "scan_secrets: xlsx を展開しない（旧不具合）" "scripts/scan_secrets.sh" "xlsx の台帳（セルの文字列）" \
+  's = s.replace("-iname \x27*.xlsx\x27", "-iname \x27*.ZZZNOMATCH\x27")'
+mutate "scan_secrets: unzip が無いのを黙って飛ばす" "scripts/scan_secrets.sh" "unzip が無いと xlsx を未検査と知らせる" \
+  's = s.replace("UNREAD+=(\"${f}（unzip が無い）\"); continue", "continue")'
+mutate "scan_secrets: 大文字小文字を区別する（取りこぼし）" "scripts/scan_secrets.sh" "大文字の SELECT" \
+  's = s.replace("[[ \"$opts\" == *i* ]] && gopt+=(-i)", ":")'
+mutate "scan_secrets: 数字の並びの境界を外す（誤検出）" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID" \
+  's = s.replace("full=\"(^|[^0-9A-Za-z_.+-])(${pattern})([^0-9A-Za-z_-]|$)\"", "full=\"(${pattern})\"")'
+mutate "scan_secrets: 日時の 12 桁を除外しない（誤検出）" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID" \
+  's = s.replace("\x27^(19|20)[0-9]{2}(0[1-9]|1[0-2])", "\x27^ZZZNOMATCH(19|20)[0-9]{2}(0[1-9]|1[0-2])")'
+
+# ---- make_register ----
+mutate "make_register: 既にあるファイルを黙って上書きする（旧不具合）" "scripts/make_register.py" "既にあるファイルは上書きせずに止まる" \
+  's = s.replace("if os.path.exists(args.output) and not args.force:", "if False:")'
+mutate "make_register: full の副題を 3_指摘事項一覧 に戻す（旧不具合）" "scripts/make_register.py" "full の副題が 6_指摘事項一覧 を指す" \
+  's = s.replace("\"件数と工数は『{}』から自動集計される。\".format(names[\"findings\"])", "\"件数と工数は『3_指摘事項一覧』から自動集計される。\"")'
+mutate "make_register: --api で一般の Top 10 と両方を並べる（旧不具合）" "scripts/make_register.py" "一般の Top 10 と両方を並べない" \
+  's = s.replace("rebuilt[\"api\"] = v.split(\"_\", 1)[0] + \"_API_Top10\"\n                else:", "rebuilt[k] = v\n                    rebuilt[\"api\"] = \"8_API_Top10\"\n                else:")'
+mutate "make_register: 優先度に見送り・クローズを戻す（旧構成）" "scripts/make_register.py" "優先度に 見送り・クローズ を入れない" \
+  's = s.replace("PRIORITIES = [\"P0\", \"P1\", \"P2\", \"P3\", \"P4\", \"—\"]", "PRIORITIES = [\"P0\", \"P1\", \"P2\", \"P3\", \"P4\", \"見送り\", \"クローズ\"]")'
+mutate "make_register: クローズを 1 つに戻す（旧構成）" "scripts/make_register.py" "状態は クローズ を 2 つに分けた" \
+  's = s.replace("\"クローズ（解消）\", \"クローズ（該当なし）\", \"見送り\"]", "\"クローズ\", \"見送り\"]")'
+mutate "make_register: 集計が状態を見ない" "scripts/make_register.py" "P0 の件数は 判定=問題あり" \
+  's = s.replace("open_crit = (f\x27{rng(\"判定\")},\"問題あり\",{rng(\"状態\")},\"<>クローズ*\",\x27\n                 f\x27{rng(\"状態\")},\"<>見送り\"\x27)", "open_crit = f\x27{rng(\"判定\")},\"問題あり\"\x27")'
+mutate "make_register: 人手の工数に AI の列を足す" "scripts/make_register.py" "P0 の工数は" \
+  's = s.replace("=SUMIFS({rng(\"人手(h)\")}", "=SUMIFS({rng(\"AI実装(h)\")}")'
+mutate "make_register: スキルの版を入れない" "scripts/make_register.py" "skill-version の値が" \
+  's = s.replace("(\"評価に使ったスキルの版\", skill_version or None, False)", "(\"評価に使ったスキルの版\", None, False)")'
+mutate "make_register: 人的・物理的を範囲外にしない" "scripts/make_register.py" "版と構成ごとの中身" \
+  's = s.replace("OUT_OF_SCOPE if area in PRIVACY_OUT_OF_SCOPE else \"\"", "\"\"")'
+mutate "make_register: カード決済のシートを常設する" "scripts/make_register.py" "card を付けなければカード決済のシートを作らない" \
+  's = s.replace("    if args.card:\n", "    if True:\n")'
+mutate "make_register: 任意のシートの番号を枚数から数える" "scripts/make_register.py" "番号を飛ばさない" \
+  's = s.replace("return max(nums) + 1", "return len(names) + 1")'
+mutate "make_register: 実機確認サマリに「参考」を戻す（旧構成）" "scripts/make_register.py" "「参考」の値を残さない" \
+  's = s.replace("中間の値は作らない。", "参考情報として記録するだけの行には「参考」を使う。")'
+mutate "make_register: pip だけを案内する（PEP 668 で失敗する）" "scripts/make_register.py" "導入の案内に venv がある" \
+  's = "\n".join(l for l in s.split("\n") if "python3 -m venv" not in l)'
 
 # ---- audit_grep ----
 mutate "audit_grep: ガードの語彙から Laravel を外す" "scripts/audit_grep.sh" "audit_grep\\[laravel\\]: ガードを読み取る" \
