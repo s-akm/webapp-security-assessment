@@ -523,12 +523,18 @@ JS
   contains "audit_grep[基盤]: 空白を含むパスのマイグレーションも読む" "★ public.secrets"          "$SPC"
   # 依存名は、実際のロックファイルのように間に integrity / dev が入っても取れること
   absent   "audit_grep[依存]: 取得元の URL の認証情報を伏せる"       "user:secret"                    "$S21"
-  # ---- 依存と生成物を読まない・値を出さない・切り捨てを示す（2.17.4 の修正） ----
+  # ---- 依存と生成物を読まない・値を出さない・切り捨てを示す（2.18.0 の修正） ----
   G="$TMP/guards"; mkdir -p "$G/node_modules/pkg" "$G/.next/server/app/api/x" "$G/app/api/ok" "$G/app/api/host" \
     "$G/.github/workflows" "$G/scripts/rebuild" "$G/theme" "$G/app/api/chat" "$G/app/api/many"
   printf 'export function GET(){}\n' > "$G/node_modules/pkg/index.js"
   printf 'export function GET(){}\n' > "$G/.next/server/app/api/x/route.js"
   printf 'export async function GET(){ await requireUser(); }\n' > "$G/app/api/ok/route.ts"
+  # 2 節はファイル名:行:一致 をまとめて読んで切り分ける。空白と「:」を含むパス、「:」を含むガード名、
+  # 1 ファイルに複数のハンドラ（定義 N / ガード M）で、切り分けと数えを確かめる
+  mkdir -p "$G/app/api/sp ace" "$G/app/api/co:lon" "$G/app/api/multi"
+  printf 'export async function GET(){ await requireUser(); }\n' > "$G/app/api/sp ace/route.ts"
+  printf 'export async function GET(){ return 1; }\n' > "$G/app/api/co:lon/route.ts"
+  printf 'export async function GET(){ await requireAdmin(); }\nexport async function POST(){ return 1; }\nexport async function PUT(){ await requireAdmin(); await requireUser(); }\n// auth:sanctum\n' > "$G/app/api/multi/route.ts"
   # 伏字を通していなかった節（10b の Host ヘッダ、20 の CI、6 の DEBUG）に値を置く
   printf 'export async function POST(req){ const h = req.headers.get("host"); const k = "AIzaFIXTUREFIXTUREFIXTUREFIXTUREFIX1"; }\n' > "$G/app/api/host/route.ts"
   printf 'on: push\npermissions:\n  contents: read\njobs:\n  a:\n    steps:\n      - run: curl -u admin:FIXTURE-CI-PASSWORD https://example.invalid/\n' > "$G/.github/workflows/ci.yml"
@@ -548,6 +554,14 @@ JS
   GD="$(bash "$SKILL/scripts/audit_grep.sh" "$G" 2>&1)"
   S2G="$(printf '%s\n' "$GD" | LC_ALL=C awk 'index($0, "=== 2. ") == 1 { f = 1; print; next } f && /^=== / { exit } f')"
   contains "audit_grep[除外]: 自前のハンドラは一覧に出す"            "app/api/ok/route.ts"            "$S2G"
+  if printf '%s\n' "$S2G" | grep -E 'app/api/sp ace/route\.ts +requireUser $' >/dev/null; then ok "audit_grep[2 節]: 空白を含むパスのガードを読む"
+  else ng "audit_grep[2 節]: 空白を含むパスのガードを読む" "$(printf '%s\n' "$S2G" | grep 'sp ace' | head -1)"; fi
+  if printf '%s\n' "$S2G" | grep -E 'app/api/co:lon/route\.ts +← ガード検出なし$' >/dev/null; then ok "audit_grep[2 節]: 「:」を含むパスも切り分ける"
+  else ng "audit_grep[2 節]: 「:」を含むパスも切り分ける" "$(printf '%s\n' "$S2G" | grep 'co:lon' | head -1)"; fi
+  # 語は重複なしで並べ替え、ガードの数は「一致した行」の数（1 行に 2 つあっても 1）
+  if printf '%s\n' "$S2G" | grep -E 'app/api/multi/route\.ts +auth:sanctum requireAdmin requireUser +\(定義 3 / ガード 3\)' >/dev/null; then
+    ok "audit_grep[2 節]: 1 ファイルの定義とガードの行を数える"
+  else ng "audit_grep[2 節]: 1 ファイルの定義とガードの行を数える" "$(printf '%s\n' "$S2G" | grep 'multi' | head -1)"; fi
   absent   "audit_grep[除外]: node_modules を一覧に出さない"          "node_modules"                   "$S2G"
   absent   "audit_grep[除外]: .next を一覧に出さない"                 ".next/"                         "$S2G"
   absent   "audit_grep[伏字]: Host ヘッダの行の鍵を出さない"          "AIzaFIXTUREFIXTUREFIXTUREFIXTUREFIX1" "$GD"

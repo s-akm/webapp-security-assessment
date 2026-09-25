@@ -381,19 +381,22 @@ echo "  ※ 判定はファイルの有無による。手作業で作った資�
 
 # ハンドラの一覧は 1 回だけ作って使い回す（以前は 3 回計算し、大きなリポジトリで数分かかった）
 HF_LIST="$(mktemp "${TMPDIR:-/tmp}/audit_grep.XXXXXX")"
-trap 'rm -f "$HF_LIST"' EXIT
+HF_DEF="$HF_LIST.def"; HF_GRD="$HF_LIST.grd"
+trap 'rm -f "$HF_LIST" "$HF_DEF" "$HF_GRD"' EXIT
 handler_files > "$HF_LIST"
+# ファイルごとの数は、全ファイルをまとめて grep に渡して 1 回で数える。ファイルごとに grep を起動すると、
+# ハンドラの多い大きなリポジトリで、1 節と 2 節だけで数分かかっていた。
+# /dev/null を足すのは、xargs が分けて起動したどの回も「ファイル名:数」の形で出させるため（1 本だけだと名前が付かない）。
+# 空の一覧で xargs が grep を引数なしで起動しても、/dev/null があれば標準入力を待たない。
+hf_grep() { tr '\n' '\0' < "$HF_LIST" | xargs -0 grep "$@" /dev/null 2>/dev/null; }
+hf_grep -cE "$HANDLER_DEF" > "$HF_DEF"
 
 hr "1. 規模"
 n_files="$(wc -l < "$HF_LIST" | tr -d ' ')"
 echo "  ハンドラを含むらしきファイル: $n_files 件"
 if [[ "$n_files" != "0" ]]; then
-  n_def=0
-  while IFS= read -r f; do
-    [[ -f "$f" ]] || continue
-    c="$(grep -cE "$HANDLER_DEF" "$f" 2>/dev/null | head -1)"; c="${c:-0}"
-    n_def=$((n_def + c))
-  done < "$HF_LIST"
+  # 「ファイル名:数」の数は最後の「:」の後ろ（ファイル名に「:」があっても数は取れる）
+  n_def="$(LC_ALL=C awk '{ sub(/.*:/, ""); t += $0 } END { print t + 0 }' "$HF_DEF")"
   echo "  ハンドラらしき定義の総数: $n_def 件"
 fi
 git rev-parse --git-dir >/dev/null 2>&1 && echo "  コミット数: $(git log --all --oneline 2>/dev/null | wc -l | tr -d ' ')"
@@ -490,18 +493,47 @@ GUARD="$GUARD"'|permission_callback|current_user_can|is_user_logged_in'
 GUARD="$GUARD"'|beforeHandle|sharedMap|grouped\(|authAction|AuthenticatedAction'
 GUARD="$GUARD"'|IS_AUTHENTICATED|SecurityRule|@Secured'
 
+# ガードの一致は全ファイルをまとめて 1 回だけ取り（ファイル名:行:一致）、ファイルごとに
+# 「一致した語（重複なし・並べ替え）」と「一致した行の数」に集める。出す順は一覧の順。
+hf_grep -noE "$GUARD" > "$HF_GRD"
 {
-  while IFS= read -r f; do
-    [[ -f "$f" ]] || continue
-    g="$(grep -ohE "$GUARD" "$f" 2>/dev/null | sort -u | tr '\n' ' ')"
-    n_def="$(grep -cE "$HANDLER_DEF" "$f" 2>/dev/null | head -1)"; n_def="${n_def:-0}"
-    n_grd="$(grep -cE "$GUARD" "$f" 2>/dev/null | head -1)"; n_grd="${n_grd:-0}"
-    if [[ "$n_def" -gt 1 ]]; then
-      printf '  %-46s %-30s (定義 %s / ガード %s)\n' "$f" "${g:-← ガード検出なし}" "$n_def" "$n_grd"
-    else
-      printf '  %-46s %s\n' "$f" "${g:-← ガード検出なし}"
-    fi
-  done < "$HF_LIST"
+  LC_ALL=C awk -v list="$HF_LIST" -v defs="$HF_DEF" '
+    BEGIN {
+      while ((getline l < list) > 0) { order[++n] = l; inlist[l] = 1 }
+      while ((getline l < defs) > 0) {
+        c = l; sub(/.*:/, "", c); f = substr(l, 1, length(l) - length(c) - 1); def[f] = c + 0
+      }
+    }
+    {
+      # ファイル名にも一致した語（auth:sanctum など）にも「:」がありうる。一覧にあるファイル名で、
+      # 直後が「:行番号:」になる位置を前から探して切る
+      rest = $0; off = 0; f = ""
+      while ((p = index(rest, ":")) > 0) {
+        cand = substr($0, 1, off + p - 1); tail = substr($0, off + p + 1)
+        if ((cand in inlist) && match(tail, /^[0-9]+:/)) {
+          f = cand; ln = substr(tail, 1, RLENGTH - 1); m = substr(tail, RLENGTH + 1); break
+        }
+        off += p; rest = substr(rest, p + 1)
+      }
+      if (f == "") next
+      if (!((f, ln) in seenl)) { seenl[f, ln] = 1; grd[f]++ }
+      if (!((f, m) in seenm)) { seenm[f, m] = 1; nm[f]++; name[f, nm[f]] = m }
+    }
+    END {
+      for (k = 1; k <= n; k++) {
+        f = order[k]; g = ""
+        # 語を並べ替える（1 ファイルの語は数個なので挿入ソートで足りる）
+        for (i = 2; i <= nm[f]; i++) {
+          v = name[f, i]; j = i - 1
+          while (j >= 1 && name[f, j] > v) { name[f, j + 1] = name[f, j]; j-- }
+          name[f, j + 1] = v
+        }
+        for (i = 1; i <= nm[f]; i++) g = g name[f, i] " "
+        if (g == "") g = "← ガード検出なし"
+        if (def[f] > 1) printf "  %-46s %-30s (定義 %d / ガード %d)\n", f, g, def[f], grd[f]
+        else printf "  %-46s %s\n", f, g
+      }
+    }' "$HF_GRD"
 } | show
 echo "  ※ 「定義 N / ガード M」が出た行は、1 ファイルに複数のハンドラがある。"
 echo "    N と M が違えば、ガードの無いハンドラが混じっている。関数ごとに目で確かめる"

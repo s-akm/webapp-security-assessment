@@ -210,6 +210,8 @@ mutate "audit_grep: messages.create を Twilio に限らない" "scripts/audit_g
   's = s.replace("do grep -lE \"twilio|Twilio\" \"$f\" 2>/dev/null; done", "do echo \"$f\"; done")'
 mutate "audit_grep: React2Shell の修正版を取り違える" "scripts/audit_grep.sh" "React2Shell の修正前を判定" \
   's = s.replace("15.1) fix=15.1.9", "15.1) fix=15.1.0")'
+mutate "audit_grep: 2 節でガードの行ではなく一致の数を数える" "scripts/audit_grep.sh" "1 ファイルの定義とガードの行を数える" \
+  's = s.replace("if (!((f, ln) in seenl)) { seenl[f, ln] = 1; grd[f]++ }", "grd[f]++")'
 
 # ---- recon ----
 # 旧不具合は「自サイトの判定がポートを考えない」。ホスト名にポートを残すだけでは、最終的なホスト名も
