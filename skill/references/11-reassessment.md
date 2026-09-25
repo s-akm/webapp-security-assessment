@@ -25,33 +25,74 @@
 - **未確認事項（U-x）の一覧** — 前回「調べれば分かる」と書いたものは、今回こそ確定させる
 - **見送りと判断保留の一覧** — 前提が変わっていないかを見る（利用者数が増えた、扱う情報が増えた）
 - **維持すべき実装** — **今回の監査で壊れていないかを確かめる。これが再評価の固有の価値になる**
+- **前回に使ったスキルの版** — 台帳の「評価の前提」に書いてある（`references/04-findings-register.md`）。
+  今回の版と比べ、**前回の後で増えた観点**を洗い出す（4 節）。書かれていなければ、前回の評価日から推定し、その旨を書く
+- **前回のスクリプトの出力** — `scripts/audit_grep.sh`・`scripts/recon.sh`・`scripts/browser_probe.mjs` の出力が根拠の記録に残っていれば、
+  今回の出力と比べる（1 節）
+- **入れ替えと悪用の調査のタスク** — 前回、秘密情報の入れ替え（`references/05-remediation-plan.md`）を指示していれば、その枝番の状態
 
 ### 1. 対象リビジョンの差分を取る
 
 ```bash
 # 前回の評価対象コミットは台帳の「対象リビジョン」に書いてある
-git log --oneline <前回のコミット>..HEAD | wc -l
-git diff --stat <前回のコミット>..HEAD
+P=<前回のコミット>
+git log --oneline $P..HEAD | wc -l
+git diff --stat $P..HEAD
 
-# 認可に関わるファイルが変わったか
-git diff --name-only <前回のコミット>..HEAD | grep -iE 'auth|middleware|route|policy|guard'
+# 入口が増えたか・変わったか。route.ts だけを見ない（02 の「全数を見る」の 4 通りの置き方すべて）
+git diff --name-only $P..HEAD | grep -iE 'auth|middleware|proxy|route|policy|guard|controller|handler|resolver|router|views?\.py'
+git diff -G"['\"]use server['\"]" --name-only $P..HEAD          # Server Actions を足した・変えたファイル
 
-# ハンドラが増えたか（増えた分にガードがあるかを必ず見る）
-git diff --name-only --diff-filter=A <前回のコミット>..HEAD | grep -E 'route\.(ts|js)$'
+# 認可の設定そのもの
+git diff --name-only $P..HEAD -- 'supabase/migrations' '*.sql' '*.rules' 'firestore.rules' 'storage.rules' \
+  'database.rules.json' 'supabase/config.toml'
+git diff $P..HEAD -- 'next.config.*' 'middleware.*' 'proxy.*' 'src/middleware.*' 'src/proxy.*' | grep -nE '^[+-].*(matcher|i18n|rewrites|redirects|serverActions|allowedOrigins)'
+
+# 他人のコードと設定が入る経路（10 の 3 節）
+git diff --name-only $P..HEAD -- '.github/workflows' '.npmrc' 'package.json' 'package-lock.json' 'pnpm-workspace.yaml' 'vercel.json'
+git diff --name-only $P..HEAD -- 'AGENTS.md' 'CLAUDE.md' '.cursorrules' '.cursor' '.mcp.json' '.claude' '.vscode' '.github/copilot-instructions.md'
 ```
 
-**新しく増えたハンドラは、初回と同じ密度で見る。** 差分評価でいちばん漏れるのがここになる。
+**新しく増えた入口は、初回と同じ密度で見る。** 差分評価でいちばん漏れるのがここになる。Route Handler だけでなく、
+Server Actions の関数、マイグレーションで足したテーブルとポリシー、ルールのファイルの変更も「入口が増えた」として扱う。
+
+**スクリプトを回し直し、前回の出力と比べる。** 差分のファイル一覧では、設定の既定値やホスティング側の変化が見えない。
+
+```bash
+bash scripts/audit_grep.sh <repo> > audit-grep-<今回の日付>.txt
+bash scripts/recon.sh https://<domain> > recon-<今回の日付>.txt
+node scripts/browser_probe.mjs https://<domain> > browser-<今回の日付>.txt   # Playwright があれば
+diff audit-grep-<前回の日付>.txt audit-grep-<今回の日付>.txt | grep -E '^[<>]' | head -80
+```
+
+**増えた行も消えた行も読む。** 「ガード検出なし」が増えていれば新しい入口、第三者オリジンが増えていれば新しいタグ、
+ヘッダが消えていれば設定の後退になる。前回の出力が残っていなければ、今回の出力を根拠の記録に残し、次回のために比べられる形にする。
 
 ### 2. 前回の指摘を 1 件ずつ突き合わせる
 
 **「直っているはず」で閉じない。** 突き合わせの結果は次の 5 つから選ぶ。**これは前回からの動きを表す値で、指摘の判定（問題なし／問題あり／判断保留）とは別の軸になる**（`references/04-findings-register.md`）。台帳の判定と状態は、この結果に合わせて書き換える。
 
-| 判定 | 意味 | 根拠に要るもの |
+| 結果 | 意味 | 根拠に要るもの |
 |---|---|---|
-| 解消 | 直っている | **確かめた結果**。コードの該当箇所、または実機の設定値 |
+| 解消 | 直っている | **確かめた結果**。コードの該当箇所、実機の設定値、または依頼者の確認で返ってきた値 |
 | 未着手 | 手が付いていない | 前回と同じ状態であることの確認 |
-| 部分対応 | 一部だけ直った | **何が残っているか**を新しい指摘として書き直す |
+| 部分対応 | 一部だけ直った | **何が直り、何が残っているか**。扱いは下を見る |
 | 再発 | 直った後に戻った | いつ戻ったか（`git log` で追える） |
+| 未確認 | 今回は確かめられなかった | 確かめられなかった理由。U-x を振る |
+
+台帳への戻し方は次のとおり。
+
+| 突き合わせの結果 | 台帳の判定 | 台帳の状態 |
+|---|---|---|
+| 解消 | 問題あり（前回の判定のまま） | クローズ（解消）。確かめた方法と日付を書く |
+| 未着手 | 問題あり | 未対応 |
+| 部分対応 | 問題あり | 対応中。残りは枝番で書き直す |
+| 再発 | 問題あり | 未対応に戻す。再発の指摘を別に起票する（下） |
+| 未確認 | 前回の判定のまま | 前回の状態のまま。**クローズにしない** |
+
+**部分対応は、元の ID を割らずに枝番で書き直す。** たとえば S-08 のうち管理者の多要素認証だけが済み、一般の運営者が
+残っていれば、S-08a（管理者。クローズ（解消））と S-08b（運営者。未対応）に分ける。残った側の優先度は、
+**残りだけで** 04 の問いを引き直す。直った側が効いて、残りの重さが下がることがある。
 
 **「解消」には必ず根拠を書く。** 依頼者が「対応しました」と言っていることは根拠にならない。実機の設定は実機で、コードはコードで確かめる。**確かめられなければ「未確認」であって「解消」ではない。**
 
@@ -74,6 +115,15 @@ git diff --name-only --diff-filter=A <前回のコミット>..HEAD | grep -E 'ro
 
 毎回見直すもの:
 
+- **前回の後で増えた観点は、差分ではなく全体に当てる。** スキルの版が上がって観点が増えていれば（たとえば `scripts/audit_grep.sh` の
+  19〜24 節の BaaS・CI・インストール時の防御・エージェントの設定・リアルタイム通信・SMS、9b 節のセッションリプレイ）、
+  それは前回**見ていない**観点なので、変更の無いファイルにも当てる。前回の版は台帳の「評価の前提」で分かる
+- **`references/06-frameworks.md` の版の表。** 前回の評価で照らした基準が改訂されていれば、枠組みの当てはめを新しい版でやり直す
+- **外部サービスの既定値の変更。** コードが同じでも、基盤側の既定が変われば結果が変わる（自動の `GRANT` の停止、
+  環境変数の種類の追加、デプロイの保護の範囲、Realtime の公開設定）。03 の該当の節を今回の日付で読み直す
+- **秘密情報の入れ替えが済んだか。** 前回指示した入れ替え（`references/05-remediation-plan.md` の「秘密情報の入れ替え」）は、
+  依頼者の「やりました」ではなく、発行元の管理画面の鍵の一覧（旧い鍵が無効、新しい鍵の最終使用日）で確かめる。
+  `templates/client-console-checklist.md` の該当の節を渡してよい。悪用の調査の結果が出ているかも見る
 - **依存の脆弱性**（コードが変わらなくても新しく出る。`references/10-dependencies.md`）
 - **前回以降に出た注意喚起**。JPCERT/CC の注意喚起、IPA の重要なセキュリティ情報、
   CISA KEV への追加のうち、対象の構成（枠組み・DB・ホスティング）に当たるものが無いか。
