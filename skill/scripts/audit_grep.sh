@@ -204,6 +204,14 @@ HANDLER_DEF='export[[:space:]]+(default[[:space:]]+)?(async[[:space:]]+)?functio
 HANDLER_DEF="$HANDLER_DEF"'|'"$ROUTE_REG"
 
 hr "0. 構成の判定（どの資料が要るかを決める）"
+# 計測・広告タグの語（0 節の判定と 9 節の一覧で同じものを使う。以前は 0 節だけ古い一覧で、9 節が拾うのに
+# 0 節は「無」と言っていた）。URL を直に書く形だけでなく、フレームワークのラッパーコンポーネント経由の
+# 読み込みも見る。<GoogleTagManager gtmId={...} /> のような書き方は URL が現れず、ドメイン名だけでは取り逃す。
+# 送信先は recon.sh・browser_probe.mjs の一覧（ホスト名）と同じ 17 種を、コードに現れる語で引く。
+# エラー監視（Sentry）とチャット（Intercom）も、利用者の端末から第三者へ送る点は同じなので含める
+# （電気通信事業法の外部送信規律は目的を問わない。08 の 1 節）。短い関数名（ytag・twq・ttq）は、
+# keytag( のような別の語に当たらないよう前に語の境界を置き、汎用の CDN（s.yimg.jp）はタグの配信パスまで見る。
+TAGPAT='googletagmanager|google-analytics|analytics\.google\.com|gtag\(|adsbygoogle|pagead2|googlesyndication|googleadservices|doubleclick|connect\.facebook|fbq\(|clarity\.ms|@microsoft/clarity|hotjar|analytics\.tiktok|(^|[^A-Za-z0-9_$.])ttq\.|snap\.licdn|_linkedin_partner_id|ads-twitter|(^|[^A-Za-z0-9_$.])twq\(|s\.yimg\.jp/images/listing/tool/cv/ytag\.js|(^|[^A-Za-z0-9_$.])ytag\(|yjads|widget\.intercom\.io|intercomSettings|@intercom/|(^|[^A-Za-z0-9_$.])Intercom\(|@sentry/|sentry\.io|sentry-cdn\.com|Sentry\.init|logrocket|LogRocket|fullstory|FullStory|posthog|datadogRum|browser-rum|mouseflow|_mfq|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts'
 # 対象に無い技術の資料を読むのは時間の無駄で、逆に「読んだつもり」になる危険もある。
 # ここで何があるかを先に確定させ、要る資料だけを開く。
 need=""
@@ -260,7 +268,7 @@ else
   say "LLM の利用" "無"
 fi
 
-if [[ -n "$(grep -rlE "${EXA[@]}" 'googletagmanager|google-analytics|gtag\(|adsbygoogle|connect\.facebook|clarity\.ms|hotjar|replayIntegration|logrocket|LogRocket|@fullstory|posthog|browser-rum|mouseflow' \
+if [[ -n "$(grep -rlE "${EXA[@]}" "$TAGPAT|replayIntegration" \
      --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.html' --include='*.vue' --include='*.svelte' \
      --include='*.astro' --include='*.php' --include='*.erb' --include='*.twig' --include='*.liquid' . 2>/dev/null | head -1)" ]]; then
   say "計測・広告タグ" "有"
@@ -388,7 +396,9 @@ handler_files > "$HF_LIST"
 # ハンドラの多い大きなリポジトリで、1 節と 2 節だけで数分かかっていた。
 # /dev/null を足すのは、xargs が分けて起動したどの回も「ファイル名:数」の形で出させるため（1 本だけだと名前が付かない）。
 # 空の一覧で xargs が grep を引数なしで起動しても、/dev/null があれば標準入力を待たない。
-hf_grep() { tr '\n' '\0' < "$HF_LIST" | xargs -0 grep "$@" /dev/null 2>/dev/null; }
+# 「--」を置くのは、「-」で始まるファイル名（一覧は先頭の ./ を外している）をオプションとして読ませないため。
+# 読まれると、その回の grep が丸ごと失敗し、1 節と 2 節の結果が全部消える
+hf_grep() { tr '\n' '\0' < "$HF_LIST" | xargs -0 grep "$@" -- /dev/null 2>/dev/null; }
 hf_grep -cE "$HANDLER_DEF" > "$HF_DEF"
 
 hr "1. 規模"
@@ -726,13 +736,6 @@ echo "  ※ マイグレーション／スキーマ定義に無いものは、�
 
 # --------------------------------------------------------------------------
 hr "9. 第三者タグと同意管理（法令遵守の検討材料）"
-# URL を直に書く形だけでなく、フレームワークのラッパーコンポーネント経由の読み込みも見る。
-# <GoogleTagManager gtmId={...} /> のような書き方は、URL が現れないため
-# ドメイン名の grep だけでは取り逃す。実際にこれで見落としが起きる。
-# 送信先は recon.sh・browser_probe.mjs の一覧（ホスト名）と同じ 17 種を、コードに現れる語で引く。
-# エラー監視（Sentry）とチャット（Intercom）も、利用者の端末から第三者へ送る点は同じなので含める
-# （電気通信事業法の外部送信規律は目的を問わない。08 の 1 節）。
-TAGPAT='googletagmanager|google-analytics|analytics\.google\.com|gtag\(|adsbygoogle|pagead2|googlesyndication|googleadservices|doubleclick|connect\.facebook|fbq\(|clarity\.ms|@microsoft/clarity|hotjar|analytics\.tiktok|ttq\.|snap\.licdn|_linkedin_partner_id|ads-twitter|twq\(|s\.yimg\.jp|ytag\(|yjads|intercom|sentry|logrocket|LogRocket|fullstory|FullStory|posthog|datadogRum|browser-rum|mouseflow|_mfq|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts'
 
 echo "  --- 計測・広告タグの読み込み箇所 ---"
 {

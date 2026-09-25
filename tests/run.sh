@@ -570,6 +570,8 @@ JS
   # 2 節はファイル名:行:一致 をまとめて読んで切り分ける。空白と「:」を含むパス、「:」を含むガード名、
   # 1 ファイルに複数のハンドラ（定義 N / ガード M）で、切り分けと数えを確かめる
   mkdir -p "$G/app/api/sp ace" "$G/app/api/co:lon" "$G/app/api/multi"
+  # 「-」で始まるファイル名。一覧は先頭の ./ を外すので、grep にオプションとして読まれうる
+  printf 'app.get("/x", (req, res) => res.send(1));\n' > "$G/-v.ts"
   printf 'export async function GET(){ await requireUser(); }\n' > "$G/app/api/sp ace/route.ts"
   printf 'export async function GET(){ return 1; }\n' > "$G/app/api/co:lon/route.ts"
   printf 'export async function GET(){ await requireAdmin(); }\nexport async function POST(){ return 1; }\nexport async function PUT(){ await requireAdmin(); await requireUser(); }\n// auth:sanctum\n' > "$G/app/api/multi/route.ts"
@@ -599,6 +601,9 @@ JS
   else ng "audit_grep[2 節]: 空白を含むパスのガードを読む" "$(printf '%s\n' "$S2G" | grep 'sp ace' | head -1)"; fi
   if printf '%s\n' "$S2G" | grep -E 'app/api/co:lon/route\.ts +← ガード検出なし$' >/dev/null; then ok "audit_grep[2 節]: 「:」を含むパスも切り分ける"
   else ng "audit_grep[2 節]: 「:」を含むパスも切り分ける" "$(printf '%s\n' "$S2G" | grep 'co:lon' | head -1)"; fi
+  if printf '%s\n' "$S2G" | grep -E '^  -v\.ts +← ガード検出なし$' >/dev/null && printf '%s\n' "$S2G" | grep -E 'app/api/ok/route\.ts +requireUser $' >/dev/null; then
+    ok "audit_grep[2 節]: 「-」で始まるファイル名があっても、ほかのファイルのガードを読む"
+  else ng "audit_grep[2 節]: 「-」で始まるファイル名があっても、ほかのファイルのガードを読む" "$(printf '%s\n' "$S2G" | grep -E -- '-v\.ts|ok/route' | head -2 | tr '\n' ' ')"; fi
   # 語は重複なしで並べ替え、ガードの数は「一致した行」の数（1 行に 2 つあっても 1）
   if printf '%s\n' "$S2G" | grep -E 'app/api/multi/route\.ts +auth:sanctum requireAdmin requireUser +\(定義 3 / ガード 3\)' >/dev/null; then
     ok "audit_grep[2 節]: 1 ファイルの定義とガードの行を数える"
@@ -616,6 +621,15 @@ JS
   contains "audit_grep[タグ]: PHP のテンプレートのタグを拾う"         "theme/header.php"               "$GD"
   contains "audit_grep[タグ]: X 広告のタグを拾う"                     "theme/x-ads.html"               "$GD"
   contains "audit_grep[タグ]: Yahoo! 広告のタグを拾う"                "theme/yahoo-ads.html"           "$GD"
+  # 0 節の判定も 9 節と同じ一覧で行う（以前は 0 節だけ古い一覧で、9 節が拾うのに「無」と言っていた）
+  T1="$TMP/tag-new"; mkdir -p "$T1"; printf '<script>twq("config", "fixture");</script>\n' > "$T1/index.html"
+  if bash "$SKILL/scripts/audit_grep.sh" "$T1" 2>&1 | grep -E '^  計測・広告タグ +有' >/dev/null; then ok "audit_grep[タグ]: 0 節も 9 節と同じ一覧でタグを判定する"
+  else ng "audit_grep[タグ]: 0 節も 9 節と同じ一覧でタグを判定する" "X 広告だけの題材で 0 節が「有」と言わない"; fi
+  # 語の一部に当たらない（keytag( の ytag(、intercompanyTotal の intercom、画像だけの s.yimg.jp）
+  T2="$TMP/tag-fp"; mkdir -p "$T2"
+  printf 'const a = keytag(1); const intercompanyTotal = 0; const img = "https://s.yimg.jp/images/top/logo.png";\n' > "$T2/index.js"
+  if bash "$SKILL/scripts/audit_grep.sh" "$T2" 2>&1 | grep -E '^  計測・広告タグ +無' >/dev/null; then ok "audit_grep[タグ]: 紛らわしい語だけならタグを無と言う"
+  else ng "audit_grep[タグ]: 紛らわしい語だけならタグを無と言う" "keytag・intercompanyTotal・画像の URL で「有」と言った"; fi
   contains "audit_grep[切り捨て]: 切ったことと残りの件数を示す"       "（ほか "                        "$GD"
   contains "audit_grep[長い行]: 長い行を切る"                         "（長い行を省略）"               "$GD"
   if printf '%s\n' "$GD" | LC_ALL=C awk 'length($0) > 700 { bad = 1 } END { exit bad ? 0 : 1 }'; then
