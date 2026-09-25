@@ -38,6 +38,16 @@ restore_all() {
 }
 trap restore_all EXIT
 
+# 変異を入れる前に、何も壊していない状態で run.sh が全部通ることを確かめる。
+# 土台が壊れていると（出力が化けて節を切り出せない、など）、誤検出の検査は何も見ずに通り、
+# 「生きている」「生きていない」の両方が誤った結論になる（実際に起きた）。
+base="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
+if printf '%s' "$base" | grep -q '✗'; then
+  echo "変異を入れる前の run.sh が失敗している。先に直す:" >&2
+  printf '%s\n' "$base" | grep '✗' | head -5 >&2
+  exit 1
+fi
+
 # 1 つのミューテーションを実行する。
 #   mutate <名前> <対象ファイル（skill からの相対）> <落ちるべき検査名の一部> <Python の置換コード>
 # Python コードは、変数 s（ファイル内容）を書き換えて返す形で書く。

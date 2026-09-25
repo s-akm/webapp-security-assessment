@@ -83,6 +83,12 @@ for f in "$SKILL"/scripts/*.sh; do
   if bash -n "$f" 2>/dev/null; then ok "構文: $(basename "$f")"
   else ng "構文: $(basename "$f")"; fi
 done
+# bash 3.2（macOS の既定）は、UTF-8 の環境で "$v（" のように変数名の直後に全角文字が続くと、
+# その文字まで変数名として読み、set -u で止まる。実際に 1b 節がロックファイルの無い構成で止まっていた。
+# 構文検査（bash -n）では見つからないので、書き方で捕まえる。${v} と書けば起きない。
+mb="$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+if [[ -z "$mb" ]]; then ok "変数名の直後に全角文字が続かない（bash 3.2 で止まる書き方）"
+else ng "変数名の直後に全角文字が続かない（bash 3.2 で止まる書き方）" "$(printf '%s' "$mb" | head -3 | cut -c1-120)"; fi
 if python3 -c "import ast,sys; ast.parse(open(sys.argv[1],encoding='utf-8').read())" \
      "$SKILL/scripts/make_register.py" 2>/dev/null; then
   ok "構文: make_register.py"
@@ -179,8 +185,11 @@ head_ "3. 動作 — スクリプトが期待どおり検出するか"
 REPO="$TMP/repo"
 cp -R "$ROOT/tests/fixtures/repo" "$REPO"
 echo 'NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=dummy' > "$REPO/.env.local"
-( cd "$REPO" && git init -q . && git add -A -f >/dev/null 2>&1 \
-    && git -c user.email=t@example.invalid -c user.name=t commit -qm fixture >/dev/null 2>&1 ) || true
+# 履歴の検査に使うのでコミットまでする。利用者の署名の設定・フック・GIT_DIR に左右されないようにする
+( cd "$REPO" && unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+  git init -q . && git add -A -f >/dev/null 2>&1 \
+    && git -c user.email=t@example.invalid -c user.name=t -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+         commit -qm fixture >/dev/null 2>&1 ) || true
 
 A="$(bash "$SKILL/scripts/audit_grep.sh" "$REPO" 2>&1)"
 contains "audit_grep: ガードの無いハンドラを検出" "← ガード検出なし" "$A"
