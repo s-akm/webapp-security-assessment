@@ -783,8 +783,18 @@ else
   # オプションごとの中身。シート数だけでは、中の項目が消えても気づけない
   M2="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-2021.xlsx" --owasp 2021 2>&1)"
   contains "make_register: --owasp 2021 が選べる" "OWASP 2021 版" "$M2"
+  # --api は一般の Top 10 と両方を並べない。OWASP のシートを同じ番号のまま置き換える。
+  # 以前は owasp / full で両方が並んでいた（コメントと 06 は「並べない」と書いていた）。
   M3="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api.xlsx" --frameworks full --api 2>&1)"
-  contains "make_register: --api で API シートが増える" "4b_API_Top10" "$M3"
+  contains "make_register: --api（full）で OWASP のシートを API のシートに置き換える" "4_API_Top10" "$M3"
+  contains "make_register: --api（full）でもシートは 9 枚" "シート 9 枚" "$M3"
+  absent "make_register: --api（full）で一般の Top 10 と両方を並べない" "OWASP_Top10," "$M3"
+  M4="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api-owasp.xlsx" --api 2>&1)"
+  contains "make_register: --api（owasp）で OWASP のシートを API のシートに置き換える" "7_API_Top10" "$M4"
+  contains "make_register: --api（owasp）でもシートは 7 枚" "シート 7 枚" "$M4"
+  absent "make_register: --api（owasp）で一般の Top 10 と両方を並べない" "7_枠組みへの当てはめ" "$M4"
+  M5="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api-none.xlsx" --frameworks none --api 2>&1)"
+  contains "make_register: --api（none）で API のシートが 1 枚増える" "シート 7 枚" "$M5"
   V2="$("$PY_BIN" - "$TMP/r-2021.xlsx" "$TMP/r-full.xlsx" "$TMP/r-api.xlsx" <<'PYEOF' 2>&1
 import sys
 from openpyxl import load_workbook
@@ -804,7 +814,7 @@ if n < 50: bad.append(f"個人情報シートの項目が {n}（50 以上のは�
 ws = wb["5_IPA非機能要求グレード"]
 dai = {ws.cell(r,1).value for r in range(13, ws.max_row+1) if ws.cell(r,1).value and ws.cell(r,2).value}
 if len(dai) < 6: bad.append(f"IPA の大項目が {len(dai)}（6 のはず）")
-ws = load_workbook(sys.argv[3])["4b_API_Top10"]
+ws = load_workbook(sys.argv[3])["4_API_Top10"]
 n = sum(1 for r in range(5, ws.max_row+1) if str(ws.cell(r,1).value or "").startswith("API"))
 if n != 10: bad.append(f"API シートが {n} 行（10 のはず）")
 print("ALL OK" if not bad else " / ".join(bad))

@@ -14,6 +14,10 @@
     full   9 枚。個人情報の安全管理措置・OWASP・IPA 非機能要求グレードを
            それぞれ独立させる。対外説明や水準の提示が要る案件向け
 
+--api は API が主体の構成で使う。一般の Top 10 と重なるため両方は並べず、OWASP のシートを
+同じ番号のまま API Security Top 10 のシートに置き換える（owasp なら 7_API_Top10、
+full なら 4_API_Top10）。none では 7_API_Top10 が 1 枚増える。
+
 件数と工数の合計は数式で入っているので、指摘の行を足せば自動で追従する。
 参照範囲は 200 行まで取ってあるため、行を足すときに数式へ手を入れる必要はない。
 
@@ -580,16 +584,19 @@ def main():
 
     names = dict(LAYOUTS[args.frameworks])
     if args.api:
-        # 枠組みシートの直後に置く。dict は挿入順で並ぶため、作り直して位置を決める。
+        # 一般の Top 10 と重なるため、両方は並べない（references/06-frameworks.md）。
+        # OWASP のシートがある構成では、その位置と番号のまま API のシートに置き換える。
+        # dict は挿入順で並ぶため、作り直して位置を保つ。
         if "owasp" in names:
             rebuilt = {}
             for k, v in names.items():
-                rebuilt[k] = v
                 if k == "owasp":
-                    rebuilt["api"] = "4b_API_Top10" if args.frameworks == "full" else "8_API_Top10"
+                    rebuilt["api"] = v.split("_", 1)[0] + "_API_Top10"
+                else:
+                    rebuilt[k] = v
             names = rebuilt
         else:
-            names["api"] = "7_API_Top10"
+            names["api"] = f"{len(names) + 1}_API_Top10"
     builders = {
         "summary": lambda: sheet_summary(wb, names, args.service, args.date),
         "runtime": lambda: sheet_runtime(wb, names),
@@ -610,6 +617,8 @@ def main():
     wb.save(args.output)
 
     suffix = f" / OWASP {args.owasp} 版" if "owasp" in names else ""
+    if "api" in names:
+        suffix += " / OWASP API Security Top 10 (2023)"
     print(f"生成: {args.output}（--frameworks {args.frameworks}{suffix}）")
     print(f"  シート {len(wb.sheetnames)} 枚: {', '.join(wb.sheetnames)}")
     print()

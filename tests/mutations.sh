@@ -138,6 +138,8 @@ mutate "make_register: 既にあるファイルを黙って上書きする（旧
   's = s.replace("if os.path.exists(args.output) and not args.force:", "if False:")'
 mutate "make_register: full の副題を 3_指摘事項一覧 に戻す（旧不具合）" "scripts/make_register.py" "full の副題が 6_指摘事項一覧 を指す" \
   's = s.replace("\"件数と工数は『{}』から自動集計される。\".format(names[\"findings\"])", "\"件数と工数は『3_指摘事項一覧』から自動集計される。\"")'
+mutate "make_register: --api で一般の Top 10 と両方を並べる（旧不具合）" "scripts/make_register.py" "一般の Top 10 と両方を並べない" \
+  's = s.replace("rebuilt[\"api\"] = v.split(\"_\", 1)[0] + \"_API_Top10\"\n                else:", "rebuilt[k] = v\n                    rebuilt[\"api\"] = \"8_API_Top10\"\n                else:")'
 mutate "make_register: pip だけを案内する（PEP 668 で失敗する）" "scripts/make_register.py" "導入の案内に venv がある" \
   's = "\n".join(l for l in s.split("\n") if "python3 -m venv" not in l)'
 
