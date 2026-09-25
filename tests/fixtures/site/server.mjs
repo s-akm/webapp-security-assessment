@@ -259,6 +259,29 @@ const PAGES = {
 <script>window.__gtmUrl = "https://www.googletagmanager.com/gtm.js?id=GTM-DUMMY";</script>
 </head><body><h1>第三者の SDK を読み込むページ</h1></body></html>`,
   }),
+  // 別ホスト（127.0.0.1 → localhost）への転送。転送先は自サイトとして数える（第三者と言わない）
+  "/to-clean": () => ({ status: 302, headers: { location: `http://localhost:${port}/clean` }, body: "" }),
+  // CSP で止められる読み込み。コンソールの違反の文言に URL のクエリ（鍵らしき値）が載る
+  "/csp-query": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": "script-src 'self'" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>CSP</title>
+<script src="${THIRD("/tag.js?key=FIXTURECONSOLEKEY0123")}"></script></head><body></body></html>`,
+  }),
+  // 計測と同じホストの別物（共有リンク・画像）と、本物の計測（Meta ピクセルの /tr）。前者でタグと言わない
+  "/share": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>共有</title>
+<script>var shareUrl = "https://www.facebook.com/sharer/sharer.php?u=" + encodeURIComponent(location.href);</script>
+</head><body><img src="https://s.yimg.jp/images/top/logo.png" alt=""></body></html>`,
+  }),
+  "/pixel-noscript": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>ピクセル</title></head>
+<body><noscript><img height="1" width="1" src="https://www.facebook.com/tr?id=0&ev=PageView&noscript=1"></noscript></body></html>`,
+  }),
   "/vendor.js": () => ({
     status: 200,
     headers: { "content-type": "application/javascript" },

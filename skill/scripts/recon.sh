@@ -188,8 +188,8 @@ script_refs() {
 inline_scripts() {
   perl -0777 -ne 'while (/<script\b([^>]*)>(.*?)<\/script\s*>/gis) { print "$2\n" unless $1 =~ /\bsrc\s*=/i }' "$@" 2>/dev/null
 }
-# コードの中に書かれた URL のホスト名
-url_hosts() { grep -ohE "(https?:)?//[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}" "$@" 2>/dev/null | sed -E 's#^(https?:)?//##' | tr 'A-Z' 'a-z'; }
+# コードの中に書かれた URL（パスまで。ホスト名は tag_hosts_of が取り出す）
+url_refs() { grep -ohE "(https?:)?//[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}[^\"'<>[:space:]]*" "$@" 2>/dev/null; }
 
 # 自サイトかどうか。渡された URL のホスト、リダイレクト後の最終的なホスト、そのサブドメインを自サイトとみなす
 FINAL_HOST="$DOMAIN"
@@ -221,6 +221,28 @@ TAGS=(
   'Datadog RUM|(^|\.)browser-intake-([a-z0-9]+-)?(datadoghq\.(com|eu)|ddog-gov\.com)$|^www\.datadoghq-browser-agent\.com$'
   'Mouseflow|(^|\.)mouseflow\.com$'
 )
+# ホスト名だけでは計測と言えない送信先。同じホストに共有ボタンや画像も置かれているので、ここではパスまで見る。
+# 「ホスト|パスの正規表現」。以前は共有リンク（www.facebook.com/sharer）や画像（s.yimg.jp/images/…）で
+# 「タグあり」「同意前に送信している可能性」まで出していた。TAGS そのものは browser_probe.mjs と揃えたままにする
+# （ブラウザで実際に送られた要求は、パスに関わらず第三者への送信なので、ホスト名で数えてよい）。
+TAG_PATHS=(
+  'www.facebook.com|^/tr([/?#]|$)'
+  's.yimg.jp|^/images/listing/tool/cv/'
+)
+# URL（1 行 1 件）から、タグの判定に使うホスト名を出す。TAG_PATHS のホストは、パスが合うときだけ出す
+tag_hosts_of() {
+  local u h p entry
+  while IFS= read -r u; do
+    h="$(host_of "$u")"; [[ -n "$h" ]] || continue
+    p="$(printf '%s\n' "$u" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*:)?//[^/?\#]*##')"
+    for entry in "${TAG_PATHS[@]}"; do
+      if [[ "$h" == "${entry%%|*}" ]]; then
+        printf '%s\n' "$p" | grep -E "${entry#*|}" >/dev/null || continue 2
+      fi
+    done
+    printf '%s\n' "$h"
+  done
+}
 # ホスト名の一覧（1 行 1 件）に既知の送信先が含まれていれば "ラベル<TAB>該当ホスト" を出す
 match_tags() {
   local hosts="$1" entry label re hit
@@ -332,6 +354,10 @@ fi
 if [[ "$DOMAIN" =~ ^[0-9.]+$ || "$DOMAIN" == *:* ]]; then
   hr "2. DNS レコード"
   echo "  IP アドレスが渡されたため省略（ドメイン名で呼ぶと DNS まで見る）"
+elif [[ "$DOMAIN" == "localhost" || "$DOMAIN" == *.localhost ]]; then
+  # localhost は DNS に問い合わせても意味のある答えが無い（RFC 6761）。問い合わせをリゾルバへ出さない
+  hr "2. DNS レコード"
+  echo "  localhost が渡されたため省略（公開の DNS に localhost のレコードは無い）"
 elif ! have dig; then
   hr "2. DNS レコード"
   echo "  dig が見つからないため省略（dnsutils / bind-utils を入れると取得できる）"
@@ -627,11 +653,10 @@ echo "  --- 計測・広告の既知タグ ---"
 # 以前は第三者スクリプトの中身まで見ていて、LogRocket と PostHog を置いただけで 9 種が検出になっていた。
 : > tag_hosts.txt
 while IFS=$'\t' read -r f base; do
-  src_attrs "$f" | while IFS= read -r ref; do resolve "$base" "$ref"; done \
-    | while IFS= read -r u; do host_of "$u"; done >> tag_hosts.txt
+  src_attrs "$f" | while IFS= read -r ref; do resolve "$base" "$ref"; done | tag_hosts_of >> tag_hosts.txt
 done < pages.tsv
-{ inline_scripts ./*.html > inline.js; url_hosts inline.js; } >> tag_hosts.txt
-url_hosts own_only.js >> tag_hosts.txt
+{ inline_scripts ./*.html > inline.js; url_refs inline.js | tag_hosts_of; } >> tag_hosts.txt
+url_refs own_only.js | tag_hosts_of >> tag_hosts.txt
 sort -u tag_hosts.txt | sed '/^$/d' > tag_hosts_u.txt
 match_tags tag_hosts_u.txt > tags_found.txt
 found_tag=0
@@ -671,12 +696,11 @@ if grep -iF '__tcfapi' all.js >/dev/null 2>&1 && [[ $found_cmp -eq 0 ]]; then
 fi
 
 echo "  --- 管理画面・ログイン画面にもタグが入っているか ---"
-for f in ./*login*.html ./*admin*.html; do
-  [[ -f "$f" ]] || continue
+# 両方の形に一致するファイル（page_admin_login.html）を 2 回出さないよう、重複を除いてから回す
+for f in ./*login*.html ./*admin*.html; do [[ -f "$f" ]] && printf '%s\n' "$f"; done | sort -u | while IFS= read -r f; do
   base="$(awk -F'\t' -v f="$(basename "$f")" '$1==f{print $2; exit}' pages.tsv)"
-  { src_attrs "$f" | while IFS= read -r ref; do resolve "${base:-$ORIGIN/}" "$ref"; done \
-      | while IFS= read -r u; do host_of "$u"; done
-    inline_scripts "$f" > inline_one.js; url_hosts inline_one.js; } | sort -u | sed '/^$/d' > one_hosts.txt
+  { src_attrs "$f" | while IFS= read -r ref; do resolve "${base:-$ORIGIN/}" "$ref"; done | tag_hosts_of
+    inline_scripts "$f" > inline_one.js; url_refs inline_one.js | tag_hosts_of; } | sort -u | sed '/^$/d' > one_hosts.txt
   hits="$(match_tags one_hosts.txt | cut -f1 | tr '\n' ' ')"
   [[ -n "$hits" ]] && printf '    %-34s %s\n' "$(basename "$f")" "$hits"
 done

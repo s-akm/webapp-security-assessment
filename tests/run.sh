@@ -1348,6 +1348,14 @@ else
     absent "recon[タグ誤検出]: 第三者スクリプトの中身で ${lbl} と言わない" "[検出] $lbl" "$RV"
   done
   contains "recon[タグ]: 一重引用符の第三者スクリプトを列挙"       "127.0.0.1:$PORT"       "$RV"
+  # 検査は外へ出ない。localhost を渡したときは DNS の問い合わせを OS のリゾルバへ出さない
+  contains "recon[DNS]: localhost なら DNS を引かない"               "localhost が渡されたため省略" "$RV"
+  # 計測と同じホストの別物（共有リンク・画像）でタグと言わない。パスが計測のもの（/tr）は拾う
+  RS="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/share" 2>&1 || true)"
+  absent   "recon[タグ誤検出]: 共有リンクの www.facebook.com で Meta ピクセルと言わない" "[検出] Meta ピクセル" "$RS"
+  absent   "recon[タグ誤検出]: 画像の s.yimg.jp で Yahoo! 広告と言わない"             "[検出] Yahoo! 広告"   "$RS"
+  RP="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/pixel-noscript" 2>&1 || true)"
+  contains "recon[タグ]: noscript の /tr を Meta ピクセルとして拾う"                 "[検出] Meta ピクセル" "$RP"
 
   # ---- recon.sh の DNS まわり ----
   # 発火台は localhost だが、localhost は OS が特別扱いして常に 127.0.0.1 を返すため、
