@@ -611,6 +611,31 @@ else
     else ng "recon[DNS]: CAA が無ければ空で出す" "CAA の行に何か出ている"; fi
     # DMARC の rua に入っているアドレスを、出力に出さないこと（報告書に不要な個人情報）
     absent "recon[DNS]: DMARC の連絡先アドレスを出力に混ぜない" "dmarc@example.invalid" "$R3"
+
+    # サブドメインの URL を渡されたとき、親に設定があれば親へ遡って見つけること。
+    # 以前は URL のホスト名だけを引き、親に DMARC / CAA があっても「無」と出していた。
+    # あわせて p=reject; sp=none を「p=none」と取り違えないこと（部分一致で誤っていた）。
+    R4="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://app.strict.test:1" 2>&1 || true)"
+    contains "recon[DNS]: サブドメインから親の DMARC を見つける" "_dmarc.strict.test で発見" "$R4"
+    contains "recon[DNS]: p=reject を読める"                     "→ p=reject"              "$R4"
+    absent   "recon[DNS]: sp=none を p=none と取り違えない"      "p=none。監視のみ"        "$R4"
+    contains "recon[DNS]: sp=none は別に指摘する"                "sp=none。サブドメインは監視のみ" "$R4"
+    contains "recon[DNS]: サブドメインから親の CAA を見つける"   "strict.test で発見）"    "$R4"
+    absent   "recon[DNS]: 親の DMARC の連絡先も伏せる"           "dmarc@example.invalid"   "$R4"
+    # サブドメインに効くのは sp=（無ければ p=）。p=reject を主に示して、実際に効く sp=none を見落とさせない
+    contains "recon[DNS]: このホストに効くポリシーを示す"         "このホストに効くのは sp=none" "$R4"
+    # DS は親へ遡らず、SOA で求めたゾーンの頂点で引く（co.uk のような区切りの DS を拾わない）
+    contains "recon[DNS]: ゾーンの頂点で DS を引く"               "（ゾーンの頂点 strict.test）" "$R4"
+    contains "recon[DNS]: 頂点の DS を見つける"                   "DS     : 12345 13 2"     "$R4"
+    contains "recon[DNS]: 未署名なら DS を空で出す"               "DS     : （ゾーンの頂点 example.test）" "$R3"
+    # タグは大文字小文字と空白を許して読む（RFC 7489）。レコードが 2 本なら DMARC は無効
+    R5="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://caps.test:1" 2>&1 || true)"
+    contains "recon[DNS]: 大文字と空白の入ったタグを読む"         "→ p=reject"              "$R5"
+    R6="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://dup.test:1" 2>&1 || true)"
+    contains "recon[DNS]: DMARC が 2 本あれば無効と言う"          "DMARC のレコードが 2 本ある" "$R6"
+    # IP アドレスを渡されたら DNS を引かない
+    R7="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://127.0.0.1:1" 2>&1 || true)"
+    contains "recon[DNS]: IP アドレスなら DNS を省く"             "IP アドレスが渡されたため省略" "$R7"
   else
     printf '  \033[33m-\033[0m recon の DNS 検査（dig が無いため省略）\n'
   fi

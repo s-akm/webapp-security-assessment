@@ -4,8 +4,9 @@
 #   使い方: ./recon.sh https://example.com [追加パス...]
 #
 # 取得するもの:
-#   1. HTTP セキュリティヘッダの実際の付与状況
-#   2. DNS レコード（SPF / DMARC / CAA / DNSSEC / MX / NS）と送信ドメイン認証
+#   1. HTTP セキュリティヘッダの実際の付与状況、外から見えてはいけないファイル、証明書
+#   2. DNS レコード（SPF / DMARC / CAA / DNSSEC / MX / NS / MTA-STS）と送信ドメイン認証。
+#      DMARC・CAA・DS はサブドメインから親へ遡って探す
 #   3. クライアント JS バンドル内の、鍵らしき文字列と API エンドポイント
 #   4. 第三者への送信先、計測・広告タグ、同意管理の実装（外部送信規律・CMP の検討材料）
 #   5. 追加パスを指定した場合、その HTTP ステータス（開発用ルートの確認など）
@@ -23,7 +24,10 @@ fi
 shift || true
 
 URL="${URL%/}"
-DOMAIN="$(printf '%s' "$URL" | sed -E 's#^https?://##; s#/.*$##; s#:.*$##')"
+HOSTPORT="$(printf '%s' "$URL" | sed -E 's#^https?://##; s#/.*$##')"
+DOMAIN="$(printf '%s' "$HOSTPORT" | sed -E 's#:.*$##; s#\.$##')"
+PORT_="$(printf '%s' "$HOSTPORT" | grep -oE ':[0-9]+$' | tr -d ':')"
+[[ -z "$PORT_" ]] && PORT_=443
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -40,6 +44,36 @@ dq() {
     dig +short +time=3 +tries=1 "$@"
   fi
 }
+
+# 親へ遡って最初に見つかったレコードを返す。DMARC は受信側が組織のドメインまで遡り、
+# CAA も認証局が親へ遡って確かめ、DS はゾーンの頂点にしか無い。サブドメインの URL を
+# 渡されたときに、そのホスト名だけを引いて「無い」と言うと誤る（実際に誤っていた）。
+#   up_find <種別> <接頭辞> <grep の条件>   → "見つかった名前<TAB>値" を 1 行
+up_find() {
+  local type="$1" prefix="$2" pat="$3" d="$DOMAIN" v
+  while [[ "$d" == *.* ]]; do
+    v="$(dq "$type" "$prefix$d" | tr -d '"' | grep -iE "$pat" | tr '\n' ' ' || true)"
+    if [[ -n "$v" ]]; then printf '%s\t%s\n' "$prefix$d" "$v"; return 0; fi
+    d="${d#*.}"
+  done
+  return 1
+}
+
+# DS はゾーンの頂点にしか無い。親へ遡ると、登録の区切り（co.uk など）の DS を拾って
+# 「DNSSEC あり」と誤る。SOA の持ち主の名前でゾーンの頂点を求め、そこだけを引く。
+zone_apex() {
+  local out
+  if [[ -n "${RECON_DNS:-}" ]]; then
+    out="$(dig +noall +answer +authority +time=2 +tries=1 "@${RECON_DNS%%:*}" -p "${RECON_DNS##*:}" SOA "$DOMAIN" 2>/dev/null)"
+  else
+    out="$(dig +noall +answer +authority +time=3 +tries=1 SOA "$DOMAIN" 2>/dev/null)"
+  fi
+  printf '%s\n' "$out" | awk '$4=="SOA"{print $1; exit}' | sed 's/\.$//'
+}
+
+# DMARC のタグの値を取る。p= を部分一致で見ると sp=none / np=none にも当たる（実際に誤っていた）。
+# タグ名も値も大文字小文字を区別せず、= の前後の空白も許す（RFC 7489）
+dmarc_tag() { printf '%s' "$2" | tr ';' '\n' | tr -d ' \t' | tr 'A-Z' 'a-z' | grep -E "^$1=" | head -1 | cut -d= -f2-; }
 
 # --------------------------------------------------------------------------
 hr "対象"
@@ -63,28 +97,108 @@ else
   printf '  [良] x-powered-by は出ていない\n'
 fi
 
+hr "1c. 外から見えてはいけないもの（ステータスだけ。本文は保存しない）"
+# SPA は存在しないパスにもトップページを 200 で返すことがある。200 のときは先頭だけを見て判定し、
+# 値は出さない。HTML だと言い切るのは、HTML の書き出しがあるときだけにする（それ以外は要確認）。
+for p in /.git/HEAD /.env /.env.local /.env.production /.DS_Store /.well-known/security.txt; do
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$URL$p" 2>/dev/null)"
+  note=""
+  if [[ -z "$code" || "$code" == "000" ]]; then
+    code="---"; note="（接続できない）"
+  elif [[ "$code" == "200" ]]; then
+    head_="$(curl -s --max-time 10 "$URL$p" 2>/dev/null | head -c 1024 | tr -d '\0')"
+    is_html=""; printf '%s' "$head_" | grep -qiE '<(!doctype|html|head|body)' && is_html=1
+    case "$p" in
+      /.git/HEAD)
+        if printf '%s' "$head_" | grep -qE '^(ref:|[0-9a-f]{40})'; then note="← 中身が返っている。最優先"
+        elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
+        else note="（HTML ではない何かが返っている。要確認）"; fi ;;
+      /.env*)
+        if printf '%s\n' "$head_" | grep -vE '^[[:space:]]*#' | grep -qE '^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*='; then note="← 中身が返っている。最優先"
+        elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
+        else note="（HTML ではない何かが返っている。要確認）"; fi ;;
+      /.well-known/security.txt)
+        if printf '%s' "$head_" | grep -qi '^contact:'; then note="（連絡窓口あり）"
+        else note="（連絡窓口の書式ではない）"; fi ;;
+      /.DS_Store)
+        [[ -z "$is_html" ]] && note="← HTML ではない。ファイル一覧が露出している可能性" ;;
+    esac
+  elif [[ "$p" == "/.well-known/security.txt" ]]; then note="（連絡窓口が無い）"
+  fi
+  printf '  %-28s %s %s\n' "$p" "$code" "$note"
+done
+
+if [[ "$URL" == https://* ]] && have openssl; then
+  hr "1d. 証明書"
+  # 応答の無いサーバーでは s_client が戻らない。macOS には timeout が無いので perl の alarm で打ち切る
+  cert="$(echo | perl -e 'alarm 15; exec @ARGV' openssl s_client -connect "$DOMAIN:$PORT_" -servername "$DOMAIN" 2>/dev/null \
+    | openssl x509 -noout -issuer -enddate 2>/dev/null)"
+  if [[ -n "$cert" ]]; then printf '%s\n' "$cert" | sed 's/^/  /'; else echo "  (取得失敗)"; fi
+  echo "  ※ 最長の有効期間は 2026-03 から 200 日、2027-03 から 100 日に縮む。手動更新なら運用を聞く"
+fi
+
 # --------------------------------------------------------------------------
-if have dig; then
+if [[ "$DOMAIN" =~ ^[0-9.]+$ || "$DOMAIN" == *:* ]]; then
+  hr "2. DNS レコード"
+  echo "  IP アドレスが渡されたため省略（ドメイン名で呼ぶと DNS まで見る）"
+elif have dig; then
   hr "2. DNS レコード"
   printf '  NS     : %s\n' "$(dq NS   "$DOMAIN" | tr '\n' ' ')"
   printf '  A      : %s\n' "$(dq A    "$DOMAIN" | tr '\n' ' ')"
   printf '  AAAA   : %s\n' "$(dq AAAA "$DOMAIN" | tr '\n' ' ')"
   printf '  MX     : %s\n' "$(dq MX   "$DOMAIN" | tr '\n' ' ')"
-  printf '  CAA    : %s\n' "$(dq CAA  "$DOMAIN" | tr '\n' ' ')"
-  printf '  DS     : %s\n' "$(dq DS   "$DOMAIN" | tr '\n' ' ')"
+  # CAA と DS は親へ遡る。見つかった階層も出す（サブドメインを渡されたときの誤判定を避ける）
+  if r="$(up_find CAA '' '.')"; then printf '  CAA    : %s （%s で発見）\n' "${r#*$'\t'}" "${r%%$'\t'*}"
+  else printf '  CAA    : \n'; fi
+  APEX="$(zone_apex)"; [[ -z "$APEX" ]] && APEX="$DOMAIN"
+  ds="$(dq DS "$APEX" | tr '\n' ' ')"
+  if [[ -n "$ds" ]]; then printf '  DS     : %s （ゾーンの頂点 %s）\n' "$ds" "$APEX"
+  else printf '  DS     : （ゾーンの頂点 %s）\n' "$APEX"; fi
 
   hr "2b. 送信ドメイン認証"
   SPF="$(dq TXT "$DOMAIN" | tr -d '"' | grep -i '^v=spf1' || true)"
-  DMARC="$(dq TXT "_dmarc.$DOMAIN" | tr -d '"' | grep -i '^v=DMARC1' || true)"
-  [[ -n "$SPF"   ]] && printf '  [有] SPF   : %s\n' "$SPF"     || printf '  [無] SPF（apex に SPF レコードが無い）\n'
+  DMARC=""; DMARC_AT=""
+  if r="$(up_find TXT '_dmarc.' '^v=DMARC1')"; then DMARC="${r#*$'\t'}"; DMARC="${DMARC% }"; DMARC_AT="${r%%$'\t'*}"; fi
+  # DMARC のレコードが 2 本以上あると、受信側は DMARC を無いものとして扱う（RFC 7489 6.6.3）
+  n_dmarc="$(printf '%s' "$DMARC" | grep -oiE 'v=DMARC1' | wc -l | tr -d ' ')"
+  [[ -n "$SPF"   ]] && printf '  [有] SPF   : %s\n' "$SPF"     || printf '  [無] SPF（%s に SPF レコードが無い）\n' "$DOMAIN"
   if [[ -n "$DMARC" ]]; then
     # rua / ruf に入っている連絡先は、DNS 上は公開情報だが報告書には要らない。
     # 出力の時点で伏せる。末尾の注意書きだけでは、貼り付けたときに残る。
     printf '  [有] DMARC : %s\n' "$(printf '%s' "$DMARC" | sed -E 's/mailto:[^,;[:space:]]+/mailto:<伏字>/g')"
-    printf '%s' "$DMARC" | grep -qi 'p=none' && printf '        → p=none。監視のみで隔離・拒否をしない\n'
+    [[ "$DMARC_AT" != "_dmarc.$DOMAIN" ]] && printf '        （%s で発見。親ドメインの設定が適用される）\n' "$DMARC_AT"
+    dp="$(dmarc_tag p "$DMARC")"; dsp="$(dmarc_tag sp "$DMARC")"; dnp="$(dmarc_tag np "$DMARC")"
+    if [[ "$n_dmarc" -gt 1 ]]; then
+      printf '        → ★ DMARC のレコードが %s 本ある。複数あると受信側は DMARC を無いものとして扱う\n' "$n_dmarc"
+    fi
+    case "$dp" in
+      none)              printf '        → p=none。監視のみで隔離・拒否をしない（到達性の要件は満たすが、なりすましは止めない）\n' ;;
+      quarantine|reject) printf '        → p=%s\n' "$dp" ;;
+      *)                 printf '        → p の値が読めない（%s）\n' "${dp:-なし}" ;;
+    esac
+    # 親で見つけたとき、このホストに効くのは sp=（無ければ p=）
+    if [[ "$DMARC_AT" != "_dmarc.$DOMAIN" ]]; then
+      eff="${dsp:-$dp}"
+      if [[ "$eff" == "none" ]]; then
+        printf '        → このホストに効くのは %s=none。サブドメインは監視のみ\n' "$([[ -n "$dsp" ]] && echo sp || echo p)"
+      else
+        printf '        → このホストに効くのは %s=%s\n' "$([[ -n "$dsp" ]] && echo sp || echo p)" "${eff:-（読めない）}"
+      fi
+    elif [[ "$dsp" == "none" ]]; then
+      printf '        → sp=none。サブドメインは監視のみ\n'
+    fi
+    [[ "$dnp" == "none" ]] && printf '        → np=none。存在しないサブドメインは監視のみ\n'
+    [[ "$(dmarc_tag t "$DMARC")" == "y" ]] && printf '        → t=y。テストモード（ポリシーを完全には適用しない）\n'
+    [[ -z "$(dmarc_tag rua "$DMARC")" ]] && printf '        → rua が無い。集計レポートを受け取っていない\n'
   else
     printf '  [無] DMARC\n'
   fi
+
+  if r="$(up_find TXT '_mta-sts.' '^v=STSv1')"; then printf '  [有] MTA-STS : %s （%s）\n' "${r#*$'\t'}" "${r%%$'\t'*}"
+  else printf '  [無] MTA-STS\n'; fi
+  if r="$(up_find TXT '_smtp._tls.' '^v=TLSRPTv1')"; then
+    printf '  [有] TLS-RPT : %s （%s）\n' "$(printf '%s' "${r#*$'\t'}" | sed -E 's/mailto:[^,;[:space:]]+/mailto:<伏字>/g')" "${r%%$'\t'*}"
+  else printf '  [無] TLS-RPT\n'; fi
 
   hr "2c. 配信サービス用サブドメイン（よくある名前を総当たり）"
   for sub in send mail email smtp mg em bounce news; do

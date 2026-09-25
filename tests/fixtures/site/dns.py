@@ -14,13 +14,22 @@
   - 配信サービス用のサブドメイン send.<domain> に SPF がある
   - DKIM セレクタ resend._domainkey が存在する
 
+ただし strict.test 配下だけは、**正しく作られた親ドメイン**を模す。設定は親（strict.test）にだけあり、
+サブドメイン（app.strict.test）には何も無い。recon.sh がサブドメインを渡されたときに
+親へ遡って見つけられるか、p=reject; sp=none を「p=none」と取り違えないかを見る。
+
+  - _dmarc.strict.test に v=DMARC1; p=reject; sp=none
+  - strict.test に CAA と DS（DNSSEC 署名済み）
+  - SOA は strict.test が持つ（サブドメインを問い合わせると、権威部に strict.test の SOA が返る）。
+    recon.sh はこれでゾーンの頂点を求め、DS をそこだけで引く
+
 標準ライブラリだけで、RFC 1035 の応答を組み立てる。TXT / MX / NS / A / CAA / DS / AAAA に答える。
 """
 import socket, struct, sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 5353
 
-QTYPE = {1: "A", 2: "NS", 15: "MX", 16: "TXT", 28: "AAAA", 43: "DS", 257: "CAA"}
+QTYPE = {1: "A", 2: "NS", 6: "SOA", 15: "MX", 16: "TXT", 28: "AAAA", 43: "DS", 257: "CAA"}
 
 def parse_name(data, off):
     labels = []
@@ -54,6 +63,26 @@ def answers(qname, qtype):
     for pre in ("_dmarc.", "send.", "resend._domainkey.", "mail."):
         if q.startswith(pre): base = q[len(pre):]
     out = []
+    if qtype == 6:  # SOA は answers ではなく soa_of で扱う
+        return out
+    # タグの書き方の揺れ（大文字・空白）と、DMARC のレコードが 2 本ある構成
+    if q == "_dmarc.caps.test" and qtype == 16:
+        return [rr(qname, 16, txt("v=DMARC1; P = Reject; SP=None"))]
+    if q == "_dmarc.dup.test" and qtype == 16:
+        return [rr(qname, 16, txt("v=DMARC1; p=reject")), rr(qname, 16, txt("v=DMARC1; p=none"))]
+    if q.endswith("caps.test") or q.endswith("dup.test"):
+        return [rr(qname, 1, bytes([127, 0, 0, 1]))] if qtype == 1 else []
+    if q == "strict.test" or q.endswith(".strict.test"):
+        if qtype == 16 and q == "_dmarc.strict.test":
+            out.append(rr(qname, 16, txt("v=DMARC1; p=reject; sp=none; rua=mailto:dmarc@example.invalid")))
+        elif qtype == 257 and q == "strict.test":
+            tag, val = b"issue", b"ca.example.invalid"
+            out.append(rr(qname, 257, bytes([0, len(tag)]) + tag + val))
+        elif qtype == 43 and q == "strict.test":
+            out.append(rr(qname, 43, struct.pack("!HBB", 12345, 13, 2) + bytes(32)))
+        elif qtype == 1:
+            out.append(rr(qname, 1, bytes([127, 0, 0, 1])))
+        return out
     if qtype == 16:  # TXT
         if q.startswith("_dmarc."):
             out.append(rr(qname, 16, txt("v=DMARC1; p=none; rua=mailto:dmarc@example.invalid")))
@@ -79,6 +108,13 @@ def answers(qname, qtype):
     # CAA(257) と DS(43) は返さない = 未設定
     return out
 
+def soa_of(qname):
+    """問い合わせた名前が属するゾーンの頂点と、その SOA レコード"""
+    q = qname.lower().rstrip(".")
+    apex = "strict.test" if (q == "strict.test" or q.endswith(".strict.test")) else ".".join(q.split(".")[-2:])
+    rdata = enc_name("ns1.example.invalid") + enc_name("hostmaster.example.invalid") + struct.pack("!IIIII", 1, 3600, 600, 86400, 60)
+    return apex, rr(apex, 6, rdata)
+
 def build(req):
     tid = req[:2]
     qd = struct.unpack("!H", req[4:6])[0]
@@ -87,9 +123,15 @@ def build(req):
     qtype, qclass = struct.unpack("!HH", req[off2:off2+4])
     question = req[12:off2+4]
     ans = answers(qname, qtype)
+    auth = []
+    if qtype == 6:
+        apex, soa = soa_of(qname)
+        # 頂点そのものなら回答部に、サブドメインなら権威部に SOA を返す（実際の権威サーバーと同じ）
+        if qname.lower().rstrip(".") == apex: ans = [soa]
+        else: auth = [soa]
     flags = 0x8180  # 応答・再帰可・エラーなし
-    hdr = tid + struct.pack("!HHHHH", flags, 1, len(ans), 0, 0)
-    return hdr + question + b"".join(ans), qname, QTYPE.get(qtype, str(qtype))
+    hdr = tid + struct.pack("!HHHHH", flags, 1, len(ans), len(auth), 0)
+    return hdr + question + b"".join(ans) + b"".join(auth), qname, QTYPE.get(qtype, str(qtype))
 
 def main():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

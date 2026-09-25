@@ -134,6 +134,13 @@ mutate "recon: ポート付き URL の自サイト判定を戻す（旧不具合
 mutate "recon: DMARC の連絡先を伏せない" "scripts/recon.sh" "DMARC の連絡先アドレスを出力に混ぜない" \
   's = s.replace("sed -E \x27s/mailto:[^,;[:space:]]+/mailto:<伏字>/g\x27", "cat")'
 
+mutate "recon: DMARC の p= を部分一致に戻す（旧不具合）" "scripts/recon.sh" "sp=none を p=none と取り違えない" \
+  's = s.replace("dp=\"$(dmarc_tag p \"$DMARC\")\"", "dp=\"$(printf %s \"$DMARC\" | grep -qi p=none && echo none)\"")'
+mutate "recon: DS を頂点ではなくホスト名で引く（旧不具合）" "scripts/recon.sh" "頂点の DS を見つける" \
+  's = s.replace("APEX=\"$(zone_apex)\"", "APEX=\"$DOMAIN\"")'
+mutate "recon: 親ドメインへ遡らない（旧不具合）" "scripts/recon.sh" "サブドメインから親の DMARC を見つける" \
+  's = s.replace("    d=\"${d#*.}\"\n", "    break\n")'
+
 # ---- browser_probe（Playwright がある環境でのみ）----
 if node -e 'import("playwright")' >/dev/null 2>&1; then
   mutate "browser_probe: 保存領域の値を出力してしまう" "scripts/browser_probe.mjs" "Cookie と保存領域の値を出力しない" \
