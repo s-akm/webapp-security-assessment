@@ -398,7 +398,7 @@ grep -rnE 'jwt\.verify\(|jwtVerify\(|verifyIdToken\(|createRemoteJWKSet' --inclu
   通ってしまう構成がある
 - **`exp` を検証しているか。** 有効期限の長さも見る。数か月のトークンは、漏れたときに止められない
 - **失効させる手段があるか。** JWT は本質的に失効しにくい。**「ログアウトしたのに使える」を
-  実機で確かめる**（`references/09-browser-verification.md` の 7 節）
+  実機で確かめる**（`references/09-browser-verification.md` の 7 節。ログアウト前に取った要求をログアウト後に送り直し、ステータスコードだけを見る）
 
 ### B-5. 外部の認証基盤に任せている場合（OAuth / OIDC）
 
