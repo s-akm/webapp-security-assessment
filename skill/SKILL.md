@@ -149,8 +149,8 @@ docs/security-assessment/
 | `references/03-runtime-verification.md` | 実機確認に入る前。確認手順と、環境別の探し方 |
 | `references/04-findings-register.md` | 指摘をまとめるとき。台帳の構成と書き方 |
 | `references/05-remediation-plan.md` | 修正指示書を書くとき。フェーズ分けの考え方 |
-| `references/06-frameworks.md` | 最後。外部の枠組みへの当てはめが要るとき |
-| `references/07-web-vulnerabilities.md` | 02 で当たりを付けた後。XSS・CSRF・CORS・SSRF・キャッシュ・業務ロジックを掘るとき |
+| `references/06-frameworks.md` | 最後。外部の枠組みへの当てはめが要るとき。**カード決済を扱うときは「カード決済を扱う場合」の節だけ先に読む** |
+| `references/07-web-vulnerabilities.md` | 02 で当たりを付けた後。XSS・CSRF・CORS・SSRF・キャッシュ・業務ロジック・リアルタイム通信を掘るとき |
 | `references/08-privacy-compliance.md` | 計測タグ・広告・Cookie を使っているとき。同意管理と文書との整合を見る |
 | `references/09-browser-verification.md` | 実機確認で、curl では見えないものを見るとき。同意前の送信・保存領域・CSP の実効性 |
 | `references/10-dependencies.md` | 依存が多い、スキャンで high 以上が出た、CI から本番へ自動で出る構成のとき |
@@ -159,7 +159,7 @@ docs/security-assessment/
 | `references/13-infrastructure.md` | **インフラを自分たちのリポジトリで定義しているとき**（Dockerfile / Terraform / Kubernetes / サーバーレスの定義） |
 | `references/14-mobile.md` | **評価対象にモバイルアプリが含まれるとき** |
 
-**01〜05 は順に読む。06 以降は必要なときだけ開く。** 06 は対外説明が要るとき、07 は該当する
+**01〜05 は順に読む。06 以降は必要なときだけ開く。** 06 は対外説明が要るときとカード決済を扱うとき、07 は該当する
 脆弱性の種類ごと、08 はタグを使っているかどうか、09 は JS の挙動を確かめる必要があるとき、
 10 は依存の状況しだい、11 は再評価のとき、12 はアプリが LLM を呼んでいるときに限る。
 **全部読む必要はない。**
@@ -179,6 +179,9 @@ AI で書かれたコードを読むだけなら 12 は開かない。
 | LLM の SDK、MCP | `12-ai-features.md` |
 | 計測・広告タグ | `08-privacy-compliance.md` |
 | XML の解析 | `07` の 6-2（XXE） |
+| カード決済（決済代行の画面を埋め込む・遷移する構成を含む） | `06` の「カード決済を扱う場合」 |
+| `.github/workflows/`、AI エージェントの設定（`AGENTS.md`・`.mcp.json` など） | `10` の 3-3・3-5 |
+| WebSocket・購読・チャネル・SSE（チャット、通知、共同編集） | `07` の 11 節 |
 
 **無い資料は読まない。** 対象に無い技術の観点を報告書に並べると、
 **見たことになっていない項目が「確認済み」に見える**。これは未確認を隠すのと同じ害になる。
@@ -201,13 +204,17 @@ AI で書かれたコードを読むだけなら 12 は開かない。
 
 | スクリプト | 用途 | 依存 |
 |---|---|---|
-| `scripts/recon.sh <url> [パス...]` | 外形調査を一括取得（HTTP ヘッダ・DNS・送信ドメイン認証・公開バンドル内の鍵らしき文字列・任意パスのステータス）。実機確認の入り口 | `curl`、`dig`（無くても DNS 以外は動く） |
-| `scripts/audit_grep.sh <repo>` | コード監査の機械的な下拵え（規模、ハンドラ×認可ガード、ミドルウェアの対象範囲、危険な関数、秘密情報、fail-open、開発用の抜け道、参照テーブル名、トークン検証、Webhook、例外の握りつぶし、乱数と暗号、証明書の検証、XML、LLM の利用。**構成に応じてインフラの定義とモバイルも**） | `grep`、`git`（任意） |
+| `scripts/recon.sh <url> [パス...]` | 外形調査を一括取得（HTTP ヘッダ・外から見えてはいけないファイルのステータス・証明書・DNS（親ドメインへ遡る）・送信ドメイン認証と MTA-STS・公開バンドル内の鍵らしき文字列・任意パスのステータス）。実機確認の入り口 | `curl`、`dig`（無くても DNS 以外は動く）、`openssl`（任意） |
+| `scripts/audit_grep.sh <repo>` | コード監査の機械的な下拵え（規模、**枠組みの版と既知の重大な勧告**、ハンドラ×認可ガード、ミドルウェアの対象範囲、危険な関数、秘密情報、**LLM の鍵の露出**、fail-open、開発用の抜け道、参照テーブル名、トークン検証、**サーバー側のセッション検証**、Webhook、例外の握りつぶし、乱数と暗号、証明書の検証、XML、LLM の利用。**構成に応じてインフラの定義、モバイル、BaaS の設定（RLS・ルール）、CI の定義、インストール時の防御、AI エージェントの設定、リアルタイム通信、画面操作の記録（セッションリプレイ）、SMS の送信経路も**） | `grep`、`git`（任意） |
 | `scripts/make_register.py <out.xlsx> [--frameworks none\|owasp\|full] [--owasp 2025\|2021] [--api]` | 指摘台帳の xlsx 雛形を生成。集計は数式なので行を足せば自動で追従する。`--frameworks` で枠組みシートの構成、`--owasp` で版、`--api` で API Security Top 10 のシート追加（詳細は `references/04-findings-register.md`） | `openpyxl` |
 | `scripts/browser_probe.mjs <url> [パス...]` | ブラウザで実際に読み込み、curl では見えないものを取る（同意前の第三者送信・Cookie 属性・保存領域のキー名・CSP の実効性）。`references/09-browser-verification.md` の一部を自動化したもの | Node.js 18 以降、`playwright` |
 | `scripts/scan_secrets.sh <dir>` | 成果物に秘密情報・個人情報が混入していないかの最終検査 | `grep` |
 
 いずれも読み取り専用で、対象システムの状態を変えない。検出した鍵の値は伏字で出力する。
+
+**資料に書いたコマンドは bash で動かす。** zsh では、グロブ（`Dockerfile*`、`next.config.*`）に一致する
+ファイルが無いとコマンド全体が「no matches found」で止まり、`2>/dev/null` でも抑えられない。
+対話シェルが zsh なら `bash -c '…'` で包む。
 
 `openpyxl` が入っていない環境は珍しくない。`make_register.py` は、その場合に導入コマンドと、
 すでに `openpyxl` を持つ別の `python3` の場所を探して案内する。`browser_probe.mjs` も同様に、
