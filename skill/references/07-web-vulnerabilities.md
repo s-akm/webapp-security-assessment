@@ -509,7 +509,7 @@ for o in "https://<domain>" "https://example.invalid"; do
 done
 ```
 
-- **両方 101** → Origin を検証しておらず、認証も無しに接続できる。最優先
+- **両方 101** → Origin を検証しておらず、認証も無しに接続できる。購読で個人宛ての情報が流れていれば、`references/04-findings-register.md` の問い 1 で P0
 - **正規の Origin だけ 101** → Origin は検証している
 - **両方 401 / 403** → 認証で拒否している。Origin の検証の有無はこれだけでは分からないので、コードで確かめる
 
