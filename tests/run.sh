@@ -22,6 +22,9 @@ PASS=0; FAIL=0
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
 ng()   { printf '  \033[31m✗\033[0m %s\n' "$1"; [[ -n "${2:-}" ]] && printf '      %s\n' "$2"; FAIL=$((FAIL+1)); }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+# 環境に道具が無くて検査を省いたとき。数えて結果の行に出す（省略で件数が減っても緑に見えないように）
+SKIPPED=0
+skip() { printf '  \033[33m-\033[0m %s\n' "$1"; SKIPPED=$((SKIPPED+1)); }
 
 # 期待する文字列が出力に含まれるか
 contains() {
@@ -106,7 +109,7 @@ if command -v node >/dev/null 2>&1; then
     else ng "構文: $(basename "$f")"; fi
   done
 else
-  printf '  \033[33m-\033[0m 構文: *.mjs（node が無いため省略）\n'
+  skip "構文: *.mjs（node が無いため省略）"
 fi
 
 # ==========================================================================
@@ -122,7 +125,7 @@ if [[ -f "$ROOT/tests/ngwords.local" ]]; then
   local_words="$(grep -vE '^[[:space:]]*(#|$)' "$ROOT/tests/ngwords.local" | paste -sd '|' -)"
   [[ -n "$local_words" ]] && NGWORDS="$NGWORDS|$local_words"
 else
-  printf '  \033[33m-\033[0m 案件固有語: tests/ngwords.local が無い（過去の案件を示す語は検査されない）\n'
+  skip "案件固有語: tests/ngwords.local が無い（過去の案件を示す語は検査されない）"
 fi
 hit="$(grep -rniE "$NGWORDS" "$SKILL" 2>/dev/null || true)"
 if [[ -z "$hit" ]]; then ok "案件固有語が含まれない"
@@ -661,7 +664,7 @@ for c in python3 /usr/bin/python3 python; do
   "$c" -c 'import openpyxl' 2>/dev/null && { PY_BIN="$c"; break; }
 done
 if [[ -z "$PY_BIN" ]]; then
-  printf '  \033[33m-\033[0m make_register: openpyxl を持つ python が無いため省略\n'
+  skip "make_register: openpyxl を持つ python が無いため省略"
   # 依存が無いときに、素の ImportError ではなく案内を出すことだけは確かめる
   msg="$(python3 "$SKILL/scripts/make_register.py" "$TMP/x.xlsx" 2>&1 || true)"
   contains "make_register: openpyxl 不在時に案内を出す" "openpyxl が見つからない" "$msg"
@@ -771,11 +774,11 @@ NODE
   if printf '%s' "$T" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: 既知タグのラベル付け（12 種・誤判定 3 例）"
   else ng "browser_probe: 既知タグのラベル付け" "$T"; fi
 else
-  printf '  \033[33m-\033[0m browser_probe（node が無いため省略）\n'
+  skip "browser_probe（node が無いため省略）"
 fi
 
 if ! command -v node >/dev/null 2>&1; then
-  printf '  \033[33m-\033[0m 発火台を使う検査（node が無いため省略）\n'
+  skip "発火台を使う検査（node が無いため省略）"
 else
   PORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
   node "$ROOT/tests/fixtures/site/server.mjs" "$PORT" > "$TMP/site.log" 2>&1 &
@@ -861,7 +864,7 @@ else
     R7="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://127.0.0.1:1" 2>&1 || true)"
     contains "recon[DNS]: IP アドレスなら DNS を省く"             "IP アドレスが渡されたため省略" "$R7"
   else
-    printf '  \033[33m-\033[0m recon の DNS 検査（dig が無いため省略）\n'
+    skip "recon の DNS 検査（dig が無いため省略）"
   fi
   kill $DNS_PID 2>/dev/null
 
@@ -869,7 +872,7 @@ else
   if ! node -e 'import("playwright")' >/dev/null 2>&1; then
     B3="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT" 2>&1 || true)"
     contains "browser_probe: Playwright 不在時に導入手順を出す" "npx playwright install" "$B3"
-    printf '  \033[33m-\033[0m browser_probe の実地検査（playwright が無いため省略）\n'
+    skip "browser_probe の実地検査（playwright が無いため省略）"
   else
     P="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT" /mypage /admin 2>&1 || true)"
     contains "browser_probe[実地]: 同意前の第三者送信を数える"     "127.0.0.1" "$P"
@@ -909,6 +912,7 @@ else
 fi
 
 # ==========================================================================
-printf '\n\033[1m結果\033[0m  成功 %d / 失敗 %d\n' "$PASS" "$FAIL"
+printf '\n\033[1m結果\033[0m  成功 %d / 失敗 %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIPPED"
+[[ $SKIPPED -gt 0 ]] && printf '  ※ 省略した検査がある。道具（node・playwright・dig・openpyxl）を入れて全件を回す\n'
 if [[ $FAIL -gt 0 ]]; then exit 1; fi
 rm -rf "$TMP"

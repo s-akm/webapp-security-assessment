@@ -25,3 +25,6 @@ __pycache__/
 
 # Node（tests でブラウザ確認を動かすときだけ使う）
 node_modules/
+
+# エージェントの作業用の worktree（手元だけ）
+.claude/worktrees/

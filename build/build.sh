@@ -38,15 +38,29 @@ else
 fi
 
 # --------------------------------------------------------------------------
+# 固めるのは git が追跡している skill/ のファイルだけ。skill/ に未追跡や無視されたファイル
+# （.env.local、エディタの一時ファイル、手元のメモ）があれば止める。以前は skill/ をそのまま
+# 写していたので、置いてあるものが何でも配布物に入った。
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  stray="$(git -C "$ROOT" status --porcelain --ignored -- skill | grep -E '^(\?\?|!!)' || true)"
+  if [[ -n "$stray" ]]; then
+    echo "skill/ に追跡していないファイルがある。配布物に入れないので、消すか git に追加してから固める:" >&2
+    printf '%s\n' "$stray" | sed 's/^/  /' >&2
+    exit 2
+  fi
+else
+  echo "git の管理下でないので固めない（追跡しているファイルだけを固めるため）" >&2
+  exit 2
+fi
+
 echo "=== ビルド ==="
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-cp -R "$SRC/." "$WORK/"
-
-# ビルド時に混ざるもの、OS が置いていくものを落とす
-find "$WORK" \( -name '.DS_Store' -o -name '*.pyc' -o -name '.gitkeep' \) -delete
-find "$WORK" -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+( cd "$ROOT" && git ls-files -z -- skill ) | ( cd "$ROOT" && xargs -0 -I{} sh -c 'mkdir -p "$1/$(dirname "${2#skill/}")" && cp -p "$2" "$1/${2#skill/}"' _ "$WORK" {} )
+# 配布物だけを受け取った人にも、版と使用条件が分かるように同梱する
+cp "$ROOT/LICENSE" "$WORK/LICENSE"
+printf '%s\n' "$VERSION" > "$WORK/VERSION"
 
 # 配布物のパーミッションを揃える。zip は記録されたパーミッションをそのまま
 # 復元するため、600 のまま固めると展開先によっては読めない。
@@ -56,16 +70,32 @@ find "$WORK" -type f -exec chmod 644 {} +
 # スクリプトを足したときに漏れる（実際 .mjs を足したときに漏れた）。
 find "$WORK/scripts" -type f -exec chmod 755 {} +
 
+# 同じ入力からは同じ zip ができるようにする。ファイルの時刻を最後のコミットの時刻に揃え、
+# 並び順を固定し、余計な属性を入れない。時刻が変わるだけで中身の同じ配布物のハッシュが変わっていた。
+epoch="$(git -C "$ROOT" log -1 --format=%ct)"
+stamp="$(TZ=UTC python3 -c 'import sys,time; print(time.strftime("%Y%m%d%H%M.%S", time.gmtime(int(sys.argv[1]))))' "$epoch")"
+find "$WORK" -exec env TZ=UTC touch -t "$stamp" {} +
+
 mkdir -p "$DIST"
 OUT="$DIST/$NAME-v$VERSION.skill"
 rm -f "$OUT"
-( cd "$WORK" && zip -q -r -X "$OUT" . )
+( cd "$WORK" && find . -type f | LC_ALL=C sort | TZ=UTC zip -q -X -D "$OUT" -@ )
 
 # 版を付けないほうも置く。取り回しのため
 cp "$OUT" "$DIST/$NAME.skill"
 
+# 古い版は dist/archive/ に移す（消さない。事例と突き合わせるときに要る）
+mkdir -p "$DIST/archive"
+for f in "$DIST"/"$NAME"-v*.skill; do
+  [[ "$f" == "$OUT" ]] && continue
+  [[ -f "$f" ]] && mv "$f" "$DIST/archive/"
+done
+
 echo "生成: ${OUT#"$ROOT"/}"
 echo "      ${DIST#"$ROOT"/}/$NAME.skill （同じ内容）"
+if command -v shasum >/dev/null 2>&1; then sum="$(shasum -a 256 "$OUT" | awk '{print $1}')"
+else sum="$(sha256sum "$OUT" | awk '{print $1}')"; fi
+echo "      sha256: $sum"
 echo
 echo "=== 中身 ==="
 unzip -Z -l "$OUT" | sed 's/^/  /'

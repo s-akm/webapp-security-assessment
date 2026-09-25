@@ -34,8 +34,10 @@ head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 # ==========================================================================
 head_ "1. 検査が通るか"
 out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-res="$(printf '%s' "$out" | grep -oE '成功 [0-9]+ / 失敗 [0-9]+' | tail -1)"
-if printf '%s' "$res" | grep -E '失敗 0$' >/dev/null; then ok "tests/run.sh: $res"
+res="$(printf '%s' "$out" | grep -oE '成功 [0-9]+ / 失敗 [0-9]+( / 省略 [0-9]+)?' | tail -1)"
+n_skip="$(printf '%s' "$res" | grep -oE '省略 [0-9]+' | grep -oE '[0-9]+' || echo 0)"
+[[ "${n_skip:-0}" -gt 0 ]] && warn "tests/run.sh で ${n_skip} 件を省略した" "道具（node・playwright・dig・openpyxl）が足りない。README の件数とも合わなくなる"
+if printf '%s' "$res" | grep -E '失敗 0( |$)' >/dev/null; then ok "tests/run.sh: $res"
 else ng "tests/run.sh: $res" "$(printf '%s' "$out" | grep -E '✗' | head -5 | tr '\n' ' ')"; fi
 
 # ==========================================================================
@@ -103,6 +105,10 @@ grep -qE "スクリプト ${n_scr} 本" "$ROOT/README.md" || mism="$mism スク�
 grep -qE "${n_fix} の枠組みのダミー" "$ROOT/README.md" || mism="$mism 枠組み(実態${n_fix})"
 grep -qE "検査本体（${n_run} 件）" "$ROOT/README.md" || mism="$mism 検査件数(実態${n_run})"
 grep -qE "落ちるかを見る（${n_mut} 件）" "$ROOT/README.md" || mism="$mism ミューテーション(実態${n_mut})"
+# 枠組みの内訳（「JS / TS 22、Python 5、…」）の合計が、総数と合うか。内訳の数え違いがあった
+breakdown="$(grep -A2 'の枠組みのダミーリポジトリ' "$ROOT/README.md" | grep -oE '[A-Za-z/# .+-]+ [0-9]+' | grep -oE '[0-9]+$' | awk '{ t += $1 } END { print t + 0 }')"
+n_fw="$(grep -oE '[0-9]+ の枠組みのダミー' "$ROOT/README.md" | grep -oE '^[0-9]+')"
+[[ "$breakdown" == "$n_fw" ]] || mism="$mism 枠組みの内訳の合計(${breakdown})が総数(${n_fw})と違う"
 if [[ -z "$mism" ]]; then ok "README の数値が実態と一致（資料 ${n_ref} / スクリプト ${n_scr} / 枠組み ${n_fix} / 検査 ${n_run} / 変異 ${n_mut}）"
 else ng "README の数値が実態とずれている" "${mism}"; fi
 
@@ -115,17 +121,53 @@ if [[ "$ver" == "$chlog" ]]; then ok "VERSION（${ver}）と CHANGELOG の先頭
 else ng "VERSION（${ver}）と CHANGELOG の先頭（${chlog}）が違う" "どちらかを更新し忘れている"; fi
 
 if [[ -f "$ROOT/dist/webapp-security-assessment-v$ver.skill" ]]; then
-  if unzip -l "$ROOT/dist/webapp-security-assessment-v$ver.skill" | grep -E 'cases/|tests/|\.env' >/dev/null; then
-    ng "配布物に cases/ tests/ .env が混入" "build.sh の除外を見直す"
-  else ok "配布物（v${ver}）に cases/ tests/ が入っていない"; fi
+  zl="$(unzip -Z1 "$ROOT/dist/webapp-security-assessment-v$ver.skill" 2>/dev/null)"
+  bad="$(printf '%s\n' "$zl" | grep -E '(^|/)(cases|tests|node_modules|\.git)/|(^|/)\.env|~\$|\.swp$|\.DS_Store$|settings\.local\.json$|\.xlsx$|\.pyc$' || true)"
+  if [[ -n "$bad" ]]; then ng "配布物に入れてはいけないものが入っている" "$(printf '%s' "$bad" | head -3 | tr '\n' ' ')"
+  else ok "配布物（v${ver}）に cases/ tests/ .env・一時ファイルが入っていない"; fi
+  # 中身は「git が追跡している skill/ のファイル」＋ LICENSE ＋ VERSION と一致するはず
+  want="$( { git -C "$ROOT" ls-files -- skill | sed 's#^skill/##'; echo LICENSE; echo VERSION; } | LC_ALL=C sort)"
+  have="$(printf '%s\n' "$zl" | LC_ALL=C sort)"
+  if [[ "$want" == "$have" ]]; then ok "配布物の中身が、追跡している skill/ と LICENSE・VERSION に一致"
+  else ng "配布物の中身が、追跡している skill/ と一致しない" "build/build.sh を回し直す（未コミットのファイルの追加・削除が反映されていない）"; fi
 else
   warn "配布物 dist/webapp-security-assessment-v$ver.skill が無い" "build/build.sh を回す"
 fi
 
 if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-  dirty="$(git -C "$ROOT" status --short | grep -v '^??' | wc -l | tr -d ' ')"
+  # 未追跡のファイルも数える（以前は ?? を除いていたので、足したファイルのコミット漏れに気づけなかった）
+  dirty="$(git -C "$ROOT" status --short | wc -l | tr -d ' ')"
   if [[ "$dirty" == "0" ]]; then ok "未コミットの変更が無い"
   else warn "未コミットの変更が $dirty 件" "配る前にコミットする"; fi
+fi
+
+# 版は VERSION だけに持つ。package.json にも版を書くとずれる（1.2.0 のまま残っていた）
+if grep -E '"version"[[:space:]]*:' "$ROOT/package.json" >/dev/null 2>&1; then
+  ng "package.json に version がある" "版は VERSION だけに持つ。package.json の version を消す"
+else ok "版は VERSION だけに持っている（package.json に version が無い）"; fi
+
+# 手元の事例（cases/。.gitignore 済み）と、公開するファイルの一致。案件語（ngwords.local）は語でしか
+# 見ないので、事例から写したファイルパスと行番号・API のパス・評価の例文のような値をすり抜けさせた（実際に公開されていた）。
+# 事例に出てくる「ファイルのパス:行」と「/api/ のパス」を集め、公開するファイルに現れないかを見る
+# （日本語の文は、事例がスキルの文面を引用しているので、行の一致では誤検出が多すぎる。語の一致は ngwords.local が見る）。
+# 値は出さない。当たったファイルと件数だけを出す。
+if [[ -d "$ROOT/cases" ]]; then
+  tok="$(mktemp)"; trap 'rm -f "$tok"' EXIT
+  find "$ROOT/cases" -type f \( -name '*.md' -o -name '*.txt' \) -print0 2>/dev/null | xargs -0 cat 2>/dev/null \
+    | grep -oE '[][A-Za-z0-9_./-]+\.(ts|tsx|js|py|rb|php|go|sql):[0-9]+(-[0-9]+)?|/api(/[][A-Za-z0-9_-]+){3,}' \
+    | awk -F/ '
+        # ファイルパスと行番号は、そのままの形と、末尾の 2 階層（dir/file.ts:行）の形の両方で照合する
+        # （公開物には前を削って写されていた）。API のパスは 3 階層以上の特徴のあるものだけ（/api/admin のような一般的なものは除く）
+        # 行番号が範囲（405-416 のような形）なら、ファイル名と範囲だけでも照合する（ディレクトリ名だけ変えて写されていた）
+        /:[0-9]/ { print; if (NF >= 2) print $(NF-1) "/" $NF; if ($NF ~ /:[0-9]+-[0-9]+$/) print $NF; next }
+        { print }' | LC_ALL=C sort -u > "$tok"
+  hits="$(git -C "$ROOT" ls-files -z | ( cd "$ROOT" && xargs -0 grep -lF -f "$tok" 2>/dev/null ) | grep -v '^tests/fixtures/' || true)"
+  # 語を 1 つも取り出せないまま「一致なし」と言わない（正規表現の誤りで 0 語のまま緑になっていた）
+  if [[ ! -s "$tok" ]]; then ng "事例から照合する語を取り出せない" "正規表現か cases/ の置き方を見直す"
+  elif [[ -z "$hits" ]]; then ok "公開するファイルに、事例のファイルパスと行番号・API のパスが現れない（$(wc -l < "$tok" | tr -d ' ') 語を照合）"
+  else ng "公開するファイルに、事例と同じファイルパス・API のパスがある" "$(printf '%s' "$hits" | tr '\n' ' ')（値は出さない。手元で grep -F -f で確かめる）"; fi
+else
+  warn "cases/ が無いので、事例との一致は見ていない" "事例を置いている手元の環境で回す"
 fi
 
 # 基準の最終確認日
