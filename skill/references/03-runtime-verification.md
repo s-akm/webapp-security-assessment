@@ -153,7 +153,7 @@ order by table_name, column_name;
 
 ### ポリシーを迂回する経路
 
-行レベルのポリシーは、**テーブルを直接読むときにしか効かない**。次の 3 つは迂回する。
+行レベルのポリシーは、**テーブルを直接読むときにしか効かない**。次の 3 つは迂回する（Supabase 固有の追加の経路は後述）。
 
 ```sql
 -- 1. 定義者権限で動く関数（呼び出した人ではなく、作った人の権限で動く）
@@ -162,9 +162,21 @@ from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 where n.nspname not in ('pg_catalog', 'information_schema') and p.prosecdef
 order by n.nspname, p.proname;
 
--- 2. ビュー。作成者の権限で動くものは、下のテーブルのポリシーを迂回する
-select table_schema, table_name from information_schema.views
-where table_schema not in ('pg_catalog', 'information_schema');
+-- 1b. その関数を公開ロールが実行できるか。PostgreSQL は既定で関数の実行権限を PUBLIC に与える
+--     search_path を固定していない（proconfig が空の）定義者権限の関数も要確認
+select n.nspname, p.proname, p.proconfig,
+       -- anon / authenticated は Supabase のロール。他の構成では、API が使うロール名に置き換える
+       has_function_privilege('anon', p.oid, 'execute')          as anon_exec,
+       has_function_privilege('authenticated', p.oid, 'execute') as auth_exec
+from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+where p.prosecdef and n.nspname not in ('pg_catalog', 'information_schema');
+
+-- 2. ビューとマテリアライズドビュー。information_schema.views では security_invoker の有無が分からない
+--    reloptions の security_invoker が true / on / 1 / yes のどれでもないビューと、
+--    マテリアライズドビュー（relkind = 'm'）はすべて要確認
+select n.nspname, c.relname, c.relkind, c.reloptions
+from pg_class c join pg_namespace n on n.oid = c.relnamespace
+where c.relkind in ('v', 'm') and n.nspname not in ('pg_catalog', 'information_schema');
 ```
 
 - **定義者権限の関数が、API から呼べるスキーマに置かれていないか。** 置くなら、
@@ -180,6 +192,38 @@ where table_schema not in ('pg_catalog', 'information_schema');
 
 **この 3 つを確かめずに「データ層の防御は機能している」と書かない。** 有効状態の一覧だけでは、
 迂回経路を見ていないことになる。
+
+**Supabase では、さらに次の経路を見る。** 公式の Security Advisor（ダッシュボードの Advisors）が同じものを
+機械的に出すので、**その結果の一覧を依頼者からもらう**のが早い。
+
+| 経路 | 何が起きるか |
+|---|---|
+| マテリアライズドビュー・外部テーブル | RLS が効かない |
+| ポリシーが `user_metadata`（`raw_user_meta_data`）を参照 | 利用者が自分で書き換えられる値で認可している（02 の A-2） |
+| 匿名サインインが有効 | **匿名の利用者も `authenticated` ロールになる。** 「ログイン済みなら読める」ポリシーが匿名にも開く |
+| Storage のバケットが `public` | **URL を知っていれば誰でもダウンロードできる**（ポリシーは効かない） |
+| 公開スキーマ（Exposed schemas）の設定 | ここに入ったスキーマのテーブル・関数・ビューが API に出る |
+| Realtime の「Allow public access to channels」 | **有効なままだと、`private: true` を付けない購読は RLS を通らない**。private を強制するには無効にする（`references/07-web-vulnerabilities.md` の 11-3） |
+| `supabase_realtime` の publication に入れたテーブル | 各テーブルの RLS と replica identity を突き合わせる。**RLS が無効なテーブルは全行の変更が、`replica identity full` なら削除された行の全列が、公開鍵の購読者に流れる** |
+
+```sql
+select schemaname, tablename, policyname from pg_policies
+where qual ilike '%user_meta%' or with_check ilike '%user_meta%';
+select id, public from storage.buckets;
+select policyname, cmd, qual from pg_policies where schemaname = 'storage';
+-- Realtime: publication に入れたテーブルと、その RLS・replica identity（'f' が full）
+select p.schemaname, p.tablename, c.relrowsecurity as rls, c.relreplident as replica_identity
+from pg_publication_tables p
+join pg_class c on c.relname = p.tablename
+join pg_namespace n on n.oid = c.relnamespace and n.nspname = p.schemaname
+where p.pubname = 'supabase_realtime';
+-- Realtime: チャネルのポリシーがトピックを照合しているか
+select policyname, cmd, roles, qual, with_check from pg_policies where schemaname = 'realtime';
+```
+
+**`GRANT` と RLS は別に見る。** Supabase は新規テーブルへの公開ロールの自動 `GRANT` を止める方向に変わった
+（2026-05 に新規プロジェクトの既定、**2026-10-30 から既存プロジェクトにも適用**）。`GRANT` が無ければ RLS より
+手前で拒否される。逆に、変更前に作ったテーブルには `GRANT` が付いたままなので、RLS の中身が全てになる。
 
 ---
 
@@ -230,6 +274,10 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 - セッションの有効期限、無操作タイムアウト
 - 誰でもサインアップできる状態になっていないか
 
+**基準は NIST SP 800-63B-4**（`references/02-code-audit.md` の B-1）。パスワードだけで認証するなら最小 15 文字、
+文字種の強制と定期変更の強制はしない、漏えい済みパスワードとの照合はする。**設定画面の最小長が 6 や 8 のままなら、
+それを事実として記録する。**
+
 **「機能が有効」と「実際に使われている」は別物。** 多要素認証が設定上オンでも、登録者が 0 人なら守られていない。認証基盤に登録済みの要素を数える手段があれば、必ず数える。
 
 ```sql
@@ -242,6 +290,32 @@ from auth.mfa_factors;
 
 - マネージド認証（Auth0 / Cognito / Firebase Auth / Supabase Auth / Clerk など）: 管理画面のポリシー設定
 - 自前実装: コードで確認済みのはずなので、ここでは設定値の外部化がないかだけ見る
+
+### 管理コンソール自体の多要素認証と監査ログ
+
+**利用者の認証より先に、運営者の入口を見る。** ホスティング・DB・認証基盤・ドメイン登録・メール配信の
+管理コンソールが乗っ取られれば、アプリ側の対策はすべて無効になる。
+
+- 各コンソールで、**組織（チーム）として多要素認証を強制しているか**。個人が任意で有効にしているだけか
+- メンバーの一覧に、退職者・契約終了先・用途不明のアカウントが残っていないか
+- コンソールの操作の監査ログが取れているか（上位プラン限定のことが多い。取れないなら「取れない」と書く）
+
+クラウド側でも必須化が進んでいる（AWS は root の MFA を全アカウント種別で必須化、Google Cloud と Azure も
+段階的に必須化）。**必須化は「ログインの時点」の話で、組織として強制しているかは別に確かめる。**
+
+### SMS を送っている場合
+
+**既定値が基盤ごとにまったく違う**ので、管理画面で確かめる（`references/02-code-audit.md` の F-4）。
+
+| 基盤 | 送信先の国 | 上限 |
+|---|---|---|
+| Firebase Authentication | **新規プロジェクトは既定でどの国にも送らない**（許可する国を選ぶ）。古いプロジェクトは設定を見る | プロジェクト全体と IP ごとの上限がある。reCAPTCHA による SMS の防御のモードも見る |
+| Supabase Auth | **国を絞る設定が無い**。SMS の送信元（Twilio など）の側か、送信のフックで絞る | プロジェクト全体で既定 30 通/時。同じ利用者への再送は 60 秒あける。CAPTCHA は任意 |
+| Twilio | 通常の送信は、新規アカウントでは登録した番号の国だけ。確認用の Verify には別の国の許可設定がある | 通常の送信には番号ごとの上限が無い。濫用の防御は Verify では既定で有効、通常の送信では既定で無効 |
+| AWS（SNS / End User Messaging / Cognito） | **国の既定は許可**。保護の設定で国を止める | 月額の上限（`TextMessageMonthlySpend`） |
+
+**見るのは、日本だけを相手にしているのに国を絞っていないか、月額の上限と通知があるか、確認の完了率を見ているか**の 3 つ。
+送信を伴う試験は本番ではしない。
 
 **プラン制限に注意**: 漏えいパスワード検知、セッション設定、SMS による多要素認証などは、上位プラン限定になっている場合がある。画面に「上位プランで利用可能」と出ていたら、**それは「設定していない」ではなく「設定できない」**。指摘の書き方が変わるので区別して記録する。
 
@@ -258,6 +332,13 @@ from auth.mfa_factors;
 取得されているだけで復元したことがないバックアップは、復旧手段として数えない。ここは実機確認というより依頼者への質問になる。
 
 無償プランではバックアップ機能自体が提供されないことがある。**「取っていない」のか「取れない」のかを区別する。** 後者ならプラン変更が対策になる。
+
+**何がバックアップに含まれないかも聞く。** たとえば Supabase では、無償プランに自動バックアップが無く、
+**Storage のファイル本体はデータベースのバックアップに含まれない**（復元するとメタデータだけ過去に戻り、
+ファイルとずれる）。物理バックアップはダウンロードできないので、**基盤の外に復旧手段を持つなら別に論理ダンプが要る**。
+
+**ランサムウェアや管理アカウントの乗っ取りを想定するなら、削除できない場所に置いているか**を聞く。
+同じ管理コンソールから消せるバックアップは、コンソールを乗っ取られたときに一緒に消える。
 
 ---
 
@@ -285,6 +366,15 @@ from auth.mfa_factors;
 
 サービス側が鍵の方式を刷新したとき、**旧方式の鍵が無効化されずに残る**ことがよくある。管理画面に「旧方式を無効化する」ボタンが残っていれば、それは有効なままという意味。
 
+**Supabase が典型。** 新方式（`sb_publishable_…` / `sb_secret_…` と非対称の署名鍵）の鍵を作っても、
+旧方式の `anon` / `service_role` の JWT 鍵は**自動では無効にならず、並行して有効なまま**になる。
+公式の手順は**新方式へ移り、管理画面（Settings > API Keys）で旧方式を無効にする**ことで、無効にするまで旧方式は生きている。
+「ローテーションした記録があるか」を聞く前に、**旧方式の鍵が有効なままか**を確かめる。
+
+**公開前提の鍵で、呼べる API が増えていないか。** Google の `AIza…` の鍵は、同じプロジェクトで
+Gemini の API を有効にすると、配布済みの鍵でそのまま呼べるようになる（`references/14-mobile.md` の 1 節）。
+**鍵ごとに API の制限が掛かっているか**を見る。
+
 ---
 
 ## 7. 環境の分離
@@ -293,12 +383,21 @@ from auth.mfa_factors;
 
 - 本番・検証・開発の環境変数が分かれているか
 - **本番の特権鍵が、検証環境にも設定されていないか**
-- 検証環境が外部から見えないようになっているか
+- 検証環境が外部から見えないようになっているか。Vercel なら Deployment Protection の設定を見る。
+  **旧来の設定（Legacy の保護）のまま残っていると、自動生成された本番用の URL が公開されたまま**になる。
+  2026-09 から全デプロイの保護が全プランで無償になったので、**「上位プランでしか守れない」は理由にならない**。
+  保護を迂回する共有リンクや、自動化用のバイパス用シークレットが残っていないかも見る
 - 検証環境が本番の DB を向いていないか
 
 検証環境が保護されていれば、特権鍵が入っていること自体の実害は下がる。**ただし「検証ビルドが本番データを壊せる」構図は残る**ので、保護の有無とは別に記録する。
 
 環境変数の値が読み出せない設定（秘匿指定）になっている場合、**値の確認は諦めて未確認事項に回す**。無理に読もうとして設定を壊さない。
+
+**秘匿指定になっているかどうか自体は見る。** Vercel では秘匿指定でない環境変数が、2026-04 に公表された
+Vercel 自身への不正アクセスで読まれた。**特権の鍵が秘匿指定になっているか、チームとして秘匿指定を強制しているか、
+特権の鍵が開発環境（手元に平文で落ちる）にも登録されていないか**を確かめる。Vercel では 2026-08 から、
+環境変数が「Config」と「Secret」の 2 種類になった。**`NEXT_PUBLIC_` の付いた変数は、Secret にしても
+ビルドで JS に埋め込まれて公開される。**
 
 ---
 
@@ -311,6 +410,11 @@ from auth.mfa_factors;
 - レート制限のルールが設定されているか
 - 攻撃時に切り替えるモードが用意されているか、その現在の状態
 
+**エッジを迂回してオリジンへ直接届かないか。** CDN や WAF を前に置いていても、オリジンの IP やホスト名に
+直接アクセスできれば、WAF もレート制限も効かない。Cloudflare なら、SSL/TLS のモードが Flexible
+（オリジンまで平文）になっていないか、オリジン側で Cloudflare 以外からの接続を拒否しているか
+（Authenticated Origin Pulls、Tunnel、IP の許可リスト）を見る。
+
 フェーズ 1 の F-2 で「アプリ側のレート制限が実質機能しない」と判定した場合、ここで**二重に無い状態**になっていないかを確かめる。両方無ければ、指摘の優先度を上げる。
 
 ---
@@ -322,9 +426,13 @@ from auth.mfa_factors;
 ### 問い
 
 - 送信ドメイン認証（SPF / DKIM / DMARC）が設定されているか
-- DMARC のポリシーが監視のみ（`p=none`）で止まっていないか
+- DMARC のポリシーが監視のみ（`p=none`）で止まっていないか。**サブドメイン向け（`sp=`）と
+  存在しないサブドメイン向け（`np=`）も見る**
+- DMARC の集計レポート（`rua`）を受け取っているか。**受け取っていなければ、誰も運用していない**
 - 証明書発行を制限するレコード（CAA）があるか
 - DNS 応答の改竄検知（DNSSEC）が有効か
+- **使われなくなったサブドメインの CNAME が残っていないか**（サブドメインの乗っ取り）
+- 証明書の更新が自動化されているか
 
 ```bash
 dig +short TXT   <domain>          # SPF
@@ -332,11 +440,58 @@ dig +short TXT   _dmarc.<domain>   # DMARC
 dig +short CAA   <domain>
 dig +short DS    <domain>          # DNSSEC
 dig +short MX    <domain>
+dig +short TXT   _mta-sts.<domain> ; dig +short TXT _smtp._tls.<domain>   # MTA-STS / TLS-RPT
 ```
 
-**読み方**: 送信をメール配信サービスに委ねている構成では、SPF と DKIM が**サブドメイン側**に設定されていることが多い。その場合、自社からの送信は正しく通る。それでも apex に SPF が無ければ、**第三者がそのドメインを騙って送ったときに受信側が拒否できない**。この 2 つは別の問題なので、混同しない。
+**サブドメインの URL しか分からないときは、親へ遡って引く。** DMARC は受信側が組織のドメインまで遡って探し、
+CAA も認証局が親へ遡って確かめ、DS はゾーンの頂点にしか無い。`app.example.com` をそのまま引いて空でも、
+`example.com` に設定があることは普通にある。`scripts/recon.sh` は親へ遡って探す。
+
+**読み方**: 詐称メールを受信側に拒否させるのは **DMARC の `p=reject`（または `quarantine`）** で、SPF の有無ではない。
+送信をメール配信サービスに委ねている構成では、SPF と DKIM が**サブドメイン側**に設定されていることが多く、
+自社からの送信は正しく通る。そのうえで DMARC が `p=reject` なら、apex に SPF が無くても詐称は DMARC で落ちる。
+**メールを送らないドメインでも、`v=spf1 -all` と DMARC の `p=reject` を置くのが定石**（2023-02 の経済産業省・
+警察庁・総務省の要請は、送信しないドメインも対象に含めている）。
+
+**到達性となりすまし対策を分けて判定する。** 大手のメールサービスは、大量送信者に SPF・DKIM・DMARC を求め、
+満たさないメールを**拒否**するようになった（Gmail は 2025-11 から、Outlook.com は 2025-05 から）。
+ただし要件は `p=none` でも満たせる。**`p=none` は「届く」の条件は満たすが、なりすましは止めない。**
+DMARC の仕様は 2026-05 に RFC 9989〜9991 で改訂され、`pct` が廃止されて `t=y`（テストモード）と `np=` が入った。
 
 認証不要でメールを送れる経路（フェーズ 1 の F-1）が見つかっている場合、DMARC が `p=none` だと**踏み台にされたときに外形的に止める手段が無い**。組にして評価する。
+
+**DNSSEC が無いときも「取っていない」のか「取れない」のかを区別する。** DNS をホスティングの付属機能で
+運用していると、DNSSEC に対応していないことがある（4 節と同じ考え方）。
+
+### サブドメインの乗っ取り
+
+**CNAME が指す先の資源（ホスティングのプロジェクト、ストレージのバケット）を消した後も、CNAME が残っている**と、
+第三者がその名前で資源を作ってサブドメインを取れる。取られたサブドメインでは正規の証明書が取れ、
+**親ドメインに設定された Cookie も読める。**
+
+```bash
+# 過去に発行された証明書から、サブドメインを集める（証明書の透明性ログ。外部サービスにドメイン名を送る点に注意）
+# その上で、CNAME の行き先が「存在しない」応答を返していないかを 1 本ずつ見る
+for s in <サブドメインの一覧>; do
+  c=$(dig +short CNAME "$s"); [ -n "$c" ] || continue
+  printf '%-40s -> %-40s ' "$s" "$c"
+  curl -s -m 8 "https://$s" | grep -oE 'DEPLOYMENT_NOT_FOUND|No such app|The specified bucket does not exist|NoSuchBucket' | head -1
+  echo
+done
+```
+
+**行き先が「存在しない」と答えていれば、その時点で指摘。** 是正は CNAME の削除。
+
+### 証明書
+
+最長の有効期間は 2026-03 から 200 日、2027-03 から 100 日、2029-03 から 47 日に縮む（CA/Browser Forum の決定）。
+**手動で更新している証明書は、もう運用として成り立たない。** 有効期限と発行者を見て、手動の更新が混ざっていないかを聞く。
+**OCSP stapling が無いことは指摘にしない**（OCSP は任意になり、主要な認証局が提供をやめている）。
+
+```bash
+echo | openssl s_client -connect <domain>:443 -servername <domain> 2>/dev/null \
+  | openssl x509 -noout -issuer -enddate
+```
 
 ---
 
@@ -350,10 +505,30 @@ curl -s -o /dev/null -w "%{http_code}\n" https://<domain>/api/<dev-route>
 
 # セキュリティヘッダの実際の付与状況
 curl -sI https://<domain> | grep -iE \
-  'strict-transport|content-security|x-frame|x-content-type|referrer-policy|permissions-policy|x-powered-by'
+  'strict-transport|content-security|x-frame|x-content-type|referrer-policy|permissions-policy|x-powered-by|cross-origin-opener-policy|cross-origin-resource-policy|server|x-nextjs-cache|x-vercel-cache'
 ```
 
 **設定ファイルに書いてあることと、実際の応答は一致しないことがある。** ビルドに反映されていない、エッジ側で上書きされている、といった理由で。必ず本番の応答を見る。
+
+**ヘッダは有無ではなく中身で判定する。** CSP は `references/07-web-vulnerabilities.md` の 1-6 の基準で読む。
+COOP は `same-origin`、CORP は `same-site` が推奨値。`X-XSS-Protection` は付けないか `0`
+（古いブラウザの XSS フィルタは、それ自体が情報漏えいの原因になった）。
+
+### ミドルウェアの対象範囲を URL の揺れで確かめる
+
+**ミドルウェア（Next.js 16 では proxy）で認可している構成に限る。** 02 の A-5 のとおり、この種の迂回は
+枠組みの不具合として繰り返し出ている。保護されたパスを、形を変えて 1 本ずつ GET する。
+**期待値はすべて 401 / 403 / 404 / ログインへのリダイレクト**（大文字小文字を区別するルーティングでは `/Admin` は 404 になり、
+これは迂回ではない）。**200 が返ったものだけ**、SPA の共通の殻（どのパスにも同じ HTML を返す）でないかを
+`curl -s … | head -c 300` で確かめる。殻でなく中身が返っていれば迂回が成立している。
+
+```bash
+for p in "/admin" "/Admin" "/%61dmin" "/admin/" "/admin.rsc" "/admin?_rsc=x" "/ja/admin" "/en/admin"; do
+  printf '%-20s ' "$p"; curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' "https://<domain>$p"
+done
+```
+
+**依頼者の許可を得た対象にだけ、認証なしの GET で行う。** 状態を変える要求は送らない。
 
 ### セッション Cookie の属性
 
@@ -370,7 +545,41 @@ curl -s https://<domain>/<管理画面のログインパス> \
 
 **サーバーが認証 Cookie を発行していないなら、その Cookie に `HttpOnly` は付いていない。** 管理画面のログイン画面に広告・分析タグが入っていれば、指摘の重さが一段上がる。この 2 つは同じ画面で確認できるので、まとめて見る。
 
-`scripts/recon.sh <url>` がこの節と 9 節をまとめて実行する。
+### 外から見えてはいけないもの
+
+**本文は保存しない。ステータスコードだけを取る**（3 本目のエラーページの確認だけは、該当する行を画面に出す）。
+
+```bash
+for p in /.git/HEAD /.env /.env.local /.env.production /.DS_Store /server.js.map; do
+  printf '%-22s ' "$p"; curl -s -o /dev/null -w '%{http_code}\n' "https://<domain>$p"
+done
+# 配信している JS にソースマップの参照があり、その .map が取れるか
+curl -s https://<domain>/ | grep -oE '/_next/static/[^"]+\.js' | head -3 \
+  | while read -r js; do printf '%s.map ' "$js"; curl -s -o /dev/null -w '%{http_code}\n' "https://<domain>$js.map"; done
+# 存在しないパスで、スタックトレースや枠組みの版が出ないか
+curl -s "https://<domain>/sectest-$(date +%s)" | grep -iE 'stack|trace|exception|at .*\(.*:[0-9]+' | head -3
+```
+
+- **`.git` や `.env` が 200 を返せば最優先の指摘。** ただし SPA の構成では、存在しないパスにも 200 で
+  トップページを返すことがある。**中身の先頭数バイトだけで判定し、値は出さない**
+
+```bash
+# 200 のときだけ。値を画面に出さずに、中身らしいかだけを判定する
+curl -s -r 0-15 "https://<domain>/.git/HEAD" | grep -q '^ref:' && echo '.git/HEAD の中身が返っている'
+curl -s -r 0-200 "https://<domain>/.env" | grep -qE '^[A-Z_]+=' && echo '.env の中身が返っている'
+```
+- **ソースマップが公開されていると、元のソースがそのまま読める。** コメントに書いた内部の情報や、
+  サーバー用のつもりで書いたコードが出る。Next.js は既定で無効（`productionBrowserSourceMaps`）
+
+### 連絡窓口
+
+- **`/.well-known/security.txt`（RFC 9116）があるか。** 外部の人が脆弱性を見つけたときの連絡先になる。
+  あれば `Contact:` と `Expires:`（期限切れでないか）を見る。**無いことは優先度の低い指摘**にする
+- HSTS に `preload` を付けているなら、**全サブドメインが HTTPS に対応しているか**。preload は取り消しに
+  数か月かかる
+
+`scripts/recon.sh <url>` が、この節のヘッダ・外から見えてはいけないファイル・証明書と、9 節の DNS をまとめて実行する。
+**URL の揺れによる迂回の確認、ソースマップ、エラーページは手で行う。**
 
 ### curl で見えないところ
 
@@ -379,7 +588,7 @@ curl -s https://<domain>/<管理画面のログインパス> \
 
 - **同意前に第三者への送信が実際に飛ぶか**（HTML にタグがあることと、いつ発火するかは別）
 - **JS が書く Cookie と、localStorage に置かれているもの**
-- **CSP が実際に何をブロックしているか**（`unsafe-inline` があれば XSS には効かない）
+- **CSP が実際に何をブロックしているか**（nonce・hash・`strict-dynamic` の無いまま `unsafe-inline` があれば XSS には効かない）
 - **認証後の画面が戻るボタンで再表示されるか**
 
 該当するなら `references/09-browser-verification.md` を読む。`scripts/browser_probe.mjs` が、
