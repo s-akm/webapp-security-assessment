@@ -48,6 +48,13 @@ if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
     printf '%s\n' "$stray" | sed 's/^/  /' >&2
     exit 2
   fi
+  # 追跡しているファイルの、コミットしていない変更も止める。作業ツリーの中身を固めるので、変更が
+  # 配布物に入るのに、中の時刻と版は最後のコミットのものになり、どのコミットの配布物か言えなくなる
+  if ! git -C "$ROOT" diff --quiet HEAD -- skill LICENSE VERSION; then
+    echo "skill/・LICENSE・VERSION にコミットしていない変更がある。コミットしてから固める:" >&2
+    git -C "$ROOT" diff --stat HEAD -- skill LICENSE VERSION | sed 's/^/  /' >&2
+    exit 2
+  fi
 else
   echo "git の管理下でないので固めない（追跡しているファイルだけを固めるため）" >&2
   exit 2

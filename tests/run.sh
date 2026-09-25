@@ -214,6 +214,28 @@ n="$(printf '%s' "$out" | grep -cE '^\[検出\]' || true)"
 if [[ "$n" -le 1 ]]; then ok "scan_secrets.sh の自己検査（検出 $n 種類・想定は 1 以下）"
 else ng "scan_secrets.sh の自己検査" "想定外の検出 $n 種類"; fi
 
+# 配布物を固める build.sh が、コミットしていない変更を固めずに止まるか。一時的なリポジトリに skill/ と
+# build.sh を写してコミットし、skill/ の 1 ファイルを書き換えてから固めさせる（検査は飛ばす）
+BR="$TMP/build-repo"; rm -rf "$BR"; mkdir -p "$BR/build"
+cp -R "$SKILL" "$BR/skill"; cp "$ROOT/build/build.sh" "$BR/build/build.sh"; cp "$ROOT/LICENSE" "$ROOT/VERSION" "$BR/"
+( cd "$BR" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init -q . \
+  && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git add -A \
+  && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -c user.name=t -c user.email=t@example.invalid \
+       -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m fixture ) >/dev/null 2>&1
+printf '\n<!-- コミットしていない変更 -->\n' >> "$BR/skill/SKILL.md"
+BO="$(cd "$BR" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE bash build/build.sh --skip-tests 2>&1)"; brc=$?
+if [[ $brc -ne 0 ]] && printf '%s' "$BO" | grep -F 'コミットしていない変更がある' >/dev/null && [[ ! -d "$BR/dist" ]]; then
+  ok "build.sh: コミットしていない変更があれば固めない"
+else ng "build.sh: コミットしていない変更があれば固めない" "終了コード ${brc}、dist の有無 $([[ -d "$BR/dist" ]] && echo 有 || echo 無)"; fi
+
+# Playwright の版を 3 か所で揃えているか（package.json・Docker のイメージ・browser_probe.mjs の導入の案内）。
+# Dependabot は 1 か所だけを上げうるので、ずれを検査で捕まえる
+pw_pkg="$(grep -oE '"playwright": *"[0-9.]+"' "$ROOT/package.json" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+pw_dock="$(grep -oE 'playwright:v[0-9.]+' "$ROOT/tests/docker/Dockerfile" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+pw_probe="$(grep -oE 'PW_VERSION = "[0-9.]+"' "$SKILL/scripts/browser_probe.mjs" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')"
+if [[ -n "$pw_pkg" && "$pw_pkg" == "$pw_dock" && "$pw_pkg" == "$pw_probe" ]]; then ok "Playwright の版が 3 か所で揃っている（${pw_pkg}）"
+else ng "Playwright の版が 3 か所で揃っている" "package.json ${pw_pkg:-?} / Dockerfile ${pw_dock:-?} / browser_probe.mjs ${pw_probe:-?}"; fi
+
 # push の前の関門（build/hooks/pre-push）。一時的なリポジトリで、止めるべきものを止め、通すべきものを通すかを見る。
 # 案件語は検査用の語（CLIENT-NGWORD-CANARY）で模す。利用者の署名・フック・GIT_DIR には左右されないようにする
 HK="$TMP/hook"; rm -rf "$HK"; mkdir -p "$HK/tests"
@@ -237,6 +259,15 @@ hkgit rm -q a.txt >/dev/null 2>&1; hkcommit "$NRM" fix
 hkgit reset -q --hard HEAD~2 >/dev/null 2>&1; hkcommit 'someone@example.invalid' mail
 if hkpush main refs/heads/main; then ng "pre-push: noreply でないメールアドレスのコミットは止める" "通ってしまった"
 else ok "pre-push: noreply でないメールアドレスのコミットは止める"; fi
+hkgit reset -q --hard HEAD~1 >/dev/null 2>&1; hkcommit "$NRM" "fix CLIENT-NGWORD-CANARY"
+if hkpush main refs/heads/main; then ng "pre-push: コミットの文言に案件語があれば止める" "通ってしまった"
+else ok "pre-push: コミットの文言に案件語があれば止める"; fi
+# リモートの先端が手元に無いと範囲を決められない。以前は git log の失敗を捨て、検査を飛ばして通していた
+hkgit reset -q --hard HEAD~1 >/dev/null 2>&1
+if printf 'refs/heads/main %s refs/heads/main 1234567890123456789012345678901234567890\n' "$(hkgit rev-parse HEAD)" \
+     | ( cd "$HK" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE bash "$ROOT/build/hooks/pre-push" ) >/dev/null 2>&1; then
+  ng "pre-push: リモートの先端が手元に無ければ止める" "通ってしまった"
+else ok "pre-push: リモートの先端が手元に無ければ止める"; fi
 
 # ==========================================================================
 head_ "3. 動作 — スクリプトが期待どおり検出するか"

@@ -6,7 +6,7 @@
 # このリポジトリは公開している。以前、案件の履歴を持つブランチが手元にあり、`git push` を 1 回打てば
 # 公開される状態だった（push.autosetupremote が有効な環境では特に）。ここで止める。
 #   1. main と版のタグ（v*）以外は push しない
-#   2. push するコミットの追加行に、案件語（tests/ngwords.local）が無いこと
+#   2. push するコミットの追加行とコミットの文言に、案件語（tests/ngwords.local）が無いこと
 #   3. push するコミットの作者と記録者のメールアドレスが、GitHub の noreply であること
 set -uo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
@@ -17,6 +17,7 @@ words=""
 if [[ -f "$ROOT/tests/ngwords.local" ]]; then
   words="$(grep -vE '^[[:space:]]*(#|$)' "$ROOT/tests/ngwords.local" | paste -sd '|' -)"
 fi
+[[ -n "$words" ]] || echo "pre-push: 注意: tests/ngwords.local が無い（または空）ので、案件語の照合をしていない" >&2
 
 while read -r lref lsha rref rsha; do
   [[ -z "${lref:-}" ]] && continue
@@ -25,7 +26,16 @@ while read -r lref lsha rref rsha; do
     *) echo "pre-push: $rref への push は許可していない（main と版のタグだけ）" >&2; bad=1; continue ;;
   esac
   [[ "$lsha" == "$ZERO" ]] && continue          # 削除
-  if [[ "$rsha" == "$ZERO" ]]; then range="$lsha --not --remotes"; else range="$rsha..$lsha"; fi
+  if [[ "$rsha" == "$ZERO" ]]; then range="$lsha --not --remotes"
+  elif git cat-file -e "${rsha}^{commit}" 2>/dev/null; then range="$rsha..$lsha"
+  else
+    # リモートの先端が手元に無いと範囲を決められない。以前は git log の失敗を黙って捨て、検査を飛ばして通していた
+    echo "pre-push: リモートの $rref の先端（${rsha:0:12}）が手元に無い。git fetch してから push する" >&2; bad=1; continue
+  fi
+  # shellcheck disable=SC2086
+  if ! git rev-list $range >/dev/null 2>&1; then
+    echo "pre-push: push する範囲（${range}）を読めない" >&2; bad=1; continue
+  fi
   # shellcheck disable=SC2086
   if [[ -n "$words" ]]; then
     # LICENSE は外す。MIT の定型文と作者名だけのファイルで、大小を区別しない照合では作者名が
@@ -33,6 +43,12 @@ while read -r lref lsha rref rsha; do
     n="$(git log -p --format= $range -- . ':(exclude)LICENSE' 2>/dev/null | grep -E '^\+' | grep -ciE "$words" || true)"
     if [[ "${n:-0}" -gt 0 ]]; then
       echo "pre-push: push するコミットの追加行に案件語が $n 行ある（値は出さない。git log -p で確かめる）" >&2; bad=1
+    fi
+    # コミットの文言も公開される
+    # shellcheck disable=SC2086
+    n="$(git log --format=%B $range 2>/dev/null | grep -ciE "$words" || true)"
+    if [[ "${n:-0}" -gt 0 ]]; then
+      echo "pre-push: push するコミットの文言に案件語が $n 行ある（値は出さない。git log で確かめる）" >&2; bad=1
     fi
   fi
   # shellcheck disable=SC2086
