@@ -7,6 +7,59 @@
 
 ---
 
+## [2.17.3] — 2026-09-25
+
+**2.15.0〜2.17.2 で足した事実を、すべて一次情報で照合し直した回。** 調査担当の報告をそのまま使っていたものが多く、
+私（保守者）が発行元で確かめたのは一部だけだった。CVE と GHSA は GitHub の勧告 API と NVD で機械的に、
+それ以外は発行元の文書・仕様・changelog・公式リポジトリで 1 件ずつ照合した。取得用の道具が 403 を返すページはブラウザで読んだ。
+
+### 誤りの修正
+
+| 場所 | 誤り | 正しい内容 |
+|---|---|---|
+| `02` A-5 | CVE-2026-64642 の修正版を「15.5.21 / 16.2.11」 | **16.x だけが対象**（16.2.11） |
+| `02` H、`audit_grep.sh` 1b | React2Shell の Next.js 側を CVE-2025-66478 | **この番号は CVE-2025-55182 の重複として取り下げ済み**（NVD で Rejected）。台帳には 55182 で書く |
+| `02` A-5 | 続報の CVE 番号が無かった | CVE-2026-45109（Next.js）、CVE-2026-71315（Nuxt）、CVE-2025-66202（Astro。勧告の修正版の欄が空） |
+| `07` 11-3 | Supabase Realtime で「`private` を外して同じトピックに入り直せる」 | **private と public は別のチャネルで、メッセージは互いに届かない。** 穴は、private を付け忘れた購読が public として成立することと、public には誰でも送信できること。権限のキャッシュは Broadcast / Presence の話で、Postgres Changes は 1 件ごとに判定される |
+| `13` 5 節、`02` E | Firebase の公開関数を `invoker: public` の明示だけで拾っていた | **HTTP 関数は `invoker` を書かなければ公開、callable は常に公開。** `onRequest` / `onCall` も数えて、中の認証を読む |
+| `03` 7 節 | Vercel の「全デプロイの保護が無償」「秘匿指定の強制ポリシー」 | 無償なのは Vercel Authentication による保護。強制のポリシーは 2026-08 に非推奨で、Separate Production Secret Values に置き換え |
+| `10` 3-1、`audit_grep.sh` 21 | Vercel の既定は npm 10 | **Node 24 に付く npm 11**（Node 20 / 22 なら npm 10）。どちらも依存のスクリプトを止めないので結論は同じ |
+| `03` 3 節 | AWS の月額上限を `TextMessageMonthlySpend` | これは今月の使用額の CloudWatch 指標。上限は SNS の `MonthlySpendLimit`、End User Messaging SMS の `SetTextMessageSpendLimitOverride` |
+| `14` | Android の開発者検証が 2026-09 から「検証済みのアプリしか入れられない」 | 2026-09-30 からの 4 か国は**指定ストアからの入手**だけが対象。全アプリへの拡大は 2027 年。ADB などの経路は残る |
+| `recon.sh`・`03` 9 節 | 複数の DMARC レコードの根拠を廃止済みの RFC 7489 に、`v=DMARC1` を大小区別せずに照合 | RFC 9989 4.10（同じ名前のレコードはすべて捨てられ、上位があればそれが使われる）。`v` の値は大小を区別する |
+| `12` 6-2 | MCP の要件を「サーバーに求める」と一括 | **認可そのものは任意**（実装するなら従う）。クエリ文字列の禁止と S256 はクライアントの義務。同意画面は固定の client ID を使うプロキシの義務。state handle を認証に使うことの禁止を追加 |
+| そのほか | Gmail の措置（拒否または迷惑メール振り分け）、OCSP を止めた認証局（確認できたのは Let's Encrypt）、Hotjar（数字とメールは既定で抑制）、Clarity の広告利用の根拠（利用規約）、App Check（公式は「補う」もの、Functions はコードで強制）、附属文書 20 への統合（6.0 版から）、総務省の意見募集の対象（報告書（案）で、手引き（案）はその別添）、`verify_jwt = false` を単独で指摘にしない、ASI05 の正式名 | 一次情報どおりに直した |
+
+照合して一致を確かめたもの: CVE / GHSA 24 件の影響範囲と修正版、NIST 800-63B-4、OWASP の LLM / Agentic Top 10 の数値と名称、
+MCP の現行版と主要な MUST、RFC 9989〜9991、CA/B Forum の有効期間の日程、npm 12 / pnpm 11 / Dependabot / GitHub Actions の変更、
+EPSS v5、Next.js の公式ガイド、Trusted Types、Android の TLS と Play の要件、Supabase の GRANT・DELETE・RLS の既定、
+Sentry・Clarity・LogRocket・Twilio の既定、総務省・クレジットカードのガイドラインの記述。
+
+### 検査
+
+- **Linux（Debian 系、GNU の grep / sed、mawk と gawk）で全件通ることを確かめた。** `tests/docker/Dockerfile` を置き、
+  README に手順を書いた。Playwright 入りなので省略なしで回る。検査の検査も Linux で全件生きていた
+- `audit_grep.sh`: マイグレーションのパスに空白があると読み飛ばしていたのを直した（検査と変異を追加）。
+  `allowedOrigins` のコメント行を除いた。カード決済・LLM の判定で `node_modules` を辿らないようにした。
+  `cache-mode:` と `dangerously-allow-all-scripts` を拾う
+- **検査が確率的に誤っていた。** `set -o pipefail` のもとで `printf … | grep -q` と書くと、`grep -q` が見つけた時点で
+  終わり、まだ書き込み中の `printf` が SIGPIPE で落ちて、パイプライン全体が失敗扱いになる。Linux で同じ判定を
+  200 回繰り返すと 1 回、「見つかったのに無い」になった。**`absent`（出てはいけない文字列）の検査では、本当は出ている
+  ものを素通りさせる。** 検査の 31 か所と、スクリプト本体の 6 か所（`recon.sh` の露出の判定、`audit_grep.sh` の Origin の判定）を
+  `grep … >/dev/null` に直し、この書き方を構造の検査で捕まえる。Linux で 5 回続けて全件通ることを確かめた
+- 検査 402 → 404 件、変異 34 → 35 件
+
+### 教訓
+
+**「一次情報で確認した」という報告は、確認の代わりにならない。** 抜き取りでは正確だった調査の報告にも、
+修正版の取り違え、取り下げられた CVE、仕様の主語の取り違え、存在しない設定名が混ざっていた。
+**番号と版は機械で、それ以外は発行元の本文で、全件を照合してから配る。**
+
+**1 回だけ落ちた検査を「たまたま」で片付けない。** Linux で 1 件だけ落ち、次の実行では通った。
+再現するまで回したところ、検査の書き方そのものが確率的に誤る形だった。検査が「通る」ことにも揺れがありうる。
+
+---
+
 ## [2.17.2] — 2026-09-25
 
 **一次情報を取得できずに見送っていた 4 件を、ブラウザで開いて確かめ直した回。**

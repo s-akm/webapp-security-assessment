@@ -32,8 +32,8 @@ skill/          スキル本体。ここだけが .skill になる
   templates/    依頼者に渡す文面
 build/          .skill を組み立てる
 tests/          スキルを直したときに壊れていないかを見る
-  run.sh        検査本体（402 件）
-  mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（34 件）
+  run.sh        検査本体（404 件）
+  mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（35 件）
   self-audit.sh 配布前の自己監査。上の 2 つに加え、方針の遵守と配布物を見る
   ngwords.local 依頼者を示す語（.gitignore 済み。手元にだけ置く）
 cases/          適用事例（.gitignore 済み。手元にだけ置く）
@@ -96,6 +96,17 @@ VERSION         配布物のファイル名に付く版
 `browser_probe.mjs` の検査には Playwright が要る。`npm install && npx playwright install chromium`
 を済ませてあれば自動で走り、無ければその部分だけ省略される。
 
+### Linux で検査する
+
+```bash
+docker build -t wsa-linux tests/docker
+docker run --rm -v "$PWD":/src:ro wsa-linux
+```
+
+**macOS（BSD の grep / sed / awk）だけで確かめていると、GNU との違いで壊れていても気づけない。**
+`tests/docker/Dockerfile` は Debian 系の Linux に mawk を既定の awk として置き、Playwright も入れてあるので、
+省略なしで全件を回せる。検査の検査も `docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'cp -r /src /work/r && cd /work/r && npm install --silent >/dev/null 2>&1; ./tests/mutations.sh'` で回せる。
+
 ### 検査の検査
 
 ```bash
@@ -105,7 +116,7 @@ VERSION         配布物のファイル名に付く版
 **検査は「通ること」しか示さない。** 通る検査が、壊れたときに落ちるかどうかは別の話で、
 実際に「浅い場所に題材を置いたため不具合を再現できず素通りしていた」検査があった。
 `mutations.sh` はスキルにわざと欠陥を入れて `run.sh` を回し、**対応する検査が落ちること**を
-1 つずつ確かめる（34 件）。落ちない検査は「生きていない」と判定する。
+1 つずつ確かめる（35 件）。落ちない検査は「生きていない」と判定する。
 
 初回に回したところ、20 件中 5 件で問題が出た。うち 3 件は検査自体が弱かった
 （期待値が先頭付近の文字だったため、行末で起きる文字化けを検出できていない、など）。
