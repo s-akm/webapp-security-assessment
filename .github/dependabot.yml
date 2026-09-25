@@ -8,6 +8,10 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    ignore:
+      # playwright の版は package.json・tests/docker/Dockerfile・browser_probe.mjs の 3 か所で揃えている。
+      # 1 か所だけ上がると食い違うので、3 か所を一緒に手で上げる（tests/run.sh が一致を検査する）
+      - dependency-name: playwright
   - package-ecosystem: pip
     directory: /
     schedule:

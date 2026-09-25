@@ -16,8 +16,9 @@ on:
 permissions:
   contents: read
 
+# 週 1 回の検査の検査と、push の検査が互いを打ち切らないよう、起動のきっかけごとに分ける
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -49,13 +50,17 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends dnsutils mawk zip unzip
-          sudo update-alternatives --set awk /usr/bin/mawk || true
+          sudo update-alternatives --set awk /usr/bin/mawk
+          # mawk で回っていなければ止める（失敗を黙って続けると、gawk で通ったのを mawk で通ったと誤る）
+          test "$(readlink -f "$(command -v awk)")" = /usr/bin/mawk
 
-      - name: macOS では bash 3.2 で回す
+      - name: macOS では bash 3.2 と BSD の grep / sed / awk で回す
         if: runner.os == 'macOS'
         run: |
+          # ランナーには Homebrew の GNU の道具が入っていることがある。PATH の先頭に標準の道具を置く
           mkdir -p "$RUNNER_TEMP/bin"
           ln -sf /bin/bash "$RUNNER_TEMP/bin/bash"
+          for t in grep sed awk; do ln -sf "/usr/bin/$t" "$RUNNER_TEMP/bin/$t"; done
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       - name: Node の依存（ロックファイルどおり、インストール時のスクリプトは動かさない）
@@ -67,8 +72,15 @@ jobs:
       - name: 道具の版
         run: |
           bash --version | head -1
-          ls -l "$(command -v awk)"   # awk -W version は BSD の awk で標準入力を待つので使わない
+          # awk -W version は BSD の awk で標準入力を待つので使わない。実体の場所で見る
+          for t in bash grep sed awk; do echo "$t -> $(command -v "$t") -> $(readlink -f "$(command -v "$t")" 2>/dev/null || true)"; done
           node --version
+      - name: macOS の道具が BSD のものか確かめる
+        if: runner.os == 'macOS'
+        run: |
+          test "$(bash -c 'echo ${BASH_VERSINFO[0]}')" = 3
+          grep --version | grep BSD
+          if sed --version >/dev/null 2>&1; then echo 'GNU の sed が使われている'; exit 1; fi   # 「! コマンド」は set -e で止まらない
 
       - name: 自己監査（検査を含む）
         if: github.event_name != 'schedule'
