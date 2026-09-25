@@ -214,6 +214,10 @@ mutate "audit_grep: 2 節でガードの行ではなく一致の数を数える"
   's = s.replace("if (!((f, ln) in seenl)) { seenl[f, ln] = 1; grd[f]++ }", "grd[f]++")'
 mutate "make_register: 個人情報シートから SMS の確認行を落とす" "scripts/make_register.py" "版と構成ごとの中身" \
   's = "\n".join(l for l in s.split("\n") if "SMS の送信経路（確認コード・通知）" not in l)'
+mutate "pre-push: LICENSE も案件語の照合に含める" "../build/hooks/pre-push" "問題の無い main の push は通す" \
+  's = s.replace(" -- . \x27:(exclude)LICENSE\x27", "")'
+mutate "pre-push: main 以外のブランチも通す" "../build/hooks/pre-push" "main 以外のブランチは止める" \
+  's = s.replace("refs/heads/main|refs/tags/v[0-9]*) ;;", "refs/heads/*|refs/tags/v[0-9]*) ;;")'
 mutate "audit_grep: 画面操作の記録で 09 を読ませない" "scripts/audit_grep.sh" "画面操作の記録があれば 09 を読ませる" \
   's = s.replace("references/08-privacy-compliance.md references/09-browser-verification.md\"", "references/08-privacy-compliance.md\"")'
 mutate "audit_grep: X 広告の関数を送信先から外す" "scripts/audit_grep.sh" "X 広告のタグを拾う" \

@@ -209,6 +209,30 @@ n="$(printf '%s' "$out" | grep -cE '^\[検出\]' || true)"
 if [[ "$n" -le 1 ]]; then ok "scan_secrets.sh の自己検査（検出 $n 種類・想定は 1 以下）"
 else ng "scan_secrets.sh の自己検査" "想定外の検出 $n 種類"; fi
 
+# push の前の関門（build/hooks/pre-push）。一時的なリポジトリで、止めるべきものを止め、通すべきものを通すかを見る。
+# 案件語は検査用の語（CLIENT-NGWORD-CANARY）で模す。利用者の署名・フック・GIT_DIR には左右されないようにする
+HK="$TMP/hook"; rm -rf "$HK"; mkdir -p "$HK/tests"
+printf 'CLIENT-NGWORD-CANARY\n' > "$HK/tests/ngwords.local"
+hkgit() { ( cd "$HK" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -c commit.gpgsign=false -c core.hooksPath=/dev/null "$@" ); }
+hkcommit() { hkgit -c user.name=t -c user.email="$1" commit -q --allow-empty -m "$2" >/dev/null 2>&1; }
+hkpush() { printf 'refs/heads/%s %s %s 0000000000000000000000000000000000000000\n' "$1" "$(hkgit rev-parse HEAD)" "$2" \
+           | ( cd "$HK" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE bash "$ROOT/build/hooks/pre-push" ) >/dev/null 2>&1; }
+hkgit init -q . >/dev/null 2>&1
+NRM='1+t@users.noreply.github.com'
+# LICENSE の作者名は、大小を区別しない照合で案件語に当たっても止めない
+printf 'Copyright (c) client-ngword-canary\n' > "$HK/LICENSE"; hkgit add LICENSE; hkcommit "$NRM" init
+if hkpush main refs/heads/main; then ok "pre-push: 問題の無い main の push は通す（LICENSE の作者名は照合しない）"
+else ng "pre-push: 問題の無い main の push は通す（LICENSE の作者名は照合しない）"; fi
+if hkpush feature refs/heads/feature; then ng "pre-push: main 以外のブランチは止める" "通ってしまった"
+else ok "pre-push: main 以外のブランチは止める"; fi
+printf 'x = "CLIENT-NGWORD-CANARY"\n' > "$HK/a.txt"; hkgit add a.txt; hkcommit "$NRM" leak
+if hkpush main refs/heads/main; then ng "pre-push: 追加行に案件語があれば止める" "通ってしまった"
+else ok "pre-push: 追加行に案件語があれば止める"; fi
+hkgit rm -q a.txt >/dev/null 2>&1; hkcommit "$NRM" fix
+hkgit reset -q --hard HEAD~2 >/dev/null 2>&1; hkcommit 'someone@example.invalid' mail
+if hkpush main refs/heads/main; then ng "pre-push: noreply でないメールアドレスのコミットは止める" "通ってしまった"
+else ok "pre-push: noreply でないメールアドレスのコミットは止める"; fi
+
 # ==========================================================================
 head_ "3. 動作 — スクリプトが期待どおり検出するか"
 

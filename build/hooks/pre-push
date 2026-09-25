@@ -28,7 +28,9 @@ while read -r lref lsha rref rsha; do
   if [[ "$rsha" == "$ZERO" ]]; then range="$lsha --not --remotes"; else range="$rsha..$lsha"; fi
   # shellcheck disable=SC2086
   if [[ -n "$words" ]]; then
-    n="$(git log -p --format= $range 2>/dev/null | grep -E '^\+' | grep -ciE "$words" || true)"
+    # LICENSE は外す。MIT の定型文と作者名だけのファイルで、大小を区別しない照合では作者名が
+    # 案件語の正規表現に偶然当たることがある（履歴を書き換えて全コミットを押し直すときに止まった）
+    n="$(git log -p --format= $range -- . ':(exclude)LICENSE' 2>/dev/null | grep -E '^\+' | grep -ciE "$words" || true)"
     if [[ "${n:-0}" -gt 0 ]]; then
       echo "pre-push: push するコミットの追加行に案件語が $n 行ある（値は出さない。git log -p で確かめる）" >&2; bad=1
     fi
