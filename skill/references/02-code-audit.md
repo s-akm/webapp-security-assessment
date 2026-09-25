@@ -34,6 +34,11 @@ grep -rl "'use server'" src/ app/ 2>/dev/null   # scripts/audit_grep.sh の 2c �
 - **ガードの戻り値を使っているか。** `requireUser()` を呼んでいても、その結果を使わずに
   次の行で処理を続ける実装がある。呼んでいることと、効いていることは別
 
+**関数の ID は秘密ではない。** Server Action の ID が外部から広く読み取れる不具合が公表されている
+（2026-07、CVE-2026-64643）。「ID を知らなければ呼べない」を認可の代わりに数えない。
+**ページ側で認証していても、そのページで定義した Action には及ばない**（Next.js の公式ガイド
+「Data Security」が明記）。Action ごとにガードを見る。
+
 **ログイン・ログアウト・カートへの追加のように、意図して公開する関数**もある。
 それでも「誰の」カートかを**サーバー側のセッションから**決めているかは見る。
 引数で受け取った利用者 ID でカートを特定していれば、他人のカートを操作できる。
@@ -186,8 +191,13 @@ grep -rnE "raw_user_meta_data|user_metadata|raw_app_meta_data|app_metadata" \
 
 ```bash
 # 対象範囲の指定を読む（scripts/audit_grep.sh の 2d がこれを出す）
-grep -nE 'matcher|except|only|withoutMiddleware' middleware.ts app/Http/Kernel.php 2>/dev/null
+# Next.js 16 では middleware.ts が proxy.ts に改名された（関数名も proxy）
+grep -nE 'matcher|except|only|withoutMiddleware' middleware.ts proxy.ts src/middleware.ts src/proxy.ts app/Http/Kernel.php 2>/dev/null
 ```
+
+**Next.js は公式に「ミドルウェア（proxy）だけで認可しない」と書いている。** Server Functions は
+使われているルートへの POST として処理されるので、matcher がそのパスを除外すると Server Function も
+proxy を通らない。認可は各 Server Function と Route Handler の中で確かめる、というのが公式の指示。
 
 **指定と、ルート一覧を 1 本ずつ突き合わせる。** よくある穴は次の 3 つ。
 
@@ -211,12 +221,35 @@ grep -A2 '"next"' package.json
 grep -m1 -A2 '"node_modules/next"' package-lock.json 2>/dev/null
 ```
 
+**これは 1 件の事故ではなく、繰り返し出る型になっている。** 2025〜2026 年に次のものが公表された。
+**どれも回避策は「ルートやページ側でも認可する」で、2026-05 の一連の修正についてはホスティング側が
+「WAF 層では確実に遮断できない」と明言している。**
+
+| 公表 | 識別子 | 迂回の条件 | 修正版 |
+|---|---|---|---|
+| 2025-03 | CVE-2025-29927（Next.js） | `x-middleware-subrequest` ヘッダ | 上記 |
+| 2025-11 | CVE-2025-64765（Astro） | `/%61dmin` のような URL エンコード | 5.15.8 では不十分（修正を迂回する続報がある）。続報の修正版を公式の一覧で確かめる |
+| 2026-05 | CVE-2026-44574（Next.js） | クエリで動的ルートの値を差し替える | 15.5.16 / 16.2.5（同時期の続報を含めると 15.5.18 / 16.2.6） |
+| 2026-05 | CVE-2026-44575（Next.js） | App Router の `.rsc` や segment-prefetch の URL が matcher に掛からない | 同上 |
+| 2026-07 | CVE-2026-64642（Next.js） | Turbopack でビルドし、`i18n.locales` が 1 件 | 15.5.21 / 16.2.11 |
+| 2026-06〜07 | CVE-2026-53721 ほか（Nuxt） | 大文字小文字の違いで `routeRules` を迂回（初回の修正が不完全） | 3.21.10 / 4.5.1 |
+
+```bash
+grep -nE 'i18n|locales' next.config.* 2>/dev/null
+grep -nE 'routeRules|appMiddleware' nuxt.config.* 2>/dev/null
+grep -rnE 'url\.pathname|context\.url' src/middleware.* 2>/dev/null   # Astro でパスを文字列比較しているか
+```
+
+**表は評価の時点で古くなっている前提で使う。** 枠組みの公式アドバイザリ一覧
+（github.com の `vercel/next.js`・`nuxt/nuxt`・`withastro/astro`・`sveltejs/kit`・`remix-run/react-router`
+の `security/advisories`）を、対象の版で見直す。外形での確かめ方は `references/03-runtime-verification.md` の 10 節。
+
 **版が該当するなら、それ自体が指摘**（`references/10-dependencies.md` の 1 節）。
 そのうえで**構造の指摘としても書く**。ミドルウェアだけに頼っていれば、この 1 件で全部が開く。
 各ルートにガードがあれば、同じ不具合を踏んでも被害は止まる。**是正は版上げと、
 ルート単位のガードの二段にする。** 版上げだけでは、次に同種の不具合が出たときに同じことが起きる。
 
-エッジやリバースプロキシを挟んでいるなら、**その層でこのヘッダを落とす**のが最も早い緩和になる。
+エッジやリバースプロキシを挟んでいるなら、**その層で `x-middleware-subrequest` ヘッダを落とす**のが最も早い緩和になる。
 実機確認（`references/03-runtime-verification.md` の 8 節）で、その設定ができるかを見る。
 
 ---
@@ -234,6 +267,27 @@ grep -m1 -A2 '"node_modules/next"' package-lock.json 2>/dev/null
 - 初期パスワードや再発行パスワードを**平文でメール送信・画面表示**していないか
 - クライアント側のストレージ（`localStorage` / `sessionStorage`）に資格情報を置いていないか
 
+**パスワードの規則は NIST SP 800-63B-4（2025-07 最終版）を根拠にする。** 旧来の「英大小数字記号を
+混ぜる」「90 日ごとに変更」は、今の基準では**禁止**側に入っている。
+
+| 見るもの | 800-63B-4 の要求 |
+|---|---|
+| 最小長 | パスワードだけで認証するなら **15 文字以上**。多要素の一部なら 8 文字以上 |
+| 最大長 | 64 文字以上を受け付けることを推奨。**短い上限（16 文字など）で切り詰めていないか** |
+| 文字種の強制 | 強制してはならない（SHALL NOT） |
+| 定期変更の強制 | 強制してはならない。漏えいの兆候があるときだけ変更させる |
+| 漏えい済み・頻出パスワードとの照合 | **必須**。登録と変更の時点で照合しているか |
+| 多要素 | AAL2 では**フィッシング耐性のある手段（パスキー等）を少なくとも 1 つ提供**する |
+
+```bash
+# パスワードの検証規則（長さ・文字種の強制を探す）
+grep -rnE 'minLength|min\(\s*[0-9]+|password.*(length|regex|pattern)|\[A-Z\]' \
+  --include='*.ts' --include='*.tsx' --include='*.py' . | grep -i pass | head
+```
+
+**文字種の強制は、基準との差として「問題あり」にするが、優先度は最下位に置く。** 攻撃経路が描けないため。
+**重いのは最小長が短いこと、漏えい済みパスワードとの照合が無いこと、上限で切り詰めていること**の 3 つ。
+
 **代替の指し示し方**: 同じリポジトリの中に、既に安全な実装（有効期限付きの再設定リンクなど）があることが多い。あれば「そこへ寄せる」と書くと、修正が具体的になる。
 
 ### B-2. セッション
@@ -241,7 +295,18 @@ grep -m1 -A2 '"node_modules/next"' package-lock.json 2>/dev/null
 - Cookie に `HttpOnly` / `Secure` / `SameSite` が付いているか
 - セッションの有効期限、無操作タイムアウトが設定されているか
 - ログアウトでサーバー側のセッションが無効化されるか（Cookie を消すだけになっていないか）
-- 権限昇格・パスワード変更のときにセッションを再発行しているか
+- 権限昇格・パスワード変更、**そしてログインの時点で**セッション ID を再発行しているか（セッション固定）
+- **サーバー側でセッションの中身を署名の検証なしに信じていないか。** Supabase の `auth.getSession()` は
+  Cookie の中身をそのまま返すだけで、公式が「サーバー側では信用しない」と明記している。サーバー側
+  （proxy・Route Handler・Server Action）では `getClaims()` か `getUser()` で検証する
+
+```bash
+# サーバー側で getSession() を認可に使っていないか。'use client' はファイルの先頭にあるので、ファイル単位で除く
+grep -rlE 'auth\.getSession\(' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | grep -v node_modules \
+  | xargs grep -LE "^[[:space:]]*['\"]use client" 2>/dev/null
+```
+
+`scripts/audit_grep.sh` の 10b 節が、`'use client'` のファイルを除いて出す。`allowedOrigins` と `Host` ヘッダの使用も同じ節に出る。
 
 #### ログインがブラウザ側で走っていないか
 
@@ -281,6 +346,32 @@ grep -m1 -A2 '"node_modules/next"' package-lock.json 2>/dev/null
 - アカウントの存在推測: 「そのメールアドレスは登録されていません」と返していないか
 - メール確認・招待のトークンの推測可能性
 - 多要素認証があるか（無ければ実機確認で「有効化できるのに使っていない」のか「機能自体が無い」のかを切り分ける）
+- **管理画面のログインに、失敗回数によるロックと接続元の制限があるか。** カード決済を扱う EC では、
+  クレジットカード・セキュリティガイドラインが管理画面の IP 制限・二段階認証・10 回以下の失敗でのロックを求めている
+  （`references/06-frameworks.md` の「カード決済を扱う場合」）
+- **再設定リンクの URL を `Host` ヘッダから組み立てていないか。** 攻撃者が `Host` を差し替えた要求を送ると、
+  本人宛てのメールに攻撃者のドメインのリンクが入り、トークンが渡る
+- 再設定トークンをハッシュ化して保存しているか。**登録の有無で応答の中身も応答時間も変えていないか**
+- **登録・確認コード検証のエンドポイントが、アプリの公開設定を見ているか。** 招待制のつもりのアプリでも、
+  認証基盤の登録 API を直接呼べば入れる構成がある（AI 開発基盤で、公開ページから分かる ID だけで
+  非公開アプリに登録できた事例が 2025-07 に公表されている）
+
+```bash
+grep -rnE "headers\.get\(['\"](host|x-forwarded-host)|req\.headers\.host|request\.host" --include='*.ts' --include='*.js' --include='*.py' --include='*.rb' . | head
+```
+
+**多要素認証の方式も見る。** NIST SP 800-63B-4 は、**承認ボタンを押すだけの push 通知**を
+もう受け入れられない方式としている（MFA 疲労で破られる）。AAL2 では、フィッシング耐性のある手段
+（パスキー等）を少なくとも 1 つ提供することが求められる。
+
+**パスキー（WebAuthn）を入れている場合**は、サーバー側で challenge の照合と使い捨て、`origin` と RP ID、
+ユーザー検証（UV）フラグ、署名を検証しているかを見る。
+
+```bash
+grep -rnE 'verify(Authentication|Registration)Response|expectedOrigin|expectedRPID|requireUserVerification' --include='*.ts' . | head
+```
+
+**パスキーを入れても、復旧経路（メールのリンク、SMS）がいちばん弱いところとして残る。** 併せて見る。
 
 ### B-4. トークンの検証（JWT を使っている場合）
 
@@ -324,6 +415,14 @@ grep -rnE 'redirect_uri|response_type|code_verifier|code_challenge|state=|nonce=
 | PKCE | `code_verifier` / `code_challenge` を使っているか。**公開クライアントでは必須** |
 | `redirect_uri` | 登録側が**完全一致**で照合しているか。前方一致・ワイルドカード・クエリの追加を許す設定は、認可コードの横取りにつながる |
 
+**RFC 9700（OAuth 2.0 Security BCP、2025-01）が現行の基準。** Implicit（`response_type=token`）は使わない、
+パスワードグラントは禁止、PKCE の方式は `S256`、公開クライアントのリフレッシュトークンはローテーションか
+送信者への結び付け、複数の認可サーバーを使うなら認可応答の `iss` を検証する。
+
+```bash
+grep -rnE 'response_type=token|grant_type=password|code_challenge_method=plain' --include='*.ts' --include='*.js' . | head
+```
+
 `redirect_uri` の設定は**コードからは分からない**ことが多い。認証基盤の管理画面を見る必要があるので、
 実機確認（03 の 3 節）へ回す。**確かめられなければ未確認事項に残す。**
 
@@ -336,6 +435,24 @@ grep -rnE 'redirect_uri|response_type|code_verifier|code_challenge|state=|nonce=
 **探し方**: フレームワークの「クライアントに露出する環境変数」の規約を確認し（`NEXT_PUBLIC_` / `VITE_` / `REACT_APP_` など）、特権のある鍵がその接頭辞を持っていないかを見る。ビルド成果物を直接 grep するのがいちばん確実で、`scripts/recon.sh` がこれをやる。
 
 **何が問題か**: 管理者権限の鍵がブラウザに出ていれば、それだけで全データが露出する。
+
+**LLM の鍵をブラウザに出していないか。** 公式 SDK にはブラウザから直接呼ぶための指定があり、
+それを使うと鍵がそのまま配信される。従量課金なので、漏れればそのまま費用になる。
+
+```bash
+# -o で名前だけ出す。.env に当たったときに値まで出さないため
+grep -rnoE 'dangerouslyAllowBrowser:\s*true|NEXT_PUBLIC_[A-Z_]*(OPENAI|ANTHROPIC|GEMINI|GROQ|MISTRAL)[A-Z_]*|VITE_[A-Z_]*(OPENAI|ANTHROPIC|GEMINI)[A-Z_]*' . 2>/dev/null | grep -v node_modules | sort -u | head
+```
+
+`scripts/audit_grep.sh` の 4d 節がこれを出す。
+
+**「公開前提の鍵」も前提が崩れることがある。** Google の `AIza…` で始まる鍵は、Firebase などでは
+クライアントに置く前提で配られてきた。ところが同じ GCP プロジェクトで Generative Language API（Gemini）を
+有効にすると、**既に配っている鍵でそのまま Gemini を呼べる**状態になる（2026-02 に公表）。
+公開前提の鍵を見つけたら、**その鍵で呼べる API が制限されているか**を実機確認（03 の 6 節）に回す。
+
+**Server Action の中に鍵を直書きしない。** React Server Components のソースが応答に返る不具合
+（CVE-2025-55183）では、Server Function のソースがそのまま漏れた。環境変数から読んでいれば値は漏れない。
 
 **評価できる実装**: サーバー専用モジュールをビルド時に検出する仕組み（`import "server-only"` など）が入っていれば、それは記録しておく。壊してはいけない実装として台帳に残す。
 
@@ -404,6 +521,26 @@ grep -rnE 'redirect_uri|response_type|code_verifier|code_challenge|state=|nonce=
 
 読み取った方針を報告書に明記する。実機確認でこの前提が実際に成立しているかを確かめる（`references/03-runtime-verification.md`）。
 
+**マネージドの基盤（BaaS）ごとに定番の穴がある。** 使っている基盤の行だけ見る。
+
+| 基盤 | 見ること |
+|---|---|
+| Supabase | RLS は 03 の 1 節で実機を見る。コード側では**マイグレーションで作ったテーブルに RLS を有効にしているか**（ダッシュボードで作ると既定で有効、SQL で作ると無効のまま）、`GRANT` を明記しているか（2026-10-30 から既存プロジェクトでも新規テーブルへの自動 `GRANT` が止まる）、`supabase/config.toml` で `verify_jwt = false` の Edge Function が自前で認証か署名検証をしているか |
+| Firebase | ルールに `allow read, write: if true` や期限付きのテストモードが残っていないか。**`request.auth != null` だけで認可したつもりになっていないか**（ログインした誰でも通る）。メールのドメインで判定するなら `email_verified` も見ているか。**App Check は認証やルールの代わりにならない**（公式が明記） |
+| Clerk | **`clerkMiddleware()` は既定で何も保護しない。** Route Handler と Server Action の中で `auth()` を確かめているか |
+| Convex | **公開の `query` / `mutation` は誰でも呼べる。** すべての関数で引数の検証と `ctx.auth.getUserIdentity()` を行っているか。内部からだけ呼ぶ関数を `internal` にしているか |
+| Auth0 など外部の認証基盤 | API 側でアクセストークンの `aud` / `iss` / `exp` / `scope` を検証しているか。**ID トークンで API を呼んでいないか** |
+
+```bash
+grep -rnE 'if true|auth != null|clerkMiddleware\(\)|createRouteMatcher|query\(\{|mutation\(\{|verify_jwt' \
+  --include='*.rules' --include='*.ts' --include='*.toml' . 2>/dev/null | grep -v node_modules | head -30
+```
+
+**`scripts/audit_grep.sh` の 19 節が、基盤ごとにこれを機械的に出す。** Supabase ではマイグレーションを読んで、
+RLS を有効にしていないテーブル、`search_path` を固定しない定義者権限の関数、`security_invoker` の無いビュー、
+マテリアライズドビュー、`user_metadata` による認可、公開バケット、`verify_jwt = false` の関数を挙げる。
+**マイグレーションに無いテーブル（管理画面で作ったもの）は出ない**ので、実機（03 の 1 節）で必ず見る。
+
 ### E-2. スキーマ定義がリポジトリにあるか
 
 **探し方**: コードが参照しているテーブル名を全部列挙し、マイグレーション／スキーマ定義ファイルと突き合わせる。
@@ -445,6 +582,40 @@ grep -rhoE 'from\(["'"'"']([a-z_]+)["'"'"']\)' --include=*.ts . | sort -u
 
 ハニーポット、滞在時間の判定、CAPTCHA のいずれかがあるか。フォームが複数あるなら、対策が入っているフォームと入っていないフォームの差を見る。
 
+### F-4. SMS 送信の濫用（SMS pumping）
+
+**電話番号に確認コードを送る機能があるなら見る。** 攻撃者が用意した番号帯（多くは海外）へ大量に SMS を送らせ、
+その着信料を通信事業者と分け合う。**1 通ごとに費用が出る**ので、F-1 と同じく認証不要の経路がそのまま攻撃の費用になる。
+連番の番号へ一気に送られ、確認が完了しない、が兆候。
+
+- **認証なしで SMS を送れる経路を全部挙げる。** サインアップ、OTP ログイン、再送、パスワード再設定、電話番号の確認・変更、
+  招待、予約確認の SMS、MFA の登録。匿名サインインを有効にしていると、電話番号の登録が実質的に認証なしの経路になる
+- **送信先の国を絞っているか。** 日本の番号だけを相手にするなら、アプリ側で `+81` の携帯番号帯（070 / 080 / 090。060 も
+  今後使われるので番号データを更新できる形で持つ）に限り、**基盤側でも国を絞る**（二重にする）
+- **上限が三層あるか。** 番号ごと（再送の間隔と日次の上限）、IP ごと、全体（時間・日の予算と、超えたら止めて通知）。
+  **攻撃は別々の番号へ 1 通ずつ送るので、番号ごとの上限だけでは止まらない**
+- SMS を送るすべての経路の手前に CAPTCHA があるか（F-3）
+- **SMS の API を直接呼んで自前で OTP を組んでいないか。** 確認用のサービス（Twilio Verify など）の組み込みの防御が効かない
+
+```bash
+grep -rnE 'messages\.create\(|verifications\.create|PublishCommand|SendTextMessageCommand|signInWithPhoneNumber|verifyPhoneNumber|signInWithOtp|SignUpCommand|ResendConfirmationCodeCommand|sendSms|send_sms' \
+  --include='*.ts' --include='*.tsx' --include='*.js' --include='*.py' . 2>/dev/null | grep -v node_modules | head -20
+grep -rnE 'libphonenumber|parsePhoneNumber|isValidPhoneNumber|\+81' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | grep -v node_modules | head
+```
+
+`scripts/audit_grep.sh` の 24 節がこれを出す。基盤側の設定（国の制限・上限・通知）は `references/03-runtime-verification.md` の 3 節。
+
+### F-5. カード情報の入力の濫用（クレジットマスター）
+
+**カード決済があるなら見る。** 盗んだり生成したりしたカード番号が有効かを確かめるために、少額の決済や
+カードの登録を大量に試される（クレジットマスター、カードテスティング）。決済代行の手数料と、
+不正利用の通知が自社に返ってくる。
+
+- カード登録・決済の試行に、**利用者単位・IP 単位・全体の回数制限**があるか
+- 認証なしでカードの登録や少額決済を試せる経路（寄付、無料トライアルの本人確認）が無いか
+- EMV 3-D セキュアを通しているか（クレジットカード・セキュリティガイドラインの指針対策）
+- 決済代行側の不正検知（Stripe Radar など）を有効にしているかは、管理画面で依頼者に確かめてもらう
+
 ---
 
 ## G. ログと追跡
@@ -474,6 +645,28 @@ grep -rhoE 'from\(["'"'"']([a-z_]+)["'"'"']\)' --include=*.ts . | sort -u
 - スキャンが**運用に組み込まれているか**。CI に無く、依存更新の自動検知も無ければ、今日 0 件でも半年後は分からない。件数そのものより、検知の仕組みが無いことのほうが指摘として重い
 - ビルド時に型チェックや lint を無効化していないか（`ignoreBuildErrors` のような設定）。安全網を自分で外している
 - ロックファイルがコミットされているか。無ければ、監査した版と本番の版が違いうる
+
+**枠組み本体の脆弱性は `npm audit` に頼らず、公式のアドバイザリ一覧を直接見る。** 件数が多く、
+修正が出た直後はスキャンのデータベースに載っていないことがある。とくに次の 2 つは重い。
+
+- **React Server Components の RCE（CVE-2025-55182、いわゆる React2Shell。Next.js 側は CVE-2025-66478）。**
+  CVSS 10.0、認証不要。App Router を使う Next.js 15.x / 16.x（修正は 15.0.5 / 15.1.9 / 15.2.6 / 15.3.6 /
+  15.4.8 / 15.5.7 / 16.0.7）、`react-server-dom-*` 19.0〜19.2.0 を使う他の枠組みも該当する。回避策は無く、
+  公式は **「2025-12-04 13:00（太平洋時間）の時点で未修正のまま公開していたなら、秘密情報をすべて入れ替える」**
+  と書いている。**是正は版上げと秘密情報の入れ替えの二段にする。** 版上げだけでは、既に抜かれた鍵が生きている。
+  後続の DoS とソース露出（CVE-2025-55183 / 55184 / 67779）もあるので、React 側は 19.0.4 / 19.1.5 / 19.2.4 以上
+- **サポートの切れた版。** Next.js は 16.x（Active LTS）と 15.x（Maintenance LTS）だけに修正が出る。14 以前には出ない。
+  15.x の修正は最新の 15.x に minor として出るので、**15 系でも古い minor に留まっていれば修正は入らない**。
+  **サポート外の版を使っていること自体が指摘になる**
+
+```bash
+# ロックファイルの解決結果（"node_modules/<名前>" の直後の version）を見る。宣言の範囲ではなく
+grep -A1 -E '"node_modules/(next|react-server-dom-(webpack|turbopack|parcel)|@vitejs/plugin-rsc|react-router|@remix-run/[a-z-]+|@sveltejs/(kit|adapter-[a-z]+)|astro|nuxt)"' package-lock.json 2>/dev/null \
+  | grep -E 'node_modules|"version"' | head -20
+```
+
+`scripts/audit_grep.sh` の 1b 節が、ロックファイルの解決結果から版を出し、上の React2Shell と
+A-5 の CVE-2025-29927、サポート外の版を機械的に判定する。**それ以外の勧告は判定しない**ので、公式の一覧は別に見る。
 
 **件数をそのまま重大さとして書かない。** high が 30 件出ても、多くはビルド時にしか使わない依存や、
 到達しない経路にある。**その関数を実際に呼んでいるか**を確かめてから起票する。
