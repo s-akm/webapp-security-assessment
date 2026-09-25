@@ -1477,6 +1477,13 @@ else
     absent   "browser_probe[誤検出]: 健全な CSP を咎めない"           "unsafe-inline がある" "$C"
     absent   "browser_probe[誤検出]: 揃ったヘッダを欠如と言わない"     "[無] x-frame-options" "$C"
     absent   "browser_probe[誤検出]: x-powered-by が無ければ触れない"  "実装情報が露出"       "$C"
+    # 別ホストへ転送されたら、転送先を自サイトとして数える（recon.sh と同じ）
+    C2="$(node "$SKILL/scripts/browser_probe.mjs" "http://127.0.0.1:$PORT/to-clean" 2>&1 || true)"
+    contains "browser_probe[誤検出]: 転送先のホストを第三者と言わない" "送信は観測されなかった" "$C2"
+    # コンソールの文言（CSP の違反）に載った URL のクエリを出さない
+    C3="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/csp-query" 2>&1 || true)"
+    contains "browser_probe: CSP の違反を拾う"                         "CSP 違反: 1"          "$C3"
+    absent   "browser_probe: コンソールの URL のクエリを伏せる"         "FIXTURECONSOLEKEY0123" "$C3"
     contains "browser_probe[誤検出]: 空の保存領域を空と言える"         "localStorage: （空）" "$C"
     contains "browser_probe[誤検出]: WebSocket が無ければ無いと言える" "WebSocket の接続は観測されなかった" "$C"
 

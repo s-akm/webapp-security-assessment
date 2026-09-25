@@ -170,8 +170,13 @@ async function main() {
   const { chromium } = pw;
 
   const hr = (s) => console.log(`\n=== ${s} ===`);
-  // 自ドメインとそのサブドメインを「第三者ではない」とみなす
-  const isOwn = (h) => h === host || h.endsWith(`.${host}`);
+  // 自ドメインとそのサブドメインを「第三者ではない」とみなす。転送された先（www から apex など）の
+  // ホストも自サイトに含める（recon.sh と同じ）。転送先は読み込みが終わるまで分からないので、
+  // 観測した要求はホストごとにいったん全部数え、読み込みの後で自サイトを除く。
+  const own = new Set([host]);
+  const isOwn = (h) => [...own].some((o) => h === o || h.endsWith(`.${o}`));
+  // コンソールの文言には URL が載り、クエリに鍵や識別子が入りうる（?key=…）。クエリと断片を伏せて残す
+  const maskUrls = (t) => t.replace(/(https?:\/\/[^\s?#"')]+)[?#][^\s"')]*/g, "$1?…（伏字）");
   const tagOf = (h) => { const t = TAGS.find(([re]) => re.test(h)); return t ? t[1] : ""; };
 
   const browser = await chromium.launch();
@@ -179,9 +184,12 @@ async function main() {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
 
-  const thirdParty = new Map();   // ホスト -> 件数（送信が試みられた数）
-  const blocked = new Map();      // ホスト -> 件数（実際には飛ばなかった数）
-  const wsThird = new Set();      // WebSocket で接続した第三者ホスト
+  const seen = new Map();         // ホスト -> 件数（自サイトを含む。送信が試みられた数）
+  const failed = new Map();       // ホスト -> 件数（自サイトを含む。実際には飛ばなかった数）
+  const wsSeen = new Set();       // WebSocket で接続したホスト（自サイトを含む）
+  const thirdParty = new Map();   // 読み込みの後に、seen から自サイトを除いて作る
+  const blocked = new Map();
+  const wsThird = new Set();
   const sockets = [];             // { url, sent, received, closed }
   const cspViolations = [];
   const consoleErrors = [];
@@ -189,7 +197,7 @@ async function main() {
   page.on("request", (req) => {
     try {
       const h = new URL(req.url()).hostname;
-      if (!isOwn(h)) thirdParty.set(h, (thirdParty.get(h) || 0) + 1);
+      seen.set(h, (seen.get(h) || 0) + 1);
     } catch { /* データ URI など。無視してよい */ }
   });
   // CSP やネットワークの都合で成立しなかったものを分けて数える。
@@ -197,7 +205,7 @@ async function main() {
   page.on("requestfailed", (req) => {
     try {
       const h = new URL(req.url()).hostname;
-      if (!isOwn(h)) blocked.set(h, (blocked.get(h) || 0) + 1);
+      failed.set(h, (failed.get(h) || 0) + 1);
     } catch { /* 同上 */ }
   });
   // WebSocket は request イベントに出ない。別に拾わないと、同意前の送信とリアルタイム通信の
@@ -208,7 +216,7 @@ async function main() {
     sockets.push(s);
     try {
       const h = new URL(s.url).hostname;
-      if (!isOwn(h)) { thirdParty.set(h, (thirdParty.get(h) || 0) + 1); wsThird.add(h); }
+      seen.set(h, (seen.get(h) || 0) + 1); wsSeen.add(h);
     } catch { /* 同上 */ }
     ws.on("framesent", () => { s.sent++; });
     ws.on("framereceived", () => { s.received++; });
@@ -216,8 +224,8 @@ async function main() {
   });
   page.on("console", (msg) => {
     const t = msg.text();
-    if (/Content Security Policy|Refused to/i.test(t)) cspViolations.push(t.slice(0, 200));
-    else if (msg.type() === "error") consoleErrors.push(t.slice(0, 200));
+    if (/Content Security Policy|Refused to/i.test(t)) cspViolations.push(maskUrls(t).slice(0, 200));
+    else if (msg.type() === "error") consoleErrors.push(maskUrls(t).slice(0, 200));
   });
 
   console.log(`対象: ${base}`);
@@ -233,6 +241,11 @@ async function main() {
   }
   // 遅延して発火するタグを拾う。同意バナー表示後に飛ぶものがここに出る。
   await page.waitForTimeout(3000);
+  // 転送された先のホストも自サイトとして、第三者の一覧を作る
+  try { own.add(new URL(page.url()).hostname); } catch { /* 同上 */ }
+  for (const [h, n] of seen) if (!isOwn(h)) thirdParty.set(h, n);
+  for (const [h, n] of failed) if (!isOwn(h)) blocked.set(h, n);
+  for (const h of wsSeen) if (!isOwn(h)) wsThird.add(h);
 
   // CSP は <meta http-equiv> でも置ける。ヘッダだけを見ると、meta で置いた CSP を「無い」と言う。
   const metaCsp = await page.evaluate(() =>
