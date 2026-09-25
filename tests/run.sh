@@ -383,6 +383,8 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
 
   contains "audit_grep[基盤]: 構成の判定で BaaS を名指しする"        "Supabase Firebase Clerk Convex" "$S0"
   contains "audit_grep[基盤]: カード決済なら 06 を読ませる"          "references/06-frameworks.md"    "$S0"
+  contains "audit_grep[基盤]: 画面操作の記録を 0 節で名指しする"    "有 → 08 の 1-2（9b 節）"         "$S0"
+  contains "audit_grep[基盤]: SMS の送信を 0 節で名指しする"        "有 → 02 の F-4・03 の 3 節（24 節）" "$S0"
   # 1b. 枠組みの版
   contains "audit_grep[版]: ミドルウェア迂回の修正前を判定"          "CVE-2025-29927 の修正前"        "$S1B"
   contains "audit_grep[版]: React2Shell の修正前を判定"              "React2Shell（CVE-2025-55182"      "$S1B"
@@ -555,6 +557,8 @@ JS
   absent   "audit_grep[リアルタイム]: 無ければ 23 節を出さない"      "=== 23."                        "$RN"
   absent   "audit_grep[リプレイ]: 無ければ 9b 節を出さない"          "=== 9b."                        "$RN"
   absent   "audit_grep[SMS]: 無ければ 24 節を出さない"               "=== 24."                        "$RN"
+  contains "audit_grep[基盤]: 画面操作の記録が無ければ無と言う"    "画面操作の記録"                 "$RN"
+  absent   "audit_grep[基盤]: 画面操作の記録が無いのに有と言わない" "有 → 08 の 1-2"                 "$RN"
 fi
 
 # 構成の判定。対象に無い技術の資料を読ませないための仕組みで、

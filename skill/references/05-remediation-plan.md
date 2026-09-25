@@ -353,7 +353,8 @@ comm -13 guard-prev.txt guard-now.txt
 
 # 依存の脆弱性。件数を 0 にすることは求めない（references/10-dependencies.md の方針）。
 # 前回に無かった high 以上だけを取り出し、到達性と KEV で読んで台帳に載せる（期待値: 新しく出たものが全部、台帳に判定付きで載っている）
-npm audit --omit=dev --json | jq -r '.vulnerabilities | to_entries[]
+# 開発依存も含める（CI と開発機で動く。references/10-dependencies.md の 1-2）
+npm audit --json | jq -r '.vulnerabilities | to_entries[]
   | select(.value.severity == "high" or .value.severity == "critical") | .key' | sort > audit-now.txt
 comm -13 audit-prev.txt audit-now.txt
 

@@ -113,7 +113,7 @@ echo "      11 Webhook / 12 例外 / 13 乱数と暗号 / 14 通信 / 15 XML / 1
 
 # --------------------------------------------------------------------------
 # 枠組みごとに、ハンドラの置き方が違う。ファイル名で決まるもの、ディレクトリで決まるもの、
-# コード中の登録で決まるものの 3 通りを集める。1 つの枠組みしか見ていないと、
+# コード中の登録で決まるもの、Server Actions の指示子で決まるものの 4 通りを集める。1 つの枠組みしか見ていないと、
 # 他の枠組みでは「検出なし」になって素通りする。
 # ルート登録の書き方。枠組みごとに語彙が違うので、1 か所にまとめて使い回す。
 ROUTE_REG='(app|router|r|e|mux|srv|http|api|fastify|server|Route)\.(get|post|put|patch|delete|Get|Post|Put|Patch|Delete|GET|POST|PUT|PATCH|DELETE|HandleFunc|Handle|Map[A-Z][a-z]+|route)\('
@@ -337,6 +337,26 @@ if [[ -n "$rt" ]]; then
 else
   say "リアルタイム通信" "無"
 fi
+
+# --- 画面操作の記録（セッションリプレイ）と SMS の送信（どちらも 08・02 の該当節を読む）---
+REPLAYPAT='replayIntegration|new Replay\(|replaysSessionSampleRate|replaysOnErrorSampleRate|clarity\.ms|@microsoft/clarity|static\.hotjar\.com|@hotjar/browser|hotjar|logrocket|LogRocket\.init|@fullstory/browser|FullStory\.init|FS\.init|posthog-js|posthog\.init|@datadog/browser-rum|datadogRum\.init|sessionReplaySampleRate|mouseflow|_mfq'
+if grep -rqE "${EXA[@]}" "$REPLAYPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.mjs' \
+     --include='*.vue' --include='*.svelte' --include='*.html' --include='*.astro' --include='*.php' --include='package.json' . 2>/dev/null; then
+  replay=1; say "画面操作の記録" "有 → 08 の 1-2（9b 節）"
+  need="$need references/08-privacy-compliance.md"
+else
+  replay=""; say "画面操作の記録" "無"
+fi
+
+# SMS を送る経路。1 通ごとに費用が出るので、認証不要の経路がそのまま攻撃の費用になる
+SMSPAT='verifications\.create|verify\.v2\.services|PublishCommand|SendTextMessageCommand|signInWithPhoneNumber|verifyPhoneNumber|PhoneAuthProvider|signInWithOtp\([^)]*phone|SignUpCommand|ResendConfirmationCodeCommand|sendSms|sendSMS|send_sms'
+sms_hit="$(grep -rlE "${EXA[@]}" "$SMSPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null | head -1)"
+# messages.create は Twilio のほかに Anthropic などの SDK にもある。twilio を読み込んでいるファイルに限る
+twilio_direct="$(grep -rlE "${EXA[@]}" 'messages\.create\(' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null \
+  | while IFS= read -r f; do grep -lE "twilio|Twilio" "$f" 2>/dev/null; done | head -5)"
+[[ -z "$sms_hit" && -n "$twilio_direct" ]] && sms_hit="$twilio_direct"
+sms_cfg="$(grep -nE '^\[auth\.sms' supabase/config.toml 2>/dev/null | head -1)"
+if [[ -n "$sms_hit$sms_cfg" ]]; then say "SMS の送信" "有 → 02 の F-4・03 の 3 節（24 節）"; else say "SMS の送信" "無"; fi
 
 lock=""
 for f in package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Gemfile.lock go.sum composer.lock Cargo.lock; do
@@ -600,7 +620,7 @@ hr "4b. クライアントに露出する環境変数（特権鍵が混ざって
 {
   grep -rhoE "${EXA[@]}" '(NEXT_PUBLIC|NUXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|GATSBY|STORYBOOK|ASTRO_PUBLIC|PUBLIC|VUE_APP|NG_APP|SVELTE_PUBLIC|REMIX_PUBLIC)_[A-Z0-9_]+' . 2>/dev/null | sort -u | sed 's/^/  /'
 } | show
-echo "  ※ SERVICE_ROLE / SECRET / PRIVATE / ADMIN を含む名前がこの一覧にあれば、その時点で最優先の指摘"
+echo "  ※ SERVICE_ROLE / SECRET / PRIVATE / ADMIN を含む名前がこの一覧にあれば、その時点で P0 の候補。報告書を待たずに依頼者へ知らせる（SKILL.md の守ること 6）"
 
 hr "4c. .env の混入と gitignore"
 {
@@ -619,7 +639,7 @@ hr "4d. LLM の鍵がブラウザに出ていないか（従量課金がその�
   grep -rnoE "${EXA[@]}" '(NEXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|NUXT_PUBLIC|PUBLIC)_[A-Z0-9_]*(OPENAI|ANTHROPIC|CLAUDE|GEMINI|GOOGLE_AI|GOOGLE_GENERATIVE_AI|GROQ|MISTRAL|COHERE|DEEPSEEK|XAI|PERPLEXITY|OPENROUTER|HF_TOKEN|HUGGINGFACE|REPLICATE|TOGETHER|FIREWORKS)[A-Z0-9_]*' \
     . 2>/dev/null | sort -u | lim 10
 } | show
-echo "  ※ 出ていれば最優先。サーバー側の中継に移す（02 の C-1）"
+echo "  ※ 出ていれば P0 の候補（直接の金銭被害。04 の問い 2）。サーバー側の中継に移す（02 の C-1）"
 echo "  ※ Google の AIza… 鍵は、同じプロジェクトで Gemini を有効にすると呼べる API が増える。鍵の API 制限を 03 の 6 節で見る"
 
 # --------------------------------------------------------------------------
@@ -665,7 +685,7 @@ hr "8. コードが参照するテーブル／コレクション名"
     | grep -vE '^(the|this|that|a|an|it|them|here|there|where|select|import|require|node_modules|auth|https?|public|storage|your|our|my|each|all|any|which|what|scratch|memory|file|files|source|disk|cache|now|date|dual)$' \
     | sort -u | lim 40 | sed 's/^/  /'
 } | show
-echo "  ※ マイグレーション／スキーマ定義に無いものは、本番の設定が不明。実機確認の最優先対象"
+echo "  ※ マイグレーション／スキーマ定義に無いものは、本番の設定が不明。実機確認で先に見る（03 の 1 節）"
 
 # --------------------------------------------------------------------------
 hr "9. 第三者タグと同意管理（法令遵守の検討材料）"
@@ -719,9 +739,7 @@ echo "  --- 公開している文書（実装との突き合わせ対象）---"
 } | show
 
 # --------------------------------------------------------------------------
-REPLAYPAT='replayIntegration|new Replay\(|replaysSessionSampleRate|replaysOnErrorSampleRate|clarity\.ms|@microsoft/clarity|static\.hotjar\.com|@hotjar/browser|hotjar|logrocket|LogRocket\.init|@fullstory/browser|FullStory\.init|FS\.init|posthog-js|posthog\.init|@datadog/browser-rum|datadogRum\.init|sessionReplaySampleRate|mouseflow|_mfq'
-if grep -rqE "${EXA[@]}" "$REPLAYPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.mjs' \
-     --include='*.vue' --include='*.svelte' --include='*.html' --include='package.json' . 2>/dev/null; then
+if [[ -n "$replay" ]]; then
   hr "9b. 画面操作を記録するツール（セッションリプレイ。08 の 1-2）"
   echo "  --- 使っているツールと初期化の場所 ---"
   {
@@ -796,7 +814,7 @@ echo "  --- 署名検証らしき処理 ---"
 echo "  ※ 受け口があって検証が無ければ、誰でも通知を投げられる。02 の M を参照"
 echo "  ※ シークレット未設定のときに検証を飛ばしていないかは、目で読んで確かめる"
 
-hr "12. 例外の握りつぶし（認可・認証の周りにあれば最優先）"
+hr "12. 例外の握りつぶし（認可・認証の周りにあれば優先度を上げる）"
 {
   grep -rnE "${EXA[@]}" 'catch[^{]*\{[[:space:]]*\}|except[^:]*:[[:space:]]*pass' . 2>/dev/null | lim 20
 } | show
@@ -1264,14 +1282,6 @@ if [[ -n "$rt" ]]; then
   fi
 fi
 
-# SMS を送る経路。1 通ごとに費用が出るので、認証不要の経路がそのまま攻撃の費用になる
-SMSPAT='verifications\.create|verify\.v2\.services|PublishCommand|SendTextMessageCommand|signInWithPhoneNumber|verifyPhoneNumber|PhoneAuthProvider|signInWithOtp\([^)]*phone|SignUpCommand|ResendConfirmationCodeCommand|sendSms|sendSMS|send_sms'
-sms_hit="$(grep -rlE "${EXA[@]}" "$SMSPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null | head -1)"
-# messages.create は Twilio のほかに Anthropic などの SDK にもある。twilio を読み込んでいるファイルに限る
-twilio_direct="$(grep -rlE "${EXA[@]}" 'messages\.create\(' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null \
-  | while IFS= read -r f; do grep -lE "twilio|Twilio" "$f" 2>/dev/null; done | head -5)"
-[[ -z "$sms_hit" && -n "$twilio_direct" ]] && sms_hit="$twilio_direct"
-sms_cfg="$(grep -nE '^\[auth\.sms' supabase/config.toml 2>/dev/null | head -1)"
 if [[ -n "$sms_hit$sms_cfg" ]]; then
   hr "24. SMS の送信経路（SMS pumping。02 の F-4）"
   echo "  --- SMS を送らせる箇所 ---"
@@ -1293,7 +1303,7 @@ fi
 
 hr "完了"
 skipped=""
-grep -rqE "${EXA[@]}" "$REPLAYPAT" . 2>/dev/null || skipped="$skipped 9b（画面操作の記録）"
+[[ -z "$replay" ]] && skipped="$skipped 9b（画面操作の記録）"
 [[ -z "$iac" ]] && skipped="$skipped 17（インフラ）"
 [[ -z "$mob" ]] && skipped="$skipped 18（モバイル）"
 [[ -z "$baas" ]] && skipped="$skipped 19（BaaS）"
