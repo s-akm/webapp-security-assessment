@@ -1,0 +1,2 @@
+# make_register.py が使う（tests/run.sh の台帳の検査も）。版を固定する
+openpyxl==3.1.5

@@ -28,3 +28,9 @@ node_modules/
 
 # エージェントの作業用の worktree（手元だけ）
 .claude/worktrees/
+
+# 台帳・修正指示書・環境変数（事例の成果物を誤ってリポジトリに入れない）
+*.xlsx
+remediation/
+.env
+.env.*
