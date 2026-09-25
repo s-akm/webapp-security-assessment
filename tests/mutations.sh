@@ -212,6 +212,10 @@ mutate "audit_grep: React2Shell の修正版を取り違える" "scripts/audit_g
   's = s.replace("15.1) fix=15.1.9", "15.1) fix=15.1.0")'
 mutate "audit_grep: 2 節でガードの行ではなく一致の数を数える" "scripts/audit_grep.sh" "1 ファイルの定義とガードの行を数える" \
   's = s.replace("if (!((f, ln) in seenl)) { seenl[f, ln] = 1; grd[f]++ }", "grd[f]++")'
+mutate "audit_grep: 画面操作の記録で 09 を読ませない" "scripts/audit_grep.sh" "画面操作の記録があれば 09 を読ませる" \
+  's = s.replace("references/08-privacy-compliance.md references/09-browser-verification.md\"", "references/08-privacy-compliance.md\"")'
+mutate "audit_grep: X 広告の関数を送信先から外す" "scripts/audit_grep.sh" "X 広告のタグを拾う" \
+  's = s.replace("|ads-twitter|twq\\(|", "|")'
 
 # ---- recon ----
 # 旧不具合は「自サイトの判定がポートを考えない」。ホスト名にポートを残すだけでは、最終的なホスト名も

@@ -544,6 +544,9 @@ JS
   printf 'import Anthropic from "@anthropic-ai/sdk";\nexport async function POST(){ return client.messages.create({ model: "m", messages: [] }); }\n' > "$G/app/api/chat/route.ts"
   # PHP のテンプレートの計測タグ
   printf '<script async src="https://www.googletagmanager.com/gtag/js?id=G-FIXTURE"></script>\n' > "$G/theme/header.php"
+  # recon・browser_probe の送信先の一覧に揃えて足した X 広告と Yahoo! 広告（URL を書かず関数だけ呼ぶ形）
+  printf '<script>twq("config", "fixture");</script>\n' > "$G/theme/x-ads.html"
+  printf '<script>ytag({ type: "yss_conversion" });</script>\n' > "$G/theme/yahoo-ads.html"
   # 切り捨て: 同じ危険な関数を 25 か所に置く（3 節の一覧は 20 件で切る）
   for i in $(seq 1 25); do printf 'export function GET(){ el.innerHTML = x%s; }\n' "$i"; done > "$G/app/api/many/route.ts"
   # 大文字の変数名と新しい鍵の形式（4 節）
@@ -573,6 +576,8 @@ JS
   contains "audit_grep[除外]: rebuild を含むパスを落とさない"        "scripts/rebuild/debug.ts"       "$GD"
   absent   "audit_grep[SMS]: Anthropic の messages.create を SMS と言わない" "=== 24."             "$GD"
   contains "audit_grep[タグ]: PHP のテンプレートのタグを拾う"         "theme/header.php"               "$GD"
+  contains "audit_grep[タグ]: X 広告のタグを拾う"                     "theme/x-ads.html"               "$GD"
+  contains "audit_grep[タグ]: Yahoo! 広告のタグを拾う"                "theme/yahoo-ads.html"           "$GD"
   contains "audit_grep[切り捨て]: 切ったことと残りの件数を示す"       "（ほか "                        "$GD"
   contains "audit_grep[長い行]: 長い行を切る"                         "（長い行を省略）"               "$GD"
   if printf '%s\n' "$GD" | LC_ALL=C awk 'length($0) > 700 { bad = 1 } END { exit bad ? 0 : 1 }'; then

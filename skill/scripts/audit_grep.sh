@@ -729,7 +729,10 @@ hr "9. 第三者タグと同意管理（法令遵守の検討材料）"
 # URL を直に書く形だけでなく、フレームワークのラッパーコンポーネント経由の読み込みも見る。
 # <GoogleTagManager gtmId={...} /> のような書き方は、URL が現れないため
 # ドメイン名の grep だけでは取り逃す。実際にこれで見落としが起きる。
-TAGPAT='googletagmanager|google-analytics|gtag\(|adsbygoogle|pagead2|googlesyndication|doubleclick|connect\.facebook|fbq\(|clarity\.ms|hotjar|analytics\.tiktok|snap\.licdn|intercom|sentry|logrocket|LogRocket|fullstory|FullStory|posthog|datadogRum|browser-rum|mouseflow|_mfq|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts'
+# 送信先は recon.sh・browser_probe.mjs の一覧（ホスト名）と同じ 17 種を、コードに現れる語で引く。
+# エラー監視（Sentry）とチャット（Intercom）も、利用者の端末から第三者へ送る点は同じなので含める
+# （電気通信事業法の外部送信規律は目的を問わない。08 の 1 節）。
+TAGPAT='googletagmanager|google-analytics|analytics\.google\.com|gtag\(|adsbygoogle|pagead2|googlesyndication|googleadservices|doubleclick|connect\.facebook|fbq\(|clarity\.ms|@microsoft/clarity|hotjar|analytics\.tiktok|ttq\.|snap\.licdn|_linkedin_partner_id|ads-twitter|twq\(|s\.yimg\.jp|ytag\(|yjads|intercom|sentry|logrocket|LogRocket|fullstory|FullStory|posthog|datadogRum|browser-rum|mouseflow|_mfq|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts'
 
 echo "  --- 計測・広告タグの読み込み箇所 ---"
 {
