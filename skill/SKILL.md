@@ -195,10 +195,14 @@ AI で書かれたコードを読むだけなら 12 は開かない。
 | ファイル | 使うとき |
 |---|---|
 | `templates/client-browser-checklist.md` | 認証が要るブラウザ確認を依頼者にお願いするとき（`references/09-browser-verification.md` の 2・3・6・7 節に対応） |
+| `templates/client-console-checklist.md` | 管理画面の設定を依頼者に見てもらうとき（Supabase の Security Advisor・Realtime・鍵、Firebase のルールと App Check、Vercel の保護と環境変数、各コンソールの多要素認証、SMS・決済・GitHub の組織・セッションリプレイの設定。`references/03-runtime-verification.md` のモード B） |
+| `templates/client-sql-request.md` | 03 の SQL を依頼者に実行してもらい、返ってきた行をそのまま貼ってもらうとき（`select *` を使わず、個人情報の列を取らない） |
 
 **そのまま渡せる文面にしてある。** 対象サービスの名前と、確認してほしい画面の URL だけ
-埋めて渡す。判断を求めず、見えたものをそのまま書いてもらう形にしている。**「良いか悪いか」を
-依頼者に聞くと、答えが解釈で汚れる。**
+埋めて渡す（先頭の「評価者へ」のコメントは、渡す前に消す）。判断を求めず、見えたもの
+（項目名と値、返ってきた行）をそのまま書いてもらう形にしている。**「良いか悪いか」を
+依頼者に聞くと、答えが解釈で汚れる。** 返ってきたものは `references/04-findings-register.md` の
+「依頼者の確認の結果を戻す」の手順で台帳に戻す。
 
 ## スクリプト
 
