@@ -398,7 +398,12 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
 
   contains "audit_grep[基盤]: 構成の判定で BaaS を名指しする"        "Supabase Firebase Clerk Convex" "$S0"
   contains "audit_grep[基盤]: カード決済なら 06 を読ませる"          "references/06-frameworks.md"    "$S0"
-  contains "audit_grep[基盤]: 画面操作の記録を 0 節で名指しする"    "有 → 08 の 1-2（9b 節）"         "$S0"
+  contains "audit_grep[基盤]: 画面操作の記録を 0 節で名指しする"    "有 → 08 の 1-2・09 の 11 節（9b 節）" "$S0"
+  contains "audit_grep[基盤]: BaaS なら読む節を名指しする"          "07 の 11-3・11-4（19 節）"      "$S0"
+  # SKILL.md の「どの資料が要るか」の表と、0 節の「追加で読む資料」が揃っているか
+  if printf '%s' "$S0" | sed -n '/追加で読む資料:/,/※/p' | grep -F "references/09-browser-verification.md" >/dev/null; then
+    ok "audit_grep[基盤]: 画面操作の記録があれば 09 を読ませる"
+  else ng "audit_grep[基盤]: 画面操作の記録があれば 09 を読ませる" "「追加で読む資料」に 09 が無い"; fi
   contains "audit_grep[基盤]: SMS の送信を 0 節で名指しする"        "有 → 02 の F-4・03 の 3 節（24 節）" "$S0"
   # 1b. 枠組みの版
   contains "audit_grep[版]: ミドルウェア迂回の修正前を判定"          "CVE-2025-29927 の修正前"        "$S1B"
@@ -574,6 +579,7 @@ JS
   absent   "audit_grep[SMS]: 無ければ 24 節を出さない"               "=== 24."                        "$RN"
   contains "audit_grep[基盤]: 画面操作の記録が無ければ無と言う"    "画面操作の記録"                 "$RN"
   absent   "audit_grep[基盤]: 画面操作の記録が無いのに有と言わない" "有 → 08 の 1-2"                 "$RN"
+  absent   "audit_grep[基盤]: 画面操作の記録が無ければ 09 を読ませない" "references/09-browser-verification.md" "$RN"
 fi
 
 # 構成の判定。対象に無い技術の資料を読ませないための仕組みで、

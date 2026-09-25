@@ -284,7 +284,12 @@ baas=""
   || grep -qE '"firebase(-admin)?"' package.json 2>/dev/null; } && baas="$baas Firebase"
 grep -qE '"@clerk/' package.json 2>/dev/null && baas="$baas Clerk"
 { [[ -d convex ]] || grep -qE '"convex"' package.json 2>/dev/null; } && baas="$baas Convex"
-if [[ -n "$baas" ]]; then say "マネージドの基盤" "有 →${baas}（19 節）"; else say "マネージドの基盤" "無"; fi
+if [[ -n "$baas" ]]; then
+  say "マネージドの基盤" "有 →${baas} → 02 の E 節・03 の 1 節・07 の 11-3・11-4（19 節）"
+  need="$need references/07-web-vulnerabilities.md"
+else
+  say "マネージドの基盤" "無"
+fi
 
 # --- CI とエージェントの設定（どちらもリポジトリにある「他人のコードが動く経路」）---
 if [[ -d .github/workflows ]]; then
@@ -342,8 +347,8 @@ fi
 REPLAYPAT='replayIntegration|new Replay\(|replaysSessionSampleRate|replaysOnErrorSampleRate|clarity\.ms|@microsoft/clarity|static\.hotjar\.com|@hotjar/browser|hotjar|logrocket|LogRocket\.init|@fullstory/browser|FullStory\.init|FS\.init|posthog-js|posthog\.init|@datadog/browser-rum|datadogRum\.init|sessionReplaySampleRate|mouseflow|_mfq'
 if grep -rqE "${EXA[@]}" "$REPLAYPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.mjs' \
      --include='*.vue' --include='*.svelte' --include='*.html' --include='*.astro' --include='*.php' --include='package.json' . 2>/dev/null; then
-  replay=1; say "画面操作の記録" "有 → 08 の 1-2（9b 節）"
-  need="$need references/08-privacy-compliance.md"
+  replay=1; say "画面操作の記録" "有 → 08 の 1-2・09 の 11 節（9b 節）"
+  need="$need references/08-privacy-compliance.md references/09-browser-verification.md"
 else
   replay=""; say "画面操作の記録" "無"
 fi
