@@ -32,6 +32,10 @@
 
 ## 確認項目
 
+**版**: MASVS 2.1.0（2024-01）を土台にしている。L1 / L2 / R の段階は 2.0.0 で廃止された。
+試験手順の MASTG は **2.0.0（2026-06）が最初の安定版**で、弱点の一覧 MASWE が両者をつなぐ。
+**指摘には、分かる範囲で MASWE と MASTG-TEST の ID を添える**と、依頼者側の開発者が一次情報を引ける。
+
 OWASP MASVS の分類（Storage / Crypto / Auth / Network / Platform / Code / Resilience /
 Privacy）に沿って並べてある。**該当しない項目は飛ばす。**
 
@@ -53,13 +57,18 @@ find . \( -name 'google-services.json' -o -name 'GoogleService-Info.plist' \
 
 | 鍵の種類 | 判定 |
 |---|---|
-| 公開前提の識別子（Firebase の設定、計測 SDK の ID） | 問題なし。**サーバー側の権限設定で守る** |
+| 公開前提の識別子（Firebase の設定、計測 SDK の ID） | 問題なし。**サーバー側の権限設定で守る**（呼べる API が増える例外は下の段落） |
 | 第三者 API の鍵で、**課金や特権操作ができる**もの | **問題あり。中継サーバーを挟む** |
 | 署名鍵・配布用の証明書がリポジトリにある | **問題あり。これが漏れると偽アプリを作れる** |
 
 **「鍵が入っている」だけで指摘にしない。** その鍵で何ができるかを確かめる。
 Firebase の設定ファイルは公開前提で、守るのは**サーバー側の規則**になる。
 `references/03-runtime-verification.md` の 1 節で規則を確認する。
+
+**ただし、公開前提の鍵でも呼べる API が増えることがある。** Google の `AIza…` の鍵は、同じ GCP プロジェクトで
+Generative Language API（Gemini）を有効にすると、**配布済みの鍵のまま Gemini を呼べる**状態になる
+（2026-02 に公表。公開 Web 上で使える鍵が数千件見つかった）。**その鍵に API の制限が掛かっているか**を、
+依頼者に GCP のコンソールで確かめてもらう。確かめられなければ未確認事項に残す。
 
 ### 2. 端末に保存しているもの（MASVS-STORAGE）
 
@@ -72,12 +81,17 @@ sqlite|Realm|shared_preferences|SecureStore|Keychain|EncryptedSharedPreferences'
 
 **保存先で判定が変わる。**
 
-- **`Keychain`（iOS）/ `EncryptedSharedPreferences`（Android）/ `SecureStore`** —
+- **`Keychain`（iOS）/ Android Keystore を使った保存 / `SecureStore`** —
   資格情報の置き場として意図されたもの。問題なし
+- **`EncryptedSharedPreferences`** — 置き場としては今も安全側で、判定は**問題なし**。ただし**ライブラリ
+  （`androidx.security:security-crypto`）全体が 2025 年に非推奨になった**ので、`references/08-privacy-compliance.md` の
+  6 節と同じく「気づいたこと」として渡す（指摘には数えない）
 - **`UserDefaults` / `SharedPreferences` / `AsyncStorage`** — 平文で残る。
   **認証トークンやパスワードを置いていれば指摘**。端末のバックアップにも入る
 - **ログへの出力**。デバッグ用の出力が残っていて、個人情報や token を書いていないか
-- **バックアップの対象から外しているか**（Android の `allowBackup`、iOS の除外指定）
+- **バックアップの対象から外しているか**（Android の `allowBackup`、iOS の除外指定）。
+  **Android 12 以降は `android:dataExtractionRules` で、クラウドへのバックアップと端末間の転送を別々に指定する。**
+  `allowBackup` だけを見ると判定を誤る
 
 ### 3. 通信（MASVS-NETWORK）
 
@@ -105,6 +119,10 @@ setHostnameVerifier|badCertificateCallback|rejectUnauthorized' . 2>/dev/null | h
   **サーバー側の認証の代わりにはならない**。生体認証が通ったことをアプリ側の判定だけで
   サーバーに伝えていれば指摘になる
 - ログアウトでトークンが失効するか（`references/09-browser-verification.md` の 7 節と同じ）
+- **アプリや端末の真正性確認（Play Integrity・App Attest・Firebase App Check）を入れているなら、
+  判定をサーバー側でしているか。** 端末側で判定させると、改ざんで外せる。Firebase App Check は
+  **コンソールで強制（enforcement）を有効にするまで何も拒否しない**。また、これらは認証や権限設定の
+  代わりにはならない（Firebase の公式が明記）
 
 ### 5. 端末との境界（MASVS-PLATFORM）
 
@@ -143,6 +161,10 @@ grep -rnE 'uses-permission|NS[A-Za-z]+UsageDescription' \
 ### 7. 配布物に残るもの（MASVS-CODE / RESILIENCE）
 
 - デバッグ用の設定が残っていないか（`android:debuggable`、テスト用のサーバー URL）
+- **iOS のプライバシーマニフェスト**（`PrivacyInfo.xcprivacy`）。2024-05 から必須。収集するデータの申告が、
+  `references/08-privacy-compliance.md` のプライバシー文書と食い違っていないか
+- **Android の対象 API 水準。** Google Play は 2026-08-31 から新規と更新に API 36 を求めている。
+  古い水準のままなら、TLS 1.0 / 1.1 の無効化（API 35）などの保護が効いていない
 - ログ出力が本番で無効になっているか
 - **難読化・改竄検知は、優先度を上げすぎない。** 時間稼ぎであって、防御ではない。
   **サーバー側で守れていないことの代わりにはならない。**
@@ -158,6 +180,8 @@ Web の `references/09-browser-verification.md` に相当する部分。**評価
   依頼者の端末と資格情報を扱うことになる。**手順を渡して結果を受け取る**（03 のモード B）
 - ストアの公開ページから確認できることはある（権限の一覧、プライバシーラベル、
   最終更新日、対応 OS 版）。**これは外部から見えるので、評価者が確認してよい**
+- **Play の外（APK の直接配布）で配っているか。** 2026-09 から一部の国で、2027 年から全世界で、
+  Android の認定端末には検証済みの開発者のアプリしか入れられなくなる。配布経路が変わる可能性を依頼者に伝える
 - **配布物の解析（逆コンパイル）は、依頼者の許可を明示的に取ってから。**
   自社アプリであっても、契約や利用規約で制限されていることがある
 
