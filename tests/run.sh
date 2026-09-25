@@ -763,11 +763,30 @@ fi
 U="$(bash "$SKILL/scripts/recon.sh" 2>&1 || true)"
 contains "recon: 引数が無いときに使い方を出す" "使い方" "$U"
 
+# 到達できない対象。取れていないものを「無い」と判定しないこと（以前は [無] ヘッダ・
+# 「x-powered-by は出ていない」・「検出なし」を出していた）。閉じたポートなので即座に失敗する。
+RU="$(bash "$SKILL/scripts/recon.sh" "http://127.0.0.1:1" /admin 2>&1 || true)"
+contains "recon[到達不可]: 取得できなかったと言う"             "取得できず"             "$RU"
+absent   "recon[到達不可]: ヘッダを「無」と判定しない"        "[無] x-frame-options"   "$RU"
+absent   "recon[到達不可]: x-powered-by を「出ていない」と言わない" "x-powered-by は出ていない" "$RU"
+absent   "recon[到達不可]: 鍵やタグを「検出なし」と言わない"   "検出なし"               "$RU"
+absent   "recon[到達不可]: 以降の HTTP の節を飛ばす"           "=== 5. 追加パス"        "$RU"
+
 if command -v node >/dev/null 2>&1; then
   B="$(node "$SKILL/scripts/browser_probe.mjs" 2>&1 || true)"
   contains "browser_probe: 引数が無いときに使い方を出す" "使い方" "$B"
   B2="$(node "$SKILL/scripts/browser_probe.mjs" 'not a url' 2>&1 || true)"
   contains "browser_probe: URL でない引数を弾く" "URL として読めない" "$B2"
+
+  # Playwright が無いときの案内。評価対象のリポジトリを汚さない手順（版を固定し、スキルの外に入れる）を出すこと。
+  # 以前は「npm i -D playwright」で、実行した場所（評価対象）の package.json を書き換えていた。
+  # リポジトリの中に置くと親の node_modules が見えてしまうので、OS の一時ディレクトリへ写して走らせる。
+  PWT="$(mktemp -d)"
+  cp "$SKILL/scripts/browser_probe.mjs" "$PWT/"
+  B3="$(cd "$PWT" && env -u NODE_PATH node "$PWT/browser_probe.mjs" "http://localhost:1" 2>&1 || true)"
+  contains "browser_probe: Playwright 不在時に版を固定した導入手順を出す" "playwright@1.63" "$B3"
+  contains "browser_probe: 導入先をスキルの外にする"                   "NODE_PATH="      "$B3"
+  absent   "browser_probe: 評価対象の package.json を書き換える案内をしない" "npm i -D" "$B3"
 
   # 既知タグのラベル付けは、発火台では検査できない（ローカルでは googletagmanager.com
   # というホスト名を作れないため）。スクリプトから TAGS を読み込んで直接当てる。
@@ -781,23 +800,84 @@ const cases = [
   ["pagead2.googlesyndication.com", "Google 広告"],
   ["connect.facebook.net", "Meta ピクセル"],
   ["www.clarity.ms", "Microsoft Clarity"],
+  ["c.bing.com", "Microsoft Clarity"],
   ["o0.ingest.sentry.io", "Sentry"],
+  ["js.sentry-cdn.com", "Sentry"],
+  ["static.hotjar.com", "Hotjar"],
+  ["content.hotjar.io", "Hotjar"],
+  ["r.lr-ingest.io", "LogRocket"],
+  ["r.lr-in-prod.com", "LogRocket"],
+  ["edge.fullstory.com", "FullStory"],
+  ["rs.eu1.fullstory.com", "FullStory"],
+  ["us.i.posthog.com", "PostHog"],
+  ["eu-assets.i.posthog.com", "PostHog"],
+  ["browser-intake-datadoghq.com", "Datadog RUM"],
+  ["browser-intake-us5-datadoghq.com", "Datadog RUM"],
+  ["browser-intake-datadoghq.eu", "Datadog RUM"],
+  ["o2.mouseflow.com", "Mouseflow"],
+  ["s.yimg.jp", "Yahoo! 広告"],
 ];
 let bad = 0;
 for (const [host, want] of cases) {
   const hit = TAGS.find(([re]) => re.test(host));
   if (!hit || hit[1] !== want) { console.log(`NG ${host} -> ${hit ? hit[1] : "(未検出)"} / 期待 ${want}`); bad++; }
 }
-// 自ドメインらしきホストを取り違えないこと
-for (const host of ["example.com", "cdn.example.com", "notgoogle.example.com"]) {
+// 自ドメインらしきホスト、送信先の名前を途中に含むだけのホストを取り違えないこと
+for (const host of ["example.com", "cdn.example.com", "notgoogle.example.com",
+                    "hotjar.com.attacker.example", "clarity.ms.example.com", "notposthog.com",
+                    "bing.com", "www.bing.com", "facebook.com.example.com"]) {
   const hit = TAGS.find(([re]) => re.test(host));
   if (hit) { console.log(`NG ${host} を ${hit[1]} と誤判定した`); bad++; }
 }
 console.log(bad === 0 ? "ALL OK" : `${bad} 件失敗`);
 NODE
 )"
-  if printf '%s' "$T" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: 既知タグのラベル付け（12 種・誤判定 3 例）"
+  if printf '%s' "$T" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: 既知タグのラベル付け（21 例・誤判定 9 例）"
   else ng "browser_probe: 既知タグのラベル付け" "$T"; fi
+
+  # recon.sh の TAGS と browser_probe.mjs の TAGS が同じ内容であること。
+  # 片方だけ直すと、同じ送信先が一方では計測タグ、もう一方では無名になる。
+  JT="$(node - "$SKILL/scripts/browser_probe.mjs" <<'NODE' 2>&1 || true
+import { pathToFileURL } from "node:url";
+const { TAG_SOURCES } = await import(pathToFileURL(process.argv[2]).href);
+for (const [label, re] of TAG_SOURCES) console.log(`${label}|${re}`);
+NODE
+)"
+  RT="$(sed -n '/^TAGS=(/,/^)/p' "$SKILL/scripts/recon.sh" | sed -n "s/^[[:space:]]*'\(.*\)'[[:space:]]*$/\1/p")"
+  if [[ -n "$RT" && "$RT" == "$JT" ]]; then ok "recon と browser_probe の既知タグの一覧が一致する（$(printf '%s\n' "$RT" | wc -l | tr -d ' ') 種）"
+  else ng "recon と browser_probe の既知タグの一覧が一致する" "$(diff <(printf '%s\n' "$RT") <(printf '%s\n' "$JT") | head -4 | tr '\n' ' ')"; fi
+
+  # CSP の判定は references/07 の 1-6 に合わせる。ブラウザを使わずに判定の部品へ直接当てる。
+  CJ="$(node - "$SKILL/scripts/browser_probe.mjs" <<'NODE' 2>&1 || true
+import { pathToFileURL } from "node:url";
+const { judgeCsp } = await import(pathToFileURL(process.argv[2]).href);
+const cases = [
+  // [CSP, unsafe-inline が効くか, 無視される unsafe-inline があるか, script の制限が無いか]
+  ["script-src 'self' 'unsafe-inline'", true, false, false],
+  ["default-src 'self' 'unsafe-inline'", true, false, false],                       // script-src が無ければ default-src
+  ["default-src 'self'; script-src-elem 'self' 'unsafe-inline'", true, false, false], // 要素側で通る
+  ["script-src-elem 'self'; script-src 'self' 'unsafe-inline'", true, false, false],  // 属性側（script-src）で通る
+  ["script-src-elem 'self' 'unsafe-inline'; script-src 'self'", true, false, false],  // script-src-elem を script-src と取り違えない
+  ["script-src 'nonce-abc' 'unsafe-inline'", false, true, false],                   // nonce があれば無視される
+  ["script-src 'sha256-AAAA' 'unsafe-inline'", false, true, false],                 // hash も同じ
+  ["script-src 'strict-dynamic' 'nonce-abc' 'unsafe-inline' https:", false, true, false],
+  ["default-src 'self'; script-src 'self'", false, false, false],
+  ["frame-ancestors 'none'", false, false, true],
+];
+let bad = 0;
+for (const [p, ui, ign, none] of cases) {
+  const j = judgeCsp(p);
+  if (j.unsafeInline !== ui || j.unsafeInlineIgnored !== ign || j.noScriptRestriction !== none) {
+    console.log(`NG ${p} -> inline=${j.unsafeInline} ignored=${j.unsafeInlineIgnored} none=${j.noScriptRestriction}`); bad++;
+  }
+}
+if (!judgeCsp("script-src 'nonce-a' 'unsafe-eval'").unsafeEval) { console.log("NG unsafe-eval は nonce で打ち消されない"); bad++; }
+if (!judgeCsp("frame-ancestors 'none'").frameAncestorsOnly) { console.log("NG frame-ancestors のみ"); bad++; }
+console.log(bad === 0 ? "ALL OK" : `${bad} 件失敗`);
+NODE
+)"
+  if printf '%s' "$CJ" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: CSP を実際に効く指令で判定する（12 例）"
+  else ng "browser_probe: CSP を実際に効く指令で判定する" "$CJ"; fi
 else
   skip "browser_probe（node が無いため省略）"
 fi
@@ -832,6 +912,14 @@ else
   if printf '%s' "$R1" | grep -E 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}' >/dev/null; then
     ng "recon[実地]: 鍵の値を伏字にする" "JWT がそのまま出力されている"
   else ok "recon[実地]: 鍵の値を伏字にする"; fi
+  # 1 節で Set-Cookie の値を出さないこと（名前と属性は残す）
+  absent   "recon[実地]: Set-Cookie の値を出さない"          "dummyvalue123"        "$R1"
+  contains "recon[実地]: Set-Cookie の名前と属性は残す"      "session_id=<伏字>; Path=/; SameSite=Lax" "$R1"
+  # 外から .env の中身が取れる。優先度は 04 の定義に合わせて「P0 の候補」とし、報告書を待たずに
+  # 知らせる対象だと示す（SKILL.md の守ること 6）。中身の値は出さない
+  contains "recon[実地]: .env の中身が取れれば P0 の候補と言う"  "中身が返っている。P0 の候補" "$R1"
+  contains "recon[実地]: 報告書を待たずに知らせると言う"         "報告書を待たずに依頼者へ知らせる" "$R1"
+  absent   "recon[実地]: .env の値を出さない"                   "dummy-env-value-should-not-be-printed" "$R1"
 
   # 正しく作られている側にも当てる。誤検出するツールは、指摘の山に埋もれて
   # 本当に危ないものを隠す。
@@ -839,18 +927,42 @@ else
   absent   "recon[誤検出]: 揃ったヘッダを欠如と言わない"     "[無] x-frame-options" "$R2"
   absent   "recon[誤検出]: x-powered-by が無ければ触れない"  "実装情報が露出"       "$R2"
   contains "recon[誤検出]: 第三者が無ければ無いと言える"     "第三者オリジンの検出なし" "$R2"
+  # 渡された URL そのもの（/clean）の HTML を読むこと。以前は "/clean/" を取りに行って 404 を読んでいた
+  contains "recon[実地]: 渡された URL の HTML から JS を集める" "JS 1 件"         "$R2"
+
+  # リダイレクトを追う。/r は 302 で /ja/ へ転送し、ヘッダは転送先にだけある。
+  # 転送先は一重引用符・相対パス（src='./ja.js'）で、LLM の鍵を載せた JS を読み込む。
+  RR="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/r" 2>&1 || true)"
+  contains "recon[転送]: 転送を示す"                         "302 → /ja/"           "$RR"
+  contains "recon[転送]: ヘッダを最終的な応答で判定する"     "[有] x-frame-options: DENY" "$RR"
+  contains "recon[相対パス]: 一重引用符・相対パスの JS を拾う" "JS 1 件"            "$RR"
+  contains "recon[LLM の鍵]: OpenAI の鍵を検出する"          "LLM の鍵（OpenAI）: sk-proj-DU" "$RR"
+  contains "recon[LLM の鍵]: Anthropic の鍵を検出する"       "LLM の鍵（Anthropic）"  "$RR"
+  contains "recon[LLM の鍵]: P0 の候補として知らせると言う"  "→ P0 の候補。報告書を待たずに" "$RR"
+  absent   "recon[LLM の鍵]: 鍵の値を伏字にする"             "DUMMYdummyDUMMYdummy0000notreal" "$RR"
+
+  # 計測タグの判定は、HTML の src 属性と自サイトのコードだけで行う。
+  # /vendor は第三者（127.0.0.1）のスクリプトの中に LogRocket・PostHog などの送信先の文字列を持つ。
+  RV="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/vendor" 2>&1 || true)"
+  contains "recon[タグ]: 自前のインラインスクリプトの GTM を検出"  "[検出] Google タグマネージャ" "$RV"
+  for lbl in LogRocket PostHog Hotjar "Microsoft Clarity" FullStory; do
+    absent "recon[タグ誤検出]: 第三者スクリプトの中身で ${lbl} と言わない" "[検出] $lbl" "$RV"
+  done
+  contains "recon[タグ]: 一重引用符の第三者スクリプトを列挙"       "127.0.0.1:$PORT"       "$RV"
 
   # ---- recon.sh の DNS まわり ----
   # 発火台は localhost だが、localhost は OS が特別扱いして常に 127.0.0.1 を返すため、
   # DNS の検査には使えない。別の受け口（tests/fixtures/site/dns.py）を立て、
   # RECON_DNS でそこへ向け、解決できない名前（example.test）で recon.sh を呼ぶ。
   # HTTP 側は即座に失敗するが、DNS の節は独立して動く。
+  # 応答しない名前の検査が長くならないよう、dig の待ち時間を 1 秒にする。
   DPORT="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
   python3 "$ROOT/tests/fixtures/site/dns.py" "$DPORT" > "$TMP/dns.log" 2>&1 &
   DNS_PID=$!
   trap 'kill $SITE_PID $DNS_PID 2>/dev/null' EXIT
-  for _ in $(seq 1 20); do grep -q '起動した' "$TMP/dns.log" 2>/dev/null && break; sleep 0.25; done
+  for _ in $(seq 1 20); do grep '起動した' "$TMP/dns.log" >/dev/null 2>&1 && break; sleep 0.25; done
   if command -v dig >/dev/null 2>&1; then
+    export RECON_DNS_TIMEOUT=1
     R3="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://example.test:1" 2>&1 || true)"
     contains "recon[DNS]: apex に SPF が無いと判定"        "[無] SPF"                "$R3"
     contains "recon[DNS]: DMARC を検出"                     "[有] DMARC"              "$R3"
@@ -863,6 +975,8 @@ else
     else ng "recon[DNS]: CAA が無ければ空で出す" "CAA の行に何か出ている"; fi
     # DMARC の rua に入っているアドレスを、出力に出さないこと（報告書に不要な個人情報）
     absent "recon[DNS]: DMARC の連絡先アドレスを出力に混ぜない" "dmarc@example.invalid" "$R3"
+    # HTTP が取れないときは、HTTP の節の判定を出さない（DNS の節は出す）
+    absent "recon[DNS]: HTTP が取れなければヘッダを「無」と言わない" "[無] x-frame-options" "$R3"
 
     # サブドメインの URL を渡されたとき、親に設定があれば親へ遡って見つけること。
     # 以前は URL のホスト名だけを引き、親に DMARC / CAA があっても「無」と出していた。
@@ -880,6 +994,13 @@ else
     contains "recon[DNS]: ゾーンの頂点で DS を引く"               "（ゾーンの頂点 strict.test）" "$R4"
     contains "recon[DNS]: 頂点の DS を見つける"                   "DS     : 12345 13 2"     "$R4"
     contains "recon[DNS]: 未署名なら DS を空で出す"               "DS     : （ゾーンの頂点 example.test）" "$R3"
+    # SPF・配信用サブドメイン・DKIM は、URL のホスト名ではなく組織のドメインで引く。
+    # 以前は app.strict.test で引き、親にある SPF・DKIM を「無い」と出していた。
+    contains "recon[組織のドメイン]: 組織のドメインを示す"         "組織のドメイン: strict.test" "$R4"
+    contains "recon[組織のドメイン]: 組織のドメインの SPF を見つける" "[有] SPF（組織のドメイン strict.test）" "$R4"
+    contains "recon[組織のドメイン]: ホスト名の SPF と区別して出す" "SPF（ホスト名 app.strict.test" "$R4"
+    contains "recon[組織のドメイン]: 配信用サブドメインを組織のドメインで引く" "send.strict.test" "$R4"
+    contains "recon[組織のドメイン]: DKIM を組織のドメインで引く"   "[有] resend._domainkey" "$R4"
     # タグは大文字小文字と空白を許して読む（RFC 7489）。レコードが 2 本なら DMARC は無効
     R5="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://caps.test:1" 2>&1 || true)"
     contains "recon[DNS]: 大文字と空白の入ったタグを読む"         "→ p=reject"              "$R5"
@@ -888,6 +1009,28 @@ else
     # IP アドレスを渡されたら DNS を引かない
     R7="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://127.0.0.1:1" 2>&1 || true)"
     contains "recon[DNS]: IP アドレスなら DNS を省く"             "IP アドレスが渡されたため省略" "$R7"
+
+    # DNS が応答しないとき。dig +short は「;; connection timed out」を標準出力に出すため、
+    # それを値として読むと「有」と誤る（実際に DKIM・CAA・配信用サブドメインで誤っていた）。
+    R8="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://silent.test:1" 2>&1 || true)"
+    contains "recon[DNS無応答]: 応答しないと言う"                 "DNS が応答しない"        "$R8"
+    absent   "recon[DNS無応答]: タイムアウトの文言を値として出さない" "connection timed out"  "$R8"
+    absent   "recon[DNS無応答]: DKIM を「有」と言わない"          "[有] resend._domainkey"  "$R8"
+    absent   "recon[DNS無応答]: SPF を「無」と言わない"           "[無] SPF"                "$R8"
+    absent   "recon[DNS無応答]: DMARC を「無」と言わない"         "[無] DMARC"              "$R8"
+    # 一部だけ応答が無いとき。答えた項目は出し、答えなかった項目は「取得できない」と区別する
+    R9="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://partial.test:1" 2>&1 || true)"
+    contains "recon[DNS一部無応答]: 答えた項目は出す"             "NS     : ns1.example.invalid" "$R9"
+    contains "recon[DNS一部無応答]: CAA は取得できないと言う"     "CAA    : （取得できない"  "$R9"
+    contains "recon[DNS一部無応答]: DS は取得できないと言う"      "DS     : （取得できない"  "$R9"
+    contains "recon[DNS一部無応答]: 配信用サブドメインは取得できないと言う" "send.partial.test 以降: （取得できない" "$R9"
+    contains "recon[DNS一部無応答]: DKIM は取得できないと言う"    "resend._domainkey 以降: （取得できない" "$R9"
+    absent   "recon[DNS一部無応答]: タイムアウトの文言を値として出さない" "connection timed out" "$R9"
+    # 受け口そのものに届かないとき（誰も待っていないポート）。最初の失敗で打ち切る
+    R10="$(RECON_DNS="127.0.0.1:1" bash "$SKILL/scripts/recon.sh" "http://example.test:1" 2>&1 || true)"
+    contains "recon[DNS不達]: 応答しないと言う"                   "DNS が応答しない"        "$R10"
+    absent   "recon[DNS不達]: 通信エラーの文言を値として出さない"  ";;"                      "$R10"
+    unset RECON_DNS_TIMEOUT
   else
     skip "recon の DNS 検査（dig が無いため省略）"
   fi
@@ -895,8 +1038,6 @@ else
 
   # ---- browser_probe.mjs ----
   if ! node -e 'import("playwright")' >/dev/null 2>&1; then
-    B3="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT" 2>&1 || true)"
-    contains "browser_probe: Playwright 不在時に導入手順を出す" "npx playwright install" "$B3"
     skip "browser_probe の実地検査（playwright が無いため省略）"
   else
     P="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT" /mypage /admin 2>&1 || true)"
@@ -930,12 +1071,42 @@ else
     absent   "browser_probe[誤検出]: 揃ったヘッダを欠如と言わない"     "[無] x-frame-options" "$C"
     absent   "browser_probe[誤検出]: x-powered-by が無ければ触れない"  "実装情報が露出"       "$C"
     contains "browser_probe[誤検出]: 空の保存領域を空と言える"         "localStorage: （空）" "$C"
+    contains "browser_probe[誤検出]: WebSocket が無ければ無いと言える" "WebSocket の接続は観測されなかった" "$C"
+
+    # CSP を <meta> で置いたページ。ヘッダだけを見ると「CSP が無い」と誤る
+    PM="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/meta-csp" 2>&1 || true)"
+    contains "browser_probe[CSP]: <meta> の CSP を読む"              "[meta]"               "$PM"
+    contains "browser_probe[CSP]: <meta> の CSP の unsafe-inline を検出" "unsafe-inline がある" "$PM"
+    absent   "browser_probe[CSP]: <meta> があれば「無」と言わない"     "CSP が設定されていない" "$PM"
+    # script-src が無く default-src に unsafe-inline がある。default-src へ遡って判定する
+    PD="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/default-only" 2>&1 || true)"
+    contains "browser_probe[CSP]: script-src が無ければ default-src で判定" "default-src が効く" "$PD"
+    contains "browser_probe[CSP]: default-src の unsafe-inline を検出"      "unsafe-inline がある" "$PD"
+    # nonce・strict-dynamic と並ぶ unsafe-inline はブラウザが無視する。指摘しない
+    PS="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/strict-csp" 2>&1 || true)"
+    absent   "browser_probe[CSP誤検出]: nonce と並ぶ unsafe-inline を咎めない" "unsafe-inline がある" "$PS"
+    contains "browser_probe[CSP誤検出]: 無視されることを示す"                  "ブラウザは無視する"   "$PS"
+
+    # 同意前に WebSocket を開くページ。WebSocket は request イベントに出ないので、別に拾う必要がある
+    PW="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/ws" 2>&1 || true)"
+    contains "browser_probe[WebSocket]: 第三者への接続を拾う"       "ws://127.0.0.1:$PORT/socket" "$PW"
+    contains "browser_probe[WebSocket]: 自サイトへの接続も拾う"     "ws://localhost:$PORT/socket" "$PW"
+    contains "browser_probe[WebSocket]: 同意前の送信を数える"       "送信 1 件"                   "$PW"
+    contains "browser_probe[WebSocket]: 同意前の第三者送信に含める" "（WebSocket を含む）"         "$PW"
+    absent   "browser_probe[WebSocket]: クエリのトークンを出さない" "dummy-ws-token-should-not-be-printed" "$PW"
+
+    # 評価対象のリポジトリの外に入れた Playwright を NODE_PATH で渡して動くこと（案内どおりの使い方）
+    PWDIR="$(node -e 'const p=require("path");console.log(p.dirname(p.dirname(require.resolve("playwright/package.json",{paths:[process.argv[1]]}))))' "$ROOT" 2>/dev/null || true)"
+    if [[ -n "$PWDIR" ]]; then
+      PN="$(cd "$PWT" && NODE_PATH="$PWDIR" node "$PWT/browser_probe.mjs" "http://localhost:$PORT/clean" 2>&1 || true)"
+      contains "browser_probe: NODE_PATH で渡した Playwright で動く" "送信は観測されなかった" "$PN"
+    fi
   fi
+  rm -rf "${PWT:-/nonexistent}"
 
   kill $SITE_PID 2>/dev/null
   trap - EXIT
 fi
-
 # ==========================================================================
 printf '\n\033[1m結果\033[0m  成功 %d / 失敗 %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIPPED"
 [[ $SKIPPED -gt 0 ]] && printf '  ※ 省略した検査がある。道具（node・playwright・dig・openpyxl）を入れて全件を回す\n'

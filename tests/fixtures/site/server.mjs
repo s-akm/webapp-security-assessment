@@ -14,8 +14,22 @@
 //   - CSP に unsafe-inline がある
 //   - セキュリティヘッダが無い
 //   - /mypage が Cache-Control 無しで個人情報らしきものを出す
+//   - /.env の中身が外から取れる
+//   - /meta-csp は CSP を <meta> で置き、unsafe-inline を持つ（ヘッダだけを見ると「無い」と誤る）
+//   - /default-only は script-src が無く、default-src に unsafe-inline がある
+//   - /elem-csp は script-src-elem が厳しく、script-src（イベントハンドラ属性に効く）に unsafe-inline がある
+//   - /ws は同意前に WebSocket を開き、第三者（127.0.0.1）へメッセージを送る
+//   - /r は 302 で /ja/ へ転送し、転送先の HTML が src='./ja.js'（一重引用符・相対パス）で
+//     LLM の鍵を載せた JS を読み込む
+//   - /vendor は、第三者（127.0.0.1）のスクリプトの中身に計測タグの送信先の文字列を持つ
+//     （中身まで見て数えると誤検出になる）。自前のインラインスクリプトには GTM の URL を書く
+//
+// 正しく作られている側:
+//   - /clean       同意まで第三者へ送らず、ヘッダを揃える
+//   - /strict-csp  nonce と 'strict-dynamic' に unsafe-inline を並べる（ブラウザは無視するので指摘しない）
 
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 
 const port = Number(process.argv[2] || 8787);
 
@@ -102,6 +116,13 @@ const PAGES = {
 <body><h1>マイページ</h1><p>ダミー太郎 さま</p></body></html>`,
   }),
 
+  // 外から設定ファイルの中身が取れる（値は架空。出力に値が出てはいけない）
+  "/.env": () => ({
+    status: 200,
+    headers: { "content-type": "text/plain" },
+    body: "# dummy\nDUMMY_SETTING=dummy-env-value-should-not-be-printed\n",
+  }),
+
   // 塞がれている想定のパス
   "/admin": () => ({ status: 403, headers: { "content-type": "text/plain" }, body: "forbidden" }),
 
@@ -144,7 +165,113 @@ const PAGES = {
   document.getElementById('consent').style.display = 'none';
 });`,
   }),
+
+  // --- CSP を <meta> で置いたページ（ヘッダには無い）---
+  "/meta-csp": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline'; object-src 'none'">
+<title>meta の CSP</title></head><body><h1>meta で CSP を置いたページ</h1></body></html>`,
+  }),
+
+  // --- script-src が無く、default-src に unsafe-inline がある ---
+  "/default-only": () => ({
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'self' 'unsafe-inline'",
+    },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>default-src だけ</title></head>
+<body><h1>default-src だけのページ</h1></body></html>`,
+  }),
+
+  // --- script-src-elem は厳しいが、script-src（属性に効く）に unsafe-inline がある ---
+  "/elem-csp": () => ({
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "script-src-elem 'self'; script-src 'self' 'unsafe-inline'",
+    },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>script-src-elem</title></head>
+<body><h1>script-src-elem のあるページ</h1></body></html>`,
+  }),
+
+  // --- 正しい側: nonce と strict-dynamic に unsafe-inline を並べる（古いブラウザ向けの推奨形）---
+  "/strict-csp": () => ({
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy":
+        "script-src 'nonce-dummyNonce123' 'strict-dynamic' 'unsafe-inline' https:; object-src 'none'; base-uri 'none'",
+    },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>strict CSP</title></head>
+<body><h1>strict CSP のページ</h1><script nonce="dummyNonce123">document.title = "strict CSP";</script></body></html>`,
+  }),
+
+  // --- 同意前に WebSocket を開く。第三者（127.0.0.1）と自サイト（localhost）の 2 本 ---
+  // クエリに載せたトークンは出力に出てはいけない（Supabase Realtime は apikey をクエリに載せる）
+  "/ws": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>WebSocket</title></head>
+<body><h1>リアルタイム通信のページ</h1>
+<div id="consent">このサイトは Cookie を使用します <button id="ok">同意する</button></div>
+<script>
+  var third = new WebSocket('ws://127.0.0.1:${port}/socket?token=dummy-ws-token-should-not-be-printed');
+  third.onopen = function () { third.send('hello-before-consent'); };
+  var own = new WebSocket('ws://localhost:${port}/socket');
+</script>
+</body></html>`,
+  }),
+
+  // --- 302 で転送する。転送元にはヘッダを付けず、転送先にだけ付ける ---
+  "/r": () => ({ status: 302, headers: { location: "/ja/" }, body: "" }),
+  "/ja/": () => ({
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'self'; frame-ancestors 'none'",
+      "x-frame-options": "DENY",
+      "x-content-type-options": "nosniff",
+    },
+    // 一重引用符・相対パスで読み込む（以前は二重引用符とルート相対しか拾わなかった）
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>転送先</title>
+<script src='./ja.js'></script></head><body><h1>転送先のページ</h1></body></html>`,
+  }),
+  // LLM の鍵がブラウザに出ている想定。値はすべて架空で、リポジトリの中では鍵の形にならないよう
+  // 分割して書く（秘密情報の検査や、ホスティング側の鍵の検出に引っかからないように）
+  "/ja/ja.js": () => ({
+    status: 200,
+    headers: { "content-type": "application/javascript" },
+    body: `const OPENAI_KEY = "${"sk-" + "proj-" + "DUMMYdummyDUMMYdummy0000notreal"}";\n` +
+          `const ANTHROPIC_KEY = "${"sk-" + "ant-" + "api03-" + "DUMMYdummyDUMMYdummy0000notreal"}";\n`,
+  }),
+
+  // --- 第三者のスクリプトの中身に計測タグの文字列がある ---
+  // セッションリプレイの SDK は他社の送信先の一覧を中に持つことがある。中身まで数えると誤検出になる。
+  // 自前のインラインスクリプトには GTM の URL を文字列として書く（読み込みはしない）。
+  "/vendor": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>第三者の SDK</title>
+<script src='${THIRD("/vendor.js")}'></script>
+<script>window.__gtmUrl = "https://www.googletagmanager.com/gtm.js?id=GTM-DUMMY";</script>
+</head><body><h1>第三者の SDK を読み込むページ</h1></body></html>`,
+  }),
+  "/vendor.js": () => ({
+    status: 200,
+    headers: { "content-type": "application/javascript" },
+    // 文字列として持っているだけで、どこにも送らない
+    body: `var KNOWN = ["https://r.lr-ingest.io/i", "https://us.i.posthog.com/e", ` +
+          `"https://script.hotjar.com", "https://www.clarity.ms/tag", "https://edge.fullstory.com"];\n` +
+          `if (typeof window.__tcfapi === "function") { /* CMP があれば問い合わせる */ }\n`,
+  }),
 };
+
+// WebSocket の受け口（標準ライブラリだけで握手だけ行う）。受け取ったメッセージは読み捨てる。
+const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const sockets = new Set();
 
 const server = createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -159,6 +286,19 @@ const server = createServer((req, res) => {
   res.end(body);
 });
 
+server.on("upgrade", (req, socket) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const key = req.headers["sec-websocket-key"];
+  if (url.pathname !== "/socket" || !key) { socket.destroy(); return; }
+  const accept = createHash("sha1").update(key + WS_GUID).digest("base64");
+  socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+               `Sec-WebSocket-Accept: ${accept}\r\n\r\n`);
+  sockets.add(socket);
+  socket.on("data", () => {});
+  socket.on("error", () => {});
+  socket.on("close", () => sockets.delete(socket));
+});
+
 server.listen(port, "127.0.0.1", () => {
   console.log(`発火台を起動した: http://localhost:${port}`);
   console.log(`第三者の配信元として http://127.0.0.1:${port} を使う`);
@@ -166,5 +306,9 @@ server.listen(port, "127.0.0.1", () => {
 
 // 親から止められたときに後片付けする
 for (const sig of ["SIGINT", "SIGTERM"]) {
-  process.on(sig, () => { server.close(() => process.exit(0)); });
+  process.on(sig, () => {
+    for (const s of sockets) s.destroy();
+    server.close(() => process.exit(0));
+    server.closeAllConnections();
+  });
 }

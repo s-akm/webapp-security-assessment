@@ -22,6 +22,15 @@
   - strict.test に CAA と DS（DNSSEC 署名済み）
   - SOA は strict.test が持つ（サブドメインを問い合わせると、権威部に strict.test の SOA が返る）。
     recon.sh はこれでゾーンの頂点を求め、DS をそこだけで引く
+  - SPF・配信用サブドメイン（send.strict.test）・DKIM（resend._domainkey.strict.test）も親にだけある。
+    recon.sh が URL のホスト名（app.strict.test）ではなく組織のドメインで引けるかを見る
+
+応答しない名前も模す。dig +short は無応答のとき「;; connection timed out」を標準出力に出すため、
+それを値として読むと「有」と誤る。
+
+  - silent.test 配下は、どの問い合わせにも答えない（DNS が落ちている状態）
+  - partial.test 配下は、NS / A / AAAA / MX / SOA / TXT（apex と _dmarc）には答え、
+    CAA・DS・配信用サブドメイン・DKIM には答えない（一部だけ応答が無い状態）
 
 標準ライブラリだけで、RFC 1035 の応答を組み立てる。TXT / MX / NS / A / CAA / DS / AAAA に答える。
 """
@@ -57,6 +66,18 @@ def rr(name, rtype, rdata, ttl=60):
 def txt(s):
     b = s.encode("ascii"); return bytes([len(b)]) + b
 
+def silent(qname, qtype):
+    """応答しない問い合わせか"""
+    q = qname.lower().rstrip(".")
+    if q == "silent.test" or q.endswith(".silent.test"):
+        return True
+    if q == "partial.test" or q.endswith(".partial.test"):
+        if qtype in (43, 257):                       # DS・CAA
+            return True
+        if "._domainkey." in q or q.split(".")[0] in ("send", "mail", "email", "smtp", "mg", "em", "bounce", "news"):
+            return True
+    return False
+
 def answers(qname, qtype):
     q = qname.lower().rstrip(".")
     base = q
@@ -75,6 +96,12 @@ def answers(qname, qtype):
     if q == "strict.test" or q.endswith(".strict.test"):
         if qtype == 16 and q == "_dmarc.strict.test":
             out.append(rr(qname, 16, txt("v=DMARC1; p=reject; sp=none; rua=mailto:dmarc@example.invalid")))
+        elif qtype == 16 and q == "strict.test":
+            out.append(rr(qname, 16, txt("v=spf1 include:_spf.example.invalid -all")))
+        elif qtype == 16 and q == "send.strict.test":
+            out.append(rr(qname, 16, txt("v=spf1 include:_spf.example.invalid ~all")))
+        elif qtype == 16 and q == "resend._domainkey.strict.test":
+            out.append(rr(qname, 16, txt("v=DKIM1; k=rsa; p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDdummy")))
         elif qtype == 257 and q == "strict.test":
             tag, val = b"issue", b"ca.example.invalid"
             out.append(rr(qname, 257, bytes([0, len(tag)]) + tag + val))
@@ -121,6 +148,8 @@ def build(req):
     off = 12
     qname, off2 = parse_name(req, off)
     qtype, qclass = struct.unpack("!HH", req[off2:off2+4])
+    if silent(qname, qtype):
+        return None, qname, QTYPE.get(qtype, str(qtype))
     question = req[12:off2+4]
     ans = answers(qname, qtype)
     auth = []
@@ -141,7 +170,8 @@ def main():
         data, addr = s.recvfrom(1024)
         try:
             resp, qn, qt = build(data)
-            s.sendto(resp, addr)
+            if resp is not None:          # 応答しない名前は黙って捨てる
+                s.sendto(resp, addr)
         except Exception as e:  # 壊れた問い合わせで落ちないように
             print("skip:", e, file=sys.stderr, flush=True)
 
