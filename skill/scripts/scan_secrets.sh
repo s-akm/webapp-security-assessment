@@ -11,7 +11,9 @@
 #
 # 見るもの:
 #   - テキストのファイルすべて（拡張子で絞らない。.yml / .log / .har / .env / .MD も見る）
-#   - xlsx の台帳（展開して、セルの文字列・シート・コメントに同じパターンを当てる。unzip が要る）
+#   - xlsx の台帳と、docx・pptx の報告書（展開して、文字列・コメントに同じパターンを当てる。unzip が要る）
+#   - PDF と旧形式の Office（.doc / .xls / .ppt）は中身を読めないので、[未検査] として名前を出す
+#   xlsx で数値として入れたセルは先頭の 0 が落ちる（090… が 90… になる）ので、電話番号には当たらない
 #
 # 検出した値そのものは出さない。位置（ファイルと行）と種類と、先頭の数バイトを残して
 # 伏字にした形だけを出す。この出力を報告書や作業ログに貼っても、値が広がらないようにするため。
@@ -27,7 +29,7 @@ HITS=0
 SHOW=20          # 1 種類あたりに表示する件数
 KEEP=4           # 伏字にする前に残す先頭のバイト数（日本語は 1 文字、英数字は 4 文字）
 
-# xlsx を展開したテキストの置き場。検査対象のディレクトリの外に作り、終わったら消す。
+# Office の文書を展開したテキストの置き場。検査対象のディレクトリの外に作り、終わったら消す。
 XT="$(mktemp -d 2>/dev/null || mktemp -d -t scan_secrets)"
 trap 'rm -rf "$XT"' EXIT
 XFILES=()        # 展開したテキストのパス
@@ -63,7 +65,7 @@ mask_email() {
   fi
 }
 
-# --- xlsx を展開する ------------------------------------------------------
+# --- Office の文書（xlsx・docx・pptx）を展開する ------------------------------
 # xlsx は zip なので、grep -I はバイナリとして読み飛ばす。台帳に貼った値がここで素通りしないよう、
 # セルの文字列（sharedStrings）、シート（数式やインライン文字列）、コメントを取り出して同じ検査を当てる。
 # XML のタグを外し、テキストの節 1 つを 1 行にする（行番号は「何番目の文字列か」になる）。
@@ -75,26 +77,48 @@ xml_text() {
       if (t ~ /[^ \t]/) print t }' \
   | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&amp;/\&/g'
 }
+# docx と pptx は、1 つの段落の文字が書式ごとの断片（<w:t> / <a:t>）に分かれる。電話番号の途中で
+# 書式が変わると、断片ごとの行では当たらない。段落（</w:p> / </a:p>）ごとにつないで 1 行にする。
+xml_para_text() {
+  LC_ALL=C awk 'BEGIN { RS = "<"; buf = "" }
+    { i = index($0, ">"); if (!i) next
+      tag = substr($0, 1, i - 1); t = substr($0, i + 1); gsub(/[\r\n]+/, " ", t)
+      if (tag ~ /^\/(w|a):p$/) { if (buf ~ /[^ \t]/) print buf; buf = ""; next }
+      if (tag ~ /^(w:tab|w:br|a:br)( |\/|$)/) buf = buf " "
+      buf = buf t }
+    END { if (buf ~ /[^ \t]/) print buf }' \
+  | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&amp;/\&/g'
+}
 
-n_xlsx=0
+n_office=0
 while IFS= read -r f; do
-  n_xlsx=$((n_xlsx+1))
+  n_office=$((n_office+1))
   if ! command -v unzip >/dev/null 2>&1; then
     UNREAD+=("${f}（unzip が無い）"); continue
   fi
+  # 見る部品: xlsx はセルの文字列・シート・コメント、docx は本文・コメント・脚注・ヘッダとフッタ、
+  # pptx はスライド・ノート・コメント
   members="$(cd "$DIR" && unzip -Z1 "$f" 2>/dev/null \
-    | grep -E '^xl/(sharedStrings|worksheets/sheet[0-9]+|comments[0-9]*|threadedComments/[^/]+)\.xml$')"
+    | grep -E '^(xl/(sharedStrings|worksheets/sheet[0-9]+|comments[0-9]*|threadedComments/[^/]+)|word/(document|comments|footnotes|endnotes|header[0-9]*|footer[0-9]*)|ppt/(slides/slide[0-9]+|notesSlides/notesSlide[0-9]+|comments/[^/]+))\.xml$')"
   if [[ -z "$members" ]]; then
-    UNREAD+=("${f}（xlsx として展開できない）"); continue
+    UNREAD+=("${f}（Office の文書として展開できない）"); continue
   fi
   while IFS= read -r m; do
     [[ -n "$m" ]] || continue
     out="$XT/${#XFILES[@]}.txt"
-    (cd "$DIR" && unzip -p "$f" "$m" 2>/dev/null) | xml_text > "$out"
+    case "$m" in
+      xl/*) (cd "$DIR" && unzip -p "$f" "$m" 2>/dev/null) | xml_text > "$out" ;;
+      *)    (cd "$DIR" && unzip -p "$f" "$m" 2>/dev/null) | xml_para_text > "$out" ;;
+    esac
     XFILES+=("$out"); XNAMES+=("$f[$m]")
   done <<< "$members"
-# Excel が開いている間に作る ~$ で始まる一時ファイルは xlsx ではないので除く
-done < <(cd "$DIR" && find . -type f -iname '*.xlsx' ! -name '~$*' 2>/dev/null | sort)
+# Office が開いている間に作る ~$ で始まる一時ファイルは文書ではないので除く
+done < <(cd "$DIR" && find . -type f \( -iname '*.xlsx' -o -iname '*.xlsm' -o -iname '*.docx' -o -iname '*.docm' \
+           -o -iname '*.pptx' -o -iname '*.pptm' \) ! -name '~$*' 2>/dev/null | sort)
+# 中身を読めない形式。黙って飛ばさず、見ていないことを出す
+while IFS= read -r f; do
+  UNREAD+=("${f}（PDF・旧形式の Office は中身を読めない。テキストに書き出して検査するか、開いて目で確かめる）")
+done < <(cd "$DIR" && find . -type f \( -iname '*.pdf' -o -iname '*.doc' -o -iname '*.xls' -o -iname '*.ppt' \) ! -name '~$*' 2>/dev/null | sort)
 
 # --- 検査 -----------------------------------------------------------------
 #   check <種類> <パターン> [注記] [オプション] [除外パターン]
@@ -111,7 +135,9 @@ check() {
   local gopt=(-E) full="$pattern" raw i
   [[ "$opts" == *i* ]] && gopt+=(-i)
   if [[ "$opts" == *d* ]]; then
-    full="(^|[^0-9A-Za-z_.+-])(${pattern})([^0-9A-Za-z_-]|$)"
+    # 前の境界の「.」は、数字の続き（1.0312345678 のような小数や版）を除くために外しているが、
+    # 英字の後の「.」（TEL.03-…、No.1234…）は区切りとして許す
+    full="(^|[^0-9A-Za-z_.+-]|[A-Za-z]\\.)(${pattern})([^0-9A-Za-z_-]|$)"
   fi
   # grep にパターンを渡すときは必ず -e を使う。'-----BEGIN' のように - で始まる
   # パターンをそのまま渡すと、grep がオプションとして解釈して誤動作する。
@@ -165,7 +191,7 @@ check() {
 }
 
 echo "検査対象: $DIR"
-[[ $n_xlsx -gt 0 ]] && echo "xlsx: ${n_xlsx} 件（展開してセルの文字列・シート・コメントも見る）"
+[[ $n_office -gt 0 ]] && echo "Office の文書（xlsx・docx・pptx）: ${n_office} 件（展開して文字列とコメントも見る）"
 
 # 全角の数字とハイフン。[０-９] のような範囲指定にしない。ロケールによっては
 # 「Invalid collation character」で grep 全体が失敗し、検査が黙って素通りする。
@@ -241,7 +267,7 @@ check "select * の使用" 'select[[:space:]]+\*[[:space:]]+from' \
 # --------------------------------------------------------------------------
 echo
 if [[ ${#UNREAD[@]} -gt 0 ]]; then
-  echo "[未検査] 次のファイルは中身を見ていない。手で開いて確認する（unzip を入れれば検査できる）"
+  echo "[未検査] 次のファイルは中身を見ていない。手で開いて確認する"
   for u in "${UNREAD[@]}"; do printf '  %s\n' "$u"; done
   echo
 fi

@@ -777,6 +777,7 @@ SELECT * FROM users;
 住所 渋谷区神南1-2-3
 住所 横浜市西区みなとみらい2丁目3番1号
 〒150-0000 へ送付
+TEL.03-0000-0000
 EOF
 # xlsx の台帳。grep はバイナリとして読み飛ばすので、展開して見ているかを確かめる。
 # 空白を含むパスに置く。セルの文字列・インライン文字列・コメントの 3 か所に 1 つずつ置く。
@@ -794,6 +795,21 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("xl/comments1.xml",
                '<comments><commentList><comment ref="B2"><text><t>〒150-0000</t></text></comment></commentList></comments>')
 PYEOF
+# docx と pptx の報告書も同じく展開して見る。docx は電話番号の途中で書式が変わり、文字が 2 つの断片に
+# 分かれた形にする（断片ごとに見ると当たらない）。PDF は中身を読めないので、未検査として名前を出す。
+python3 - "$REP/報告書.docx" "$REP/説明.pptx" <<'PYEOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("[Content_Types].xml", "<Types/>")
+    z.writestr("word/document.xml",
+               '<w:document><w:body><w:p><w:r><w:t>連絡先 090-</w:t></w:r>'
+               '<w:r><w:rPr><w:b/></w:rPr><w:t>0000-0000</w:t></w:r></w:p></w:body></w:document>')
+with zipfile.ZipFile(sys.argv[2], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("[Content_Types].xml", "<Types/>")
+    z.writestr("ppt/slides/slide1.xml",
+               '<p:sld><a:p><a:r><a:t>鍵 sk-proj-FIXTUREDUMMY0123456789abcdefXYZ</a:t></a:r></a:p></p:sld>')
+PYEOF
+printf '%%PDF-1.4 fixture\n' > "$REP/報告書.pdf"
 # LC_ALL=C で走らせる。伏字の前に残す部分はバイト単位で切るため、日本語の途中で切れる。
 # 不完全なバイト列を落とす処理が効いているかは、この条件でないと確かめられない。
 S="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"
@@ -854,11 +870,14 @@ select * の使用|./NOTES.MD:1|大文字の SELECT * FROM
 住所らしき記述（都道府県なし）|./NOTES.MD:9|都道府県の無い住所（区＋番地）
 住所らしき記述（都道府県なし）|./NOTES.MD:10|都道府県の無い住所（市＋丁目。ひらがなを挟む）
 郵便番号|./NOTES.MD:11|単独の郵便番号
+電話番号らしき並び|./NOTES.MD:12|電話番号（TEL. の直後。前の境界に英字の後の「.」を許す）
 接続文字列|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:1|xlsx の台帳（セルの文字列）
 クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（同じセルの 2 つ目の値）
 電話番号らしき並び|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（実体参照 &amp; の後ろ）
 LLM の鍵（OpenAI・Anthropic）|./台帳 dir/台帳 v1.xlsx[xl/worksheets/sheet1.xml]:1|xlsx の台帳（インライン文字列）
 郵便番号|./台帳 dir/台帳 v1.xlsx[xl/comments1.xml]:1|xlsx の台帳（セルのコメント）
+電話番号らしき並び|./報告書.docx[word/document.xml]:1|docx の本文（書式で 2 つに分かれた番号を段落でつなぐ）
+LLM の鍵（OpenAI・Anthropic）|./説明.pptx[ppt/slides/slide1.xml]:1|pptx のスライド
 EOF
 
 # 検出した値そのものを出さない。位置と種類と、先頭の数バイトだけを出す。
@@ -867,6 +886,7 @@ for leak in "DUMMY" "456789abcdef" "yamada" "0000-0000" "神南" "みなとみ�
   absent "scan_secrets: 検出した値を出さない（${leak}）" "$leak" "$S"
 done
 contains "scan_secrets: 伏字にした形で出す" "…<伏字>" "$S"
+contains "scan_secrets: PDF を黙って飛ばさず未検査と知らせる" "./報告書.pdf（PDF・旧形式の Office は中身を読めない" "$S"
 contains "scan_secrets: 説明用のドメインならメールのドメインを見せる" "ta…<伏字>@example.invalid" "$S"
 
 # 誤検出しない。日時・UUID・バージョン番号・英単語の連なり・説明文の変数名・鍵の接頭辞だけ。
@@ -877,7 +897,7 @@ cat > "$CLEAN/clean.md" <<'EOF'
 # 誤検出の題材（どれも検出されてはいけない）
 日時 2026-09-25 10:00:00 / 2026-09-25T10:00:00+09:00 / 202609251030 / 1727246400
 UUID 550e8400-e29b-41d4-a716-446655440000 / 550e8400-e29b-41d4-a716-123456789012
-版 v1.2.3 / 10.0.19045.3803 / 2.17.3 / 1.0.123456789012
+版 v1.2.3 / 10.0.19045.3803 / 2.17.3 / 1.0.123456789012 / 小数 1.0312345678
 task-management-system-overview-for-the-assessment-document
 API_KEY=process.env.API_KEY / password: string / token = getToken()
 区分 1-2 を参照。3 区分の 1-2-3 節。市区町村まではマスクする
