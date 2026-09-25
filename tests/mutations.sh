@@ -161,8 +161,32 @@ mutate "audit_grep: React2Shell の修正版を取り違える" "scripts/audit_g
   's = s.replace("15.1) fix=15.1.9", "15.1) fix=15.1.0")'
 
 # ---- recon ----
-mutate "recon: ポート付き URL の自サイト判定を戻す（旧不具合）" "scripts/recon.sh" "自サイトを第三者に数えない" \
-  's = s.replace("${DOMAIN//./\\\\.}(:[0-9]+)?$\"", "${DOMAIN//./\\\\.}$\"")'
+mutate "recon: ホスト名にポートを残す（旧不具合）" "scripts/recon.sh" "自サイトを第三者に数えない" \
+  's = s.replace("s#[/:?\\#].*$##\x27 | tr", "s#[/?\\#].*$##\x27 | tr", 1)'
+mutate "recon: DNS の無応答を値として読む（旧不具合）" "scripts/recon.sh" "タイムアウトの文言を値として出さない" \
+  's = s.replace("dq() {\n  local type", "dq() { dig_ +short \"$1\" \"$2\"; return 0; }\ndq_old() {\n  local type", 1)'
+mutate "recon: 親への遡りで無応答を「無い」とする" "scripts/recon.sh" "CAA は取得できないと言う" \
+  's = s.replace("out=\"$(dq \"$type\" \"$prefix$d\")\" || return 2", "out=\"$(dq \"$type\" \"$prefix$d\")\" || return 1")'
+mutate "recon: 到達できなくても判定を出す（旧不具合）" "scripts/recon.sh" "ヘッダを「無」と判定しない" \
+  's = s.replace("if [[ $REACH -eq 1 ]]; then\n  hr \"1b.", "REACH=1; : > \"$WORK/hdr_final.txt\"\nif [[ $REACH -eq 1 ]]; then\n  hr \"1b.", 1)'
+mutate "recon: Set-Cookie の値を出す（旧不具合）" "scripts/recon.sh" "Set-Cookie の値を出さない" \
+  's = s.replace("print name \": \" cname \"=<伏字>\" rest", "print name \": \" val")'
+mutate "recon: リダイレクトを追わない（旧不具合）" "scripts/recon.sh" "ヘッダを最終的な応答で判定する" \
+  's = s.replace("meta=\"$(curl -sS -L --max-redirs", "meta=\"$(curl -sS --max-redirs")'
+mutate "recon: 相対パスの JS を拾わない（旧不具合）" "scripts/recon.sh" "一重引用符・相対パスの JS を拾う" \
+  's = s.replace("printf \x27%s/%s\\n\x27 \"${b%/*}\" \"${ref#./}\" ;;", ";;")'
+mutate "recon: 一重引用符の src を拾わない（旧不具合）" "scripts/recon.sh" "一重引用符・相対パスの JS を拾う" \
+  's = s.replace("(src|href)=[\\\"\x27][^\\\"\x27<> ]+\\.m?js", "(src|href)=[\\\"][^\\\"\x27<> ]+\\.m?js")'
+mutate "recon: 計測タグを第三者スクリプトの中身でも数える（旧不具合）" "scripts/recon.sh" "第三者スクリプトの中身で LogRocket" \
+  's = s.replace("url_hosts own_only.js >> tag_hosts.txt", "url_hosts all.js >> tag_hosts.txt")'
+mutate "recon: LLM の鍵を見ない（旧不具合）" "scripts/recon.sh" "OpenAI の鍵を検出する" \
+  's = s.replace("\x27OpenAI|sk-(proj|svcacct|admin)-", "\x27OpenAI|ZZZNOMATCH-")'
+mutate "recon: SPF をホスト名で引く（旧不具合）" "scripts/recon.sh" "組織のドメインの SPF を見つける" \
+  's = s.replace("if [[ -n \"$DMARC_AT\" ]]; then ORG=\"${DMARC_AT#_dmarc.}\"", "if [[ -n \"$DMARC_AT\" ]]; then ORG=\"$DOMAIN\"")'
+if command -v node >/dev/null 2>&1; then
+  mutate "recon: 既知タグの一覧を browser_probe とずらす" "scripts/recon.sh" "既知タグの一覧が一致する" \
+    's = s.replace("  \x27Mouseflow|(^|\\.)mouseflow\\.com$\x27\n", "")'
+fi
 
 mutate "recon: DMARC の連絡先を伏せない" "scripts/recon.sh" "DMARC の連絡先アドレスを出力に混ぜない" \
   's = s.replace("sed -E \x27s/mailto:[^,;[:space:]]+/mailto:<伏字>/g\x27", "cat")'
@@ -174,16 +198,38 @@ mutate "recon: DS を頂点ではなくホスト名で引く（旧不具合）" 
 mutate "recon: 親ドメインへ遡らない（旧不具合）" "scripts/recon.sh" "サブドメインから親の DMARC を見つける" \
   's = s.replace("    d=\"${d#*.}\"\n", "    break\n")'
 
+# ---- browser_probe（部品の検査。node があれば Playwright が無くても回る）----
+if command -v node >/dev/null 2>&1; then
+  mutate "browser_probe: 送信先を末尾で照合しない（旧不具合）" "scripts/browser_probe.mjs" "既知タグのラベル付け" \
+    's = s.replace("[\"Hotjar\", \"(^|\\\\.)hotjar\\\\.(com|io)$\"]", "[\"Hotjar\", \"hotjar\\\\.(com|io)\"]")'
+  mutate "browser_probe: script-src-elem を script-src と取り違える（旧不具合）" "scripts/browser_probe.mjs" "CSP を実際に効く指令で判定する" \
+    's = s.replace("const name = tokens[0].toLowerCase();", "const name = tokens[0].toLowerCase().replace(/^script-src-(elem|attr)$/, \"script-src\");")'
+  mutate "browser_probe: 評価対象に npm i -D させる（旧不具合）" "scripts/browser_probe.mjs" "評価対象の package.json を書き換える案内をしない" \
+    's = s.replace("npm i --prefix \"$HOME/.cache/wsa-playwright\" playwright@${PW_VERSION}", "npm i -D playwright")'
+fi
+
 # ---- browser_probe（Playwright がある環境でのみ）----
 if node -e 'import("playwright")' >/dev/null 2>&1; then
+  mutate "browser_probe: <meta> の CSP を読まない（旧不具合）" "scripts/browser_probe.mjs" "<meta> の CSP を読む" \
+    's = s.replace("...metaCsp.filter((m) => m.equiv === \"content-security-policy\")", "...[].filter((m) => m.equiv === \"content-security-policy\")")'
+  mutate "browser_probe: default-src へ遡らない（旧不具合）" "scripts/browser_probe.mjs" "script-src が無ければ default-src で判定" \
+    's = s.replace("\"script-src\", \"default-src\"]", "\"script-src\"]")'
+  mutate "browser_probe: nonce と並ぶ unsafe-inline を咎める（誤検出）" "scripts/browser_probe.mjs" "nonce と並ぶ unsafe-inline を咎めない" \
+    's = s.replace("const cancels = low.some(", "const cancels = false && low.some(")'
+  mutate "browser_probe: WebSocket を拾わない（旧不具合）" "scripts/browser_probe.mjs" "第三者への接続を拾う" \
+    's = s.replace("page.on(\"websocket\", (ws) => {", "page.on(\"websocket-disabled\", (ws) => {")'
+  mutate "browser_probe: WebSocket のクエリを伏せない" "scripts/browser_probe.mjs" "クエリのトークンを出さない" \
+    's = s.replace("${x.search ? \"?…（クエリは伏字）\" : \"\"}", "${x.search}")'
+  mutate "browser_probe: NODE_PATH の Playwright を探さない" "scripts/browser_probe.mjs" "NODE_PATH で渡した Playwright で動く" \
+    's = s.replace("  try { return createRequire(import.meta.url)(\"playwright\"); } catch { /* 次へ */ }\n", "")'
   mutate "browser_probe: 保存領域の値を出力してしまう" "scripts/browser_probe.mjs" "Cookie と保存領域の値を出力しない" \
     's = s.replace("const pick = (s) => { try { return Object.keys(s); } catch { return []; } };", "const pick = (s) => { try { return Object.keys(s).map(k => k + \"=\" + s.getItem(k)); } catch { return []; } };")'
   mutate "browser_probe: HttpOnly の判定を反転する（誤検出）" "scripts/browser_probe.mjs" "HttpOnly のある Cookie を咎めない" \
     's = s.replace("c.httpOnly ? \"HttpOnly\" : \"**HttpOnly なし**\"", "!c.httpOnly ? \"HttpOnly\" : \"**HttpOnly なし**\"")'
   mutate "browser_probe: 既知タグのラベルを取り違える" "scripts/browser_probe.mjs" "既知タグのラベル付け" \
-    's = s.replace("[/clarity\\.ms/, \"Microsoft Clarity\"],", "[/clarity\\.ms/, \"Hotjar\"],")'
+    's = s.replace("[\"Microsoft Clarity\", \"(^|\\\\.)clarity", "[\"Hotjar\", \"(^|\\\\.)clarity")'
 else
-  printf '  \033[33m-\033[0m browser_probe の 3 件（playwright が無いため省略）\n'; SKIP=$((SKIP+3))
+  printf '  \033[33m-\033[0m browser_probe の 9 件（playwright が無いため省略）\n'; SKIP=$((SKIP+9))
 fi
 
 printf '\n\033[1m結果\033[0m  生きている検査 %d / 生きていない %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIP"
