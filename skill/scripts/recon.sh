@@ -52,7 +52,8 @@ dq() {
 up_find() {
   local type="$1" prefix="$2" pat="$3" d="$DOMAIN" v
   while [[ "$d" == *.* ]]; do
-    v="$(dq "$type" "$prefix$d" | tr -d '"' | grep -iE "$pat" | tr '\n' ' ' || true)"
+    # 大文字小文字を区別して照合する。DMARC の v=DMARC1 と MTA-STS の v=STSv1 は値が大小を区別する（RFC 9989 4.7）
+    v="$(dq "$type" "$prefix$d" | tr -d '"' | grep -E "$pat" | tr '\n' ' ' || true)"
     if [[ -n "$v" ]]; then printf '%s\t%s\n' "$prefix$d" "$v"; return 0; fi
     d="${d#*.}"
   done
@@ -72,7 +73,8 @@ zone_apex() {
 }
 
 # DMARC のタグの値を取る。p= を部分一致で見ると sp=none / np=none にも当たる（実際に誤っていた）。
-# タグ名も値も大文字小文字を区別せず、= の前後の空白も許す（RFC 7489）
+# = の前後の空白を許し（RFC 9989 4.8）、タグ名と p / sp / np の値は大文字小文字を区別せずに読む。
+# v の値（DMARC1）だけは大小を区別するので、レコードを探す側（up_find）で区別して照合する
 dmarc_tag() { printf '%s' "$2" | tr ';' '\n' | tr -d ' \t' | tr 'A-Z' 'a-z' | grep -E "^$1=" | head -1 | cut -d= -f2-; }
 
 # --------------------------------------------------------------------------
@@ -91,7 +93,7 @@ for h in strict-transport-security content-security-policy x-frame-options \
   line="$(printf '%s\n' "$HEADERS" | grep -i "^$h:" || true)"
   if [[ -n "$line" ]]; then printf '  [有] %s\n' "$line"; else printf '  [無] %s\n' "$h"; fi
 done
-if printf '%s\n' "$HEADERS" | grep -qi '^x-powered-by:'; then
+if printf '%s\n' "$HEADERS" | grep -i '^x-powered-by:' >/dev/null; then
   printf '  [要確認] %s （実装情報が露出）\n' "$(printf '%s\n' "$HEADERS" | grep -i '^x-powered-by:')"
 else
   printf '  [良] x-powered-by は出ていない\n'
@@ -107,18 +109,18 @@ for p in /.git/HEAD /.env /.env.local /.env.production /.DS_Store /.well-known/s
     code="---"; note="（接続できない）"
   elif [[ "$code" == "200" ]]; then
     head_="$(curl -s --max-time 10 "$URL$p" 2>/dev/null | head -c 1024 | tr -d '\0')"
-    is_html=""; printf '%s' "$head_" | grep -qiE '<(!doctype|html|head|body)' && is_html=1
+    is_html=""; printf '%s' "$head_" | grep -iE '<(!doctype|html|head|body)' >/dev/null && is_html=1
     case "$p" in
       /.git/HEAD)
-        if printf '%s' "$head_" | grep -qE '^(ref:|[0-9a-f]{40})'; then note="← 中身が返っている。最優先"
+        if printf '%s' "$head_" | grep -E '^(ref:|[0-9a-f]{40})' >/dev/null; then note="← 中身が返っている。最優先"
         elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
         else note="（HTML ではない何かが返っている。要確認）"; fi ;;
       /.env*)
-        if printf '%s\n' "$head_" | grep -vE '^[[:space:]]*#' | grep -qE '^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*='; then note="← 中身が返っている。最優先"
+        if printf '%s\n' "$head_" | grep -vE '^[[:space:]]*#' | grep -E '^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' >/dev/null; then note="← 中身が返っている。最優先"
         elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
         else note="（HTML ではない何かが返っている。要確認）"; fi ;;
       /.well-known/security.txt)
-        if printf '%s' "$head_" | grep -qi '^contact:'; then note="（連絡窓口あり）"
+        if printf '%s' "$head_" | grep -i '^contact:' >/dev/null; then note="（連絡窓口あり）"
         else note="（連絡窓口の書式ではない）"; fi ;;
       /.DS_Store)
         [[ -z "$is_html" ]] && note="← HTML ではない。ファイル一覧が露出している可能性" ;;
@@ -159,8 +161,8 @@ elif have dig; then
   SPF="$(dq TXT "$DOMAIN" | tr -d '"' | grep -i '^v=spf1' || true)"
   DMARC=""; DMARC_AT=""
   if r="$(up_find TXT '_dmarc.' '^v=DMARC1')"; then DMARC="${r#*$'\t'}"; DMARC="${DMARC% }"; DMARC_AT="${r%%$'\t'*}"; fi
-  # DMARC のレコードが 2 本以上あると、受信側は DMARC を無いものとして扱う（RFC 7489 6.6.3）
-  n_dmarc="$(printf '%s' "$DMARC" | grep -oiE 'v=DMARC1' | wc -l | tr -d ' ')"
+  # 同じ名前に DMARC のレコードが 2 本以上あると、その名前のレコードはすべて捨てられる（RFC 9989 4.10）
+  n_dmarc="$(printf '%s' "$DMARC" | grep -oE 'v=DMARC1' | wc -l | tr -d ' ')"
   [[ -n "$SPF"   ]] && printf '  [有] SPF   : %s\n' "$SPF"     || printf '  [無] SPF（%s に SPF レコードが無い）\n' "$DOMAIN"
   if [[ -n "$DMARC" ]]; then
     # rua / ruf に入っている連絡先は、DNS 上は公開情報だが報告書には要らない。
@@ -169,7 +171,7 @@ elif have dig; then
     [[ "$DMARC_AT" != "_dmarc.$DOMAIN" ]] && printf '        （%s で発見。親ドメインの設定が適用される）\n' "$DMARC_AT"
     dp="$(dmarc_tag p "$DMARC")"; dsp="$(dmarc_tag sp "$DMARC")"; dnp="$(dmarc_tag np "$DMARC")"
     if [[ "$n_dmarc" -gt 1 ]]; then
-      printf '        → ★ DMARC のレコードが %s 本ある。複数あると受信側は DMARC を無いものとして扱う\n' "$n_dmarc"
+      printf '        → ★ DMARC のレコードが %s 本ある。同じ名前に複数あると受信側はすべて捨てる（上位のドメインにあればそちらが使われる）\n' "$n_dmarc"
     fi
     case "$dp" in
       none)              printf '        → p=none。監視のみで隔離・拒否をしない（到達性の要件は満たすが、なりすましは止めない）\n' ;;
@@ -188,7 +190,7 @@ elif have dig; then
       printf '        → sp=none。サブドメインは監視のみ\n'
     fi
     [[ "$dnp" == "none" ]] && printf '        → np=none。存在しないサブドメインは監視のみ\n'
-    [[ "$(dmarc_tag t "$DMARC")" == "y" ]] && printf '        → t=y。テストモード（ポリシーを完全には適用しない）\n'
+    [[ "$(dmarc_tag t "$DMARC")" == "y" ]] && printf '        → t=y。テストモード（受信側は指定より 1 段緩いポリシーで扱う）\n'
     [[ -z "$(dmarc_tag rua "$DMARC")" ]] && printf '        → rua が無い。集計レポートを受け取っていない\n'
   else
     printf '  [無] DMARC\n'
