@@ -196,7 +196,7 @@ else
 fi
 
 # --- その他、資料の要否が分かれるもの ---
-if [[ -n "$(grep -rlE 'anthropic|openai|@ai-sdk|langchain|llamaindex|generativeai|bedrock-runtime|modelcontextprotocol' \
+if [[ -n "$(grep -rlE "${EXA[@]}" 'anthropic|openai|@ai-sdk|langchain|llamaindex|generativeai|bedrock-runtime|modelcontextprotocol' \
      --include='package.json' --include='requirements.txt' --include='pyproject.toml' . 2>/dev/null | head -1)" ]]; then
   say "LLM の利用" "有 → アプリ自身が LLM を呼んでいる"
   need="$need references/12-ai-features.md"
@@ -235,8 +235,9 @@ else
   say "CI の定義" "無"
 fi
 
-if [[ -n "$(grep -rlE '"(stripe|@stripe/stripe-js|@stripe/react-stripe-js|payjp|@payjp/[a-z-]+|square|@square/web-sdk|komoju)"' \
-     --include='package.json' . 2>/dev/null | grep -v node_modules | head -1)" ]]; then
+# node_modules の下まで辿ると大きなリポジトリで遅く、依存の package.json にも当たるので除く
+if [[ -n "$(grep -rlE "${EXA[@]}" '"(stripe|@stripe/stripe-js|@stripe/react-stripe-js|payjp|@payjp/[a-z-]+|square|@square/web-sdk|komoju)"' \
+     --include='package.json' . 2>/dev/null | head -1)" ]]; then
   say "カード決済" "有 → 06 の「カード決済を扱う場合」"
   need="$need references/06-frameworks.md"
 else
@@ -362,13 +363,13 @@ for name in next react-server-dom-webpack react-server-dom-turbopack react-serve
         # App Router の有無。モノレポ（apps/web/app など）も見る
         approuter="$(find . -maxdepth 4 -type d \( -path '*/app' -o -path '*/src/app' \) -not -path '*/node_modules/*' -not -path '*/.next/*' 2>/dev/null | head -1)"
         if [[ -n "$fix" ]] && verlt "$pure" "$fix" && [[ -n "$approuter" ]]; then
-          note="$note ★ React2Shell（CVE-2025-66478）の修正前。版上げと秘密情報の入れ替えの二段（02 の H）"
+          note="$note ★ React2Shell（CVE-2025-55182。Next.js の案内では取り下げ済みの 66478）の修正前。版上げと秘密情報の入れ替えの二段（02 の H）"
         fi ;;
       react-server-dom-*)
         case "$pure" in
           19.0.0|19.1.0|19.1.1|19.2.0) note=" ★ React2Shell（CVE-2025-55182）の対象。版上げと秘密情報の入れ替え" ;;
           *) if inrange "$pure" 19.0.0 19.0.4 || inrange "$pure" 19.1.0 19.1.5 || inrange "$pure" 19.2.0 19.2.4; then
-               note=" ★ 後続の DoS・ソース露出（CVE-2025-55183 / 55184 / 67779、CVE-2026-23864）の修正前"; fi ;;
+               note=" ★ 後続の DoS・ソース露出の勧告の修正前（CVE-2025-55183 / 55184 / 67779、CVE-2026-23864。すべて直るのは 19.0.4 / 19.1.5 / 19.2.4）"; fi ;;
         esac ;;
       @sveltejs/adapter-vercel)
         verlt "$pure" 6.3.2 && note=" ★ 認証済みの応答がキャッシュされる CVE-2026-27118 の修正前（07 の 7 節）" ;;
@@ -705,7 +706,8 @@ echo "  ※ proxy / middleware / Route Handler / Server Action で認可に使�
 
 echo "  --- Server Actions の送信元の許可（'null' やワイルドカードがあれば CSRF の防御が緩む）---"
 {
-  grep -HnE -A4 'allowedOrigins' next.config.* 2>/dev/null | grep -E "\*|'null'|\"null\"" | head -10
+  grep -HnE -A4 'allowedOrigins' next.config.* 2>/dev/null | grep -vE '^[^:]+[-:][0-9]+[-:][[:space:]]*(//|\*|/\*)' \
+    | grep -E "\*|'null'|\"null\"" | head -10
 } | show
 
 echo "  --- Host ヘッダから URL を組み立てていないか（再設定リンクの乗っ取り・SSRF）---"
@@ -897,7 +899,10 @@ fi
 if [[ -n "$baas" ]]; then
   hr "19. マネージドの基盤（BaaS）の設定（02 の E 節・03 の 1 節）"
 
+  OLDIFS="$IFS"
   if [[ "$baas" == *Supabase* ]]; then
+    # パスに空白があっても分割されないよう、この塊の間だけ改行でだけ区切る（グロブの展開も止める）
+    IFS=$'\n'; set -f
     sqlfiles="$(find . \( -path '*/supabase/migrations/*.sql' -o -path '*/supabase/schemas/*.sql' -o -name 'schema.sql' \) \
                  -not -path '*/node_modules/*' 2>/dev/null)"
     # 空のまま grep に渡すと標準入力を待つ。無ければ空のファイルを渡す
@@ -978,6 +983,7 @@ if [[ -n "$baas" ]]; then
     echo "  ※ 実機の RLS・GRANT・Security Advisor の結果は 03 の 1 節。コードに無いテーブルは実機でしか分からない"
   fi
 
+  IFS="$OLDIFS"; set +f
   if [[ "$baas" == *Firebase* ]]; then
     echo "  --- Firebase: セキュリティルール ---"
     {
@@ -1032,7 +1038,7 @@ if [[ -d .github/workflows ]]; then
   echo "  --- 他人のコードが秘密情報と同居しうるトリガー ---"
   {
     grep -rnE 'pull_request_target|workflow_run|issue_comment' "$W" 2>/dev/null
-    grep -rnE 'allow-unsafe-pr-checkout|head\.(sha|ref)|refs/pull/|gh pr checkout' "$W" 2>/dev/null
+    grep -rnE 'allow-unsafe-pr-checkout|cache-mode:|head\.(sha|ref)|refs/pull/|gh pr checkout' "$W" 2>/dev/null
   } | show
   echo "  --- 外部から来る文字列の \${{ }} 展開（run: | の複数行や github-script の中ならシェル・JS への注入）---"
   {
@@ -1074,7 +1080,7 @@ if [[ -f package.json ]]; then
   fi
   echo "  --- 防御の設定（無ければ「無い」と出る）---"
   {
-    grep -nE 'ignore-scripts|min-release-age|allow-(git|remote|scripts)|strict-allow-scripts' .npmrc 2>/dev/null | sed 's/^/  .npmrc:/'
+    grep -nE 'ignore-scripts|min-release-age|allow-(git|remote|scripts)|strict-allow-scripts|dangerously-allow-all-scripts' .npmrc 2>/dev/null | sed 's/^/  .npmrc:/'
     grep -nE '"(allowScripts|overrides|resolutions|packageManager)"' package.json 2>/dev/null | sed 's/^/  package.json:/'
     grep -nE 'minimumReleaseAge|allowBuilds|onlyBuiltDependencies|dangerouslyAllowAllBuilds|blockExoticSubdeps|npmMinimalAgeGate|enableScripts' \
       pnpm-workspace.yaml .yarnrc.yml bunfig.toml 2>/dev/null | sed 's/^/  /'
@@ -1085,7 +1091,7 @@ if [[ -f package.json ]]; then
   # 依存の欄だけを見る（repository / homepage / $schema の URL は依存ではない）
   gitdeps="$(awk '/"(dev|optional|peer)?[Dd]ependencies"[[:space:]]*:/{f=1;next} f&&/}/{f=0} f&&/:[[:space:]]*"(git\+|git:|github:|https?:\/\/|file:)/{print}' package.json 2>/dev/null | mask)"
   [[ -n "$gitdeps" ]] && { echo "  ★ package.json に git や URL から取る依存がある:"; printf '%s\n' "$gitdeps" | sed 's/^[[:space:]]*/    /'; }
-  echo "  ※ 手元の設定より、本番のビルドで動く npm / pnpm の版が効く（Vercel の既定は npm 10 の npm install）"
+  echo "  ※ 手元の設定より、本番のビルドで動く npm / pnpm の版が効く（Vercel の既定は npm install。npm は Node 24 なら 11、Node 20 / 22 なら 10 で、どちらも依存のスクリプトを止めない）"
 fi
 
 if [[ -n "$agent_files" ]]; then
@@ -1155,7 +1161,7 @@ if [[ -n "$rt" ]]; then
     ws_auth="$(grep -rnE "${EXA[@]}" 'io\.use\(|allowRequest|verifyClient|handleUpgrade|headers\.origin|headers\[.origin.\]|handshake\.(auth|headers)|onBeforeConnect' \
       --include='*.ts' --include='*.js' --include='*.mjs' . 2>/dev/null | head -10)"
     printf '%s\n' "$ws_auth" | grep -v '^$' | show
-    if [[ -n "$ws_def" ]] && ! printf '%s' "$ws_auth" | grep -qiE 'origin|allowRequest|verifyClient'; then
+    if [[ -n "$ws_def" ]] && ! printf '%s' "$ws_auth" | grep -iE 'origin|allowRequest|verifyClient' >/dev/null; then
       echo "  ★ サーバーの定義はあるが、Origin を検証している形跡が無い（Cookie で認証しているなら CSWSH）"
     fi
     echo "  --- WebSocket: ルームへの参加と切断 ---"
