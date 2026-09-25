@@ -245,11 +245,11 @@ AI で書かれたコードを読むだけなら 12 は開かない。
 
 | スクリプト | 用途 | 依存 |
 |---|---|---|
-| `scripts/recon.sh <url> [パス...]` | 外形調査を一括取得（HTTP ヘッダ・外から見えてはいけないファイルのステータス・証明書・DNS（親ドメインへ遡る）・送信ドメイン認証と MTA-STS・公開バンドル内の鍵らしき文字列・任意パスのステータス）。実機確認の入り口 | `curl`、`dig`（無くても DNS 以外は動く）、`openssl`（任意） |
+| `scripts/recon.sh <url> [パス...]` | 外形調査を一括取得（HTTP ヘッダ（転送を追った最終の応答。Set-Cookie は名前と属性だけ）・外から見えてはいけないファイルのステータス・証明書・DNS（親ドメインへ遡る）・送信ドメイン認証と MTA-STS（組織のドメインで引く）・公開バンドル内の鍵らしき文字列（**LLM の鍵**を含む）・任意パスのステータス）。到達できない・DNS が応答しないときは「取得できない」と出し、判定しない。実機確認の入り口 | `curl`、`dig`（無くても DNS 以外は動く）、`openssl`（任意） |
 | `scripts/audit_grep.sh <repo>` | コード監査の機械的な下拵え（規模、**枠組みの版と既知の重大な勧告**、ハンドラ×認可ガード、ミドルウェアの対象範囲、危険な関数、秘密情報、**LLM の鍵の露出**、fail-open、開発用の抜け道、参照テーブル名、トークン検証、**サーバー側のセッション検証**、Webhook、例外の握りつぶし、乱数と暗号、証明書の検証、XML、LLM の利用。**構成に応じてインフラの定義、モバイル、BaaS の設定（RLS・ルール）、CI の定義、インストール時の防御、AI エージェントの設定、リアルタイム通信、画面操作の記録（セッションリプレイ）、SMS の送信経路も**） | `grep`、`git`（任意） |
-| `scripts/make_register.py <out.xlsx> [--frameworks none\|owasp\|full] [--owasp 2025\|2021] [--api]` | 指摘台帳の xlsx 雛形を生成。集計は数式なので行を足せば自動で追従する。`--frameworks` で枠組みシートの構成、`--owasp` で版、`--api` で API Security Top 10 のシート追加（詳細は `references/04-findings-register.md`） | `openpyxl` |
-| `scripts/browser_probe.mjs <url> [パス...]` | ブラウザで実際に読み込み、curl では見えないものを取る（同意前の第三者送信・Cookie 属性・保存領域のキー名・CSP の実効性）。`references/09-browser-verification.md` の一部を自動化したもの | Node.js 18 以降、`playwright` |
-| `scripts/scan_secrets.sh <dir>` | 成果物に秘密情報・個人情報が混入していないかの最終検査 | `grep` |
+| `scripts/make_register.py <out.xlsx> [--frameworks none\|owasp\|full] [--owasp 2025\|2021] [--api] [--card] [--skill-version <版>] [--force]` | 指摘台帳の xlsx 雛形を生成。判定・優先度・状態を別の列で持ち、集計は数式なので行を足せば自動で追従する。`--frameworks` で枠組みシートの構成、`--owasp` で版、`--api` で OWASP のシートを API Security Top 10 に置き換え、`--card` でカード決済のシートを足す。既存のファイルは `--force` が無ければ上書きしない（詳細は `references/04-findings-register.md`） | `openpyxl` |
+| `scripts/browser_probe.mjs <url> [パス...]` | ブラウザで実際に読み込み、curl では見えないものを取る（同意前の第三者送信・**WebSocket の接続先**・Cookie 属性・保存領域のキー名・CSP の実効性（`<meta>` の CSP と `script-src-elem` / `default-src` を含む））。`references/09-browser-verification.md` の一部を自動化したもの | Node.js 20 以降、`playwright` 1.63（**評価対象のリポジトリには入れない**。スキルの外に入れて `NODE_PATH` で渡す） |
+| `scripts/scan_secrets.sh <dir>` | 成果物に秘密情報・個人情報が混入していないかの最終検査。拡張子で絞らずテキストをすべて見て、xlsx の台帳も展開して見る。検出した値は先頭だけ残して伏せる | `grep`、`unzip`（xlsx を見るとき） |
 
 いずれも読み取り専用で、対象システムの状態を変えない。検出した鍵の値は伏字で出力する。
 
@@ -257,9 +257,13 @@ AI で書かれたコードを読むだけなら 12 は開かない。
 ファイルが無いとコマンド全体が「no matches found」で止まり、`2>/dev/null` でも抑えられない。
 対話シェルが zsh なら `bash -c '…'` で包む。
 
-`openpyxl` が入っていない環境は珍しくない。`make_register.py` は、その場合に導入コマンドと、
-すでに `openpyxl` を持つ別の `python3` の場所を探して案内する。`browser_probe.mjs` も同様に、
-Playwright が無ければ導入手順を出して終わる。**入れられない環境なら手で確認する。**
+`openpyxl` が入っていない環境は珍しくない。`make_register.py` は、その場合に導入コマンド（PEP 668 の環境では
+仮想環境か uv）と、すでに `openpyxl` を持つ別の `python3` の場所を探して案内する。`browser_probe.mjs` も同様に、
+Playwright が無ければ導入手順を出して終わる。**どちらも評価対象のリポジトリの中には入れない。**
+**入れられない環境なら手で確認する。**
+
+**`audit_grep.sh` は大きなリポジトリでは時間がかかる。** 3 万ファイル規模（約 800 MB）で 10 分あまり。
+モノレポや、旧版と新版を並べて置いているリポジトリなら、評価の対象のアプリのディレクトリだけを渡す。
 自動化は速さのためであって、これが無いと確認できないわけではない。
 
 **スクリプトの出力は当たりを付けるためのもので、それ自体は指摘ではない。** 挙がった箇所は必ず自分で読んでから起票する。逆に、挙がらなかったからといって問題が無いとは限らない。

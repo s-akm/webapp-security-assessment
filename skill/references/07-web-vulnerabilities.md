@@ -403,6 +403,8 @@ grep -rnE 'where:\s*(body|input|req\.body|params|query|filters?)\b|findMany\(\{\
 **AI で作ったアプリでは、公式のサンプルをそのまま写して、認証の無い購読が本番に出ている**ことが多い。
 
 `scripts/audit_grep.sh` の 23 節が、使っている仕組みと認可の手がかりを出す。
+本番のページがどこへ接続しているかは `scripts/browser_probe.mjs` の 1b 節が出す（ログイン前に開く接続だけ。
+接続の URL のクエリは伏せる）。ログインした後の購読は、依頼者に確かめてもらう（`references/09-browser-verification.md` の 9 節）。
 
 ### 11-1. どの仕組みでも共通して見ること
 

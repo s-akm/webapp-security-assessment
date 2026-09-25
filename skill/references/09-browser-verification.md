@@ -52,6 +52,8 @@ SKILL.md の「守ること」のとおり、**評価者がログイン操作を
    PostHog のリバースプロキシ（`/ingest` のような自社のパス）、サーバー側のタグマネージャ（自社のサブドメインに置いた
    コンテナ）は、送信先のドメインで数えると見えなくなる。**中継の先で第三者へ送られる**ので、1 件の送信先として数え、
    転送先はコードと設定（`references/08-privacy-compliance.md` の 1-2、`scripts/audit_grep.sh` の 9b 節）で確かめる
+6. **WebSocket の接続先も数える。** ネットワークタブを **WS** で絞ると出る（HTTP のリクエストの一覧には混ざらない）。
+   同意前に第三者の WebSocket へつないでいれば、それも送信になる。`scripts/browser_probe.mjs` は 1b 節に出す
 
 **判定**
 
@@ -110,7 +112,10 @@ Object.keys(localStorage)
 
 **手順**: ページを開いてコンソールを見る。CSP 違反があれば `Refused to ...` が出る。**違反が 1 件も出ないこと自体は、効いている証拠にならない**（違反する記述が無いだけかもしれない）。
 
-**ヘッダの中身を読むほうが確実**。次の 4 つを見る。
+**ヘッダの中身を読むほうが確実**。次の 4 つを見る。**CSP はヘッダだけでなく `<meta http-equiv="Content-Security-Policy">` でも
+置ける**ので、ヘッダに無ければ HTML の `<head>` も見る（`frame-ancestors` と報告の指定は `<meta>` では効かない）。
+**`<script>` 要素には `script-src-elem`、`onclick` のような属性には `script-src-attr` が `script-src` より優先される。**
+`script-src-elem` を `script-src` と取り違えると、`script-src` 側の `unsafe-inline` を見落とす。
 
 - `script-src`（無ければ `default-src`）に `unsafe-eval` があるか、**nonce・hash・`strict-dynamic` の無いまま** `unsafe-inline` があるか → あれば XSS に対しては効いていない。nonce や hash と並んでいる `unsafe-inline` はブラウザが無視するので指摘しない（`references/07-web-vulnerabilities.md` の 1-6）
 - `base-uri` と `object-src` があるか
@@ -275,14 +280,23 @@ SAQ A の確認の材料になる。**カード番号の入力欄と同じ文書
 
 ## 自動化
 
-`scripts/browser_probe.mjs` が、**認証が要らない範囲**を自動で取る。1 節（同意前の送信）・2 節の Cookie 属性（ログイン前に発行されるもの）・4 節の CSP・6 節のキャッシュヘッダが対象。8 節（拒否の後）は自動化していないので、評価者が手で行う。
+`scripts/browser_probe.mjs` が、**認証が要らない範囲**を自動で取る。1 節（同意前の送信と WebSocket の接続先）・2 節の Cookie 属性（ログイン前に発行されるもの）・4 節の CSP（`<meta>` の CSP を含む）・6 節のキャッシュヘッダが対象。8 節（拒否の後）は自動化していないので、評価者が手で行う。
 
 ```bash
 node scripts/browser_probe.mjs https://example.com
 node scripts/browser_probe.mjs https://example.com /login /admin
 ```
 
-依存は Node.js と Playwright。入っていなければ導入手順を出して終わる。**入れられない環境なら、この資料の手順を手で実行する。** 自動化は速さのためであって、これが無いと確認できないわけではない。
+依存は Node.js 20 以降と Playwright 1.63。入っていなければ導入手順を出して終わる。**評価対象のリポジトリで `npm install` しない**
+（`package.json` と lock を書き換えてしまう）。スキルの外の作業用ディレクトリに版を固定して入れ、`NODE_PATH` で渡す。
+
+```bash
+npm i --prefix "$HOME/.cache/wsa-playwright" playwright@1.63.0
+npx -y playwright@1.63.0 install chromium
+NODE_PATH="$HOME/.cache/wsa-playwright/node_modules" node scripts/browser_probe.mjs https://example.com
+```
+
+**入れられない環境なら、この資料の手順を手で実行する。** 自動化は速さのためであって、これが無いと確認できないわけではない。
 
 **認証が要る確認は自動化していない。** 2 節（ログイン後の Cookie と保存領域）・3 節・5 節（ログイン後の画面）・6 節・7 節・9 節・10 節・11 節がこれに当たる。評価者が認証情報を扱わないという方針と、状態を変えないという方針の両方に触れるため。依頼者に手順を渡す形（モード B）にする。
 

@@ -208,9 +208,9 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 |---|---|
 | `recon.sh` | `curl`、`dig`（無くても DNS 以外は動く） |
 | `audit_grep.sh` | `grep`、`git`（任意） |
-| `scan_secrets.sh` | `grep`、`iconv`（任意） |
+| `scan_secrets.sh` | `grep`、`iconv`（任意）、`unzip`（xlsx を見るとき） |
 | `make_register.py` | `openpyxl` |
-| `browser_probe.mjs` | Node.js 20 以降、`playwright` |
+| `browser_probe.mjs` | Node.js 20 以降、`playwright` 1.63（評価対象のリポジトリには入れず、`NODE_PATH` で渡す） |
 
 `openpyxl` が入っていない `python3` は珍しくない。`make_register.py` はその場合、導入コマンドと、
 すでに `openpyxl` を持つ別の `python3` の場所を探して案内する。
@@ -273,13 +273,18 @@ grep -rnE 'の 2[a-z] 節|の 2[a-z]（|=== 2[a-z]' skill/ tests/   # 例: 2 系
 - **`audit_grep.sh` の 19 節以降はファイルに書かれたものしか見ない。** 管理画面で作ったテーブル、
   管理画面の Realtime の設定、組織単位の GitHub の設定はコードに現れない。題材で確かめてあるのは
   「書かれていれば拾う」ことまで
+- **`audit_grep.sh` は大きなリポジトリで遅い。** 3 万ファイル規模（約 800 MB）で約 11 分（1 節と 2 節の書き方を
+  直す前は約 17 分）。macOS の grep は選択肢の多い正規表現が遅く、1 本で 30 秒かかる。残りは読む量そのものが
+  原因なので、モノレポなら対象のアプリのディレクトリだけを渡す（SKILL.md にも書いた）
 - **単一の入口で自前にルーティングする構成**（Cloudflare Workers の `fetch`、Lambda）は、
   ハンドラの数を機械的に数えられない。分岐を目で追う必要がある
 - **まだ題材の無い枠組みはある。** Laravel Livewire、Blazor、Spring WebFlux、
   Encore、Nitro、Hasura など。**題材を増やすたびに穴が出ている**ので、
   次に案件で別の枠組みに当たったら題材に加える
-- **`recon.sh` の DNS 検査は、決まった応答を返す受け口に対するもの。** 実在のドメインで
-  DNS の応答が揺れる場合（複数の権威サーバー、CDN の動的応答）は模していない
+- **`recon.sh` の DNS 検査は、決まった応答を返す受け口に対するもの。** 応答しない受け口（まったく
+  応答しない、一部の名前だけ応答しない）は模したが、実在のドメインで DNS の応答が揺れる場合
+  （複数の権威サーバー、CDN の動的応答）は模していない
+- **到達しない IP アドレスそのものは手元で模せない。** 到達できないときの打ち切りは、閉じたポートで確かめている
 
 ## ライセンス
 

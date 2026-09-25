@@ -71,6 +71,8 @@ grep -rn 'Script\|<script' app/layout.tsx src/app/layout.tsx 2>/dev/null
 - 共通レイアウトで読み込んでいて、**管理画面の顧客一覧まで記録される**
 
 `scripts/audit_grep.sh` の 9b 節が、使っているツール・マスクを緩める設定・利用者の特定・自社ドメイン経由の設定を出す。
+本番で実際に送っているかは、`scripts/browser_probe.mjs`（1 節）と `scripts/recon.sh` が、表のツールの送信先に名前を付けて出す。
+**自社ドメインを経由させている送信には名前が付かない**ので、9b 節の設定と突き合わせる。
 
 **確かめ方。** 送信の有無はブラウザで分かる（`references/09-browser-verification.md` の 1 節）。
 **何が記録されたかは、ツールの管理画面で録画を再生しないと分からない**（送信は圧縮されていて、通信を見ても読めないことが多い）。
