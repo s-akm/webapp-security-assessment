@@ -203,7 +203,7 @@ where c.relkind in ('v', 'm') and n.nspname not in ('pg_catalog', 'information_s
 | 匿名サインインが有効 | **匿名の利用者も `authenticated` ロールになる。** 「ログイン済みなら読める」ポリシーが匿名にも開く |
 | Storage のバケットが `public` | **URL を知っていれば誰でもダウンロードできる**（ポリシーは効かない） |
 | 公開スキーマ（Exposed schemas）の設定 | ここに入ったスキーマのテーブル・関数・ビューが API に出る |
-| Realtime の「Allow public access to channels」 | **有効なままだと、`private: true` を付けない購読は RLS を通らない**。private を強制するには無効にする（`references/07-web-vulnerabilities.md` の 11-3） |
+| Realtime の「Allow public access to channels」 | **既定で有効。** 有効な間は、`private: true` を付けない Broadcast / Presence の購読にポリシーの確認が走らず、公開鍵を持つ誰でも購読・送信できる。private を強制するには無効にする（`references/07-web-vulnerabilities.md` の 11-3）。テーブルの変更の購読（Postgres Changes）はこの設定と別に、テーブルの RLS で判定される |
 | `supabase_realtime` の publication に入れたテーブル | 各テーブルの RLS と replica identity を突き合わせる。**RLS が無効なテーブルは全行の変更が、`replica identity full` なら削除された行の全列が、公開鍵の購読者に流れる** |
 
 ```sql
@@ -312,7 +312,7 @@ from auth.mfa_factors;
 | Firebase Authentication | **新規プロジェクトは既定でどの国にも送らない**（許可する国を選ぶ）。古いプロジェクトは設定を見る | プロジェクト全体と IP ごとの上限がある。reCAPTCHA による SMS の防御のモードも見る |
 | Supabase Auth | **国を絞る設定が無い**。SMS の送信元（Twilio など）の側か、送信のフックで絞る | プロジェクト全体で既定 30 通/時。同じ利用者への再送は 60 秒あける。CAPTCHA は任意 |
 | Twilio | 通常の送信は、新規アカウントでは登録した番号の国だけ。確認用の Verify には別の国の許可設定がある | 通常の送信には番号ごとの上限が無い。濫用の防御は Verify では既定で有効、通常の送信では既定で無効 |
-| AWS（SNS / End User Messaging / Cognito） | **国の既定は許可**。保護の設定で国を止める | 月額の上限（`TextMessageMonthlySpend`） |
+| AWS（SNS / End User Messaging / Cognito） | **国の既定は許可**。保護の設定で国を止める | 月額の上限（SNS は `MonthlySpendLimit`、End User Messaging SMS は `SetTextMessageSpendLimitOverride`。今月の使用額は CloudWatch の `TextMessageMonthlySpend` で見て通知を組む） |
 
 **見るのは、日本だけを相手にしているのに国を絞っていないか、月額の上限と通知があるか、確認の完了率を見ているか**の 3 つ。
 送信を伴う試験は本番ではしない。
@@ -385,7 +385,8 @@ Gemini の API を有効にすると、配布済みの鍵でそのまま呼べ�
 - **本番の特権鍵が、検証環境にも設定されていないか**
 - 検証環境が外部から見えないようになっているか。Vercel なら Deployment Protection の設定を見る。
   **旧来の設定（Legacy の保護）のまま残っていると、自動生成された本番用の URL が公開されたまま**になる。
-  2026-09 から全デプロイの保護が全プランで無償になったので、**「上位プランでしか守れない」は理由にならない**。
+  2026-09 から **Vercel Authentication による全デプロイ（本番を含む）の保護が全プランで無償**になったので、
+  **「上位プランでしか守れない」は理由にならない**（パスワードでの保護は今も Pro の有償オプション）。
   保護を迂回する共有リンクや、自動化用のバイパス用シークレットが残っていないかも見る
 - 検証環境が本番の DB を向いていないか
 
@@ -394,7 +395,8 @@ Gemini の API を有効にすると、配布済みの鍵でそのまま呼べ�
 環境変数の値が読み出せない設定（秘匿指定）になっている場合、**値の確認は諦めて未確認事項に回す**。無理に読もうとして設定を壊さない。
 
 **秘匿指定になっているかどうか自体は見る。** Vercel では秘匿指定でない環境変数が、2026-04 に公表された
-Vercel 自身への不正アクセスで読まれた。**特権の鍵が秘匿指定になっているか、チームとして秘匿指定を強制しているか、
+Vercel 自身への不正アクセスで読まれた。**特権の鍵が秘匿指定（Secret）になっているか、本番の Secret の値を他の環境と分けさせるチームのポリシー
+（Separate Production Secret Values。以前の「秘匿指定の強制」のポリシーは 2026-08 に非推奨）を有効にしているか、
 特権の鍵が開発環境（手元に平文で落ちる）にも登録されていないか**を確かめる。Vercel では 2026-08 から、
 環境変数が「Config」と「Secret」の 2 種類になった。**`NEXT_PUBLIC_` の付いた変数は、Secret にしても
 ビルドで JS に埋め込まれて公開される。**
@@ -460,9 +462,12 @@ DMARC を `reject` にすること、サブドメインテイクオーバーへ�
 挙げている。依頼者の業界にこの種のガイドラインがあるかは取材で聞く（`references/01-scoping.md` の B-4）。
 
 **到達性となりすまし対策を分けて判定する。** 大手のメールサービスは、大量送信者に SPF・DKIM・DMARC を求め、
-満たさないメールを**拒否**するようになった（Gmail は 2025-11 から、Outlook.com は 2025-05 から）。
+満たさないメールを弾くようになった（Gmail は 2025-11 から取り締まりを強め、項目に応じて拒否または迷惑メールへの振り分け。
+Outlook.com は 2025-05 から `550 5.7.515` で拒否）。
 ただし要件は `p=none` でも満たせる。**`p=none` は「届く」の条件は満たすが、なりすましは止めない。**
-DMARC の仕様は 2026-05 に RFC 9989〜9991 で改訂され、`pct` が廃止されて `t=y`（テストモード）と `np=` が入った。
+DMARC の仕様は 2026-05 に RFC 9989〜9991 で改訂され（RFC 7489 を置き換え、Proposed Standard になった）、`pct` が廃止されて
+`t=y`（テストモード。指定より 1 段緩いポリシーで扱う）が入り、存在しないサブドメイン向けの `np=` が標準に取り込まれた。
+同じ名前に DMARC のレコードが 2 本以上あると、その名前のレコードはすべて捨てられる。
 
 認証不要でメールを送れる経路（フェーズ 1 の F-1）が見つかっている場合、DMARC が `p=none` だと**踏み台にされたときに外形的に止める手段が無い**。組にして評価する。
 
@@ -492,7 +497,8 @@ done
 
 最長の有効期間は 2026-03 から 200 日、2027-03 から 100 日、2029-03 から 47 日に縮む（CA/Browser Forum の決定）。
 **手動で更新している証明書は、もう運用として成り立たない。** 有効期限と発行者を見て、手動の更新が混ざっていないかを聞く。
-**OCSP stapling が無いことは指摘にしない**（OCSP は任意になり、主要な認証局が提供をやめている）。
+**OCSP stapling が無いことは指摘にしない**（OCSP は 2024-03 に任意になり、Let's Encrypt は 2025-08 に提供を終えた。
+Google Trust Services も大半の証明書から OCSP の情報を外している）。
 
 ```bash
 echo | openssl s_client -connect <domain>:443 -servername <domain> 2>/dev/null \
