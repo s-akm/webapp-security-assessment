@@ -140,6 +140,24 @@ mutate "make_register: full の副題を 3_指摘事項一覧 に戻す（旧不
   's = s.replace("\"件数と工数は『{}』から自動集計される。\".format(names[\"findings\"])", "\"件数と工数は『3_指摘事項一覧』から自動集計される。\"")'
 mutate "make_register: --api で一般の Top 10 と両方を並べる（旧不具合）" "scripts/make_register.py" "一般の Top 10 と両方を並べない" \
   's = s.replace("rebuilt[\"api\"] = v.split(\"_\", 1)[0] + \"_API_Top10\"\n                else:", "rebuilt[k] = v\n                    rebuilt[\"api\"] = \"8_API_Top10\"\n                else:")'
+mutate "make_register: 優先度に見送り・クローズを戻す（旧構成）" "scripts/make_register.py" "優先度に 見送り・クローズ を入れない" \
+  's = s.replace("PRIORITIES = [\"P0\", \"P1\", \"P2\", \"P3\", \"P4\", \"—\"]", "PRIORITIES = [\"P0\", \"P1\", \"P2\", \"P3\", \"P4\", \"見送り\", \"クローズ\"]")'
+mutate "make_register: クローズを 1 つに戻す（旧構成）" "scripts/make_register.py" "状態は クローズ を 2 つに分けた" \
+  's = s.replace("\"クローズ（解消）\", \"クローズ（該当なし）\", \"見送り\"]", "\"クローズ\", \"見送り\"]")'
+mutate "make_register: 集計が状態を見ない" "scripts/make_register.py" "P0 の件数は 判定=問題あり" \
+  's = s.replace("open_crit = (f\x27{rng(\"判定\")},\"問題あり\",{rng(\"状態\")},\"<>クローズ*\",\x27\n                 f\x27{rng(\"状態\")},\"<>見送り\"\x27)", "open_crit = f\x27{rng(\"判定\")},\"問題あり\"\x27")'
+mutate "make_register: 人手の工数に AI の列を足す" "scripts/make_register.py" "P0 の工数は" \
+  's = s.replace("=SUMIFS({rng(\"人手(h)\")}", "=SUMIFS({rng(\"AI実装(h)\")}")'
+mutate "make_register: スキルの版を入れない" "scripts/make_register.py" "skill-version の値が" \
+  's = s.replace("(\"評価に使ったスキルの版\", skill_version or None, False)", "(\"評価に使ったスキルの版\", None, False)")'
+mutate "make_register: 人的・物理的を範囲外にしない" "scripts/make_register.py" "版と構成ごとの中身" \
+  's = s.replace("OUT_OF_SCOPE if area in PRIVACY_OUT_OF_SCOPE else \"\"", "\"\"")'
+mutate "make_register: カード決済のシートを常設する" "scripts/make_register.py" "card を付けなければカード決済のシートを作らない" \
+  's = s.replace("    if args.card:\n", "    if True:\n")'
+mutate "make_register: 任意のシートの番号を枚数から数える" "scripts/make_register.py" "番号を飛ばさない" \
+  's = s.replace("return max(nums) + 1", "return len(names) + 1")'
+mutate "make_register: 実機確認サマリに「参考」を戻す（旧構成）" "scripts/make_register.py" "「参考」の値を残さない" \
+  's = s.replace("中間の値は作らない。", "参考情報として記録するだけの行には「参考」を使う。")'
 mutate "make_register: pip だけを案内する（PEP 668 で失敗する）" "scripts/make_register.py" "導入の案内に venv がある" \
   's = "\n".join(l for l in s.split("\n") if "python3 -m venv" not in l)'
 

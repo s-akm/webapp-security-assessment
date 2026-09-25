@@ -807,10 +807,19 @@ w = wb["4_OWASP_Top10"]
 a10 = [w.cell(r,2).value for r in range(5,15) if w.cell(r,1).value == "A10"]
 if not a10 or "Exceptional" not in a10[0]: bad.append("2025 版の A10 が例外処理でない")
 ws = wb["3_個人情報セキュリティ"]
-kub = {ws.cell(r,1).value for r in range(6, ws.max_row+1) if ws.cell(r,1).value and ws.cell(r,2).value}
-if len(kub) < 11: bad.append(f"個人情報シートの区分が {len(kub)}（11 以上のはず）")
-n = sum(1 for r in range(6, ws.max_row+1) if ws.cell(r,2).value)
+# 区分は個人情報保護委員会ガイドライン（通則編）10（別添）の 7 区分と一致すること
+AREAS = {"基本方針の策定", "取扱いに係る規律の整備", "組織的安全管理措置", "人的安全管理措置",
+         "物理的安全管理措置", "技術的安全管理措置", "外的環境の把握"}
+kub = {ws.cell(r,1).value for r in range(6, ws.max_row+1) if ws.cell(r,1).value and ws.cell(r,3).value}
+if kub != AREAS: bad.append(f"個人情報シートの区分が 7 区分と一致しない（余分: {sorted(kub - AREAS)} / 不足: {sorted(AREAS - kub)}）")
+n = sum(1 for r in range(6, ws.max_row+1) if ws.cell(r,3).value)
 if n < 50: bad.append(f"個人情報シートの項目が {n}（50 以上のはず）")
+# 人的・物理的はコードから見えない。既定値を「範囲外（取材で聞く）」にして、未確認と混同させない
+for r in range(6, ws.max_row+1):
+    if ws.cell(r,1).value in ("人的安全管理措置", "物理的安全管理措置") and ws.cell(r,4).value != "範囲外（取材で聞く）":
+        bad.append(f"{ws.cell(r,1).value} の既定の判定が「範囲外（取材で聞く）」でない（{ws.cell(r,4).value!r}）")
+    if ws.cell(r,1).value == "技術的安全管理措置" and ws.cell(r,4).value:
+        bad.append("技術的安全管理措置に既定の判定が入っている"); break
 ws = wb["5_IPA非機能要求グレード"]
 dai = {ws.cell(r,1).value for r in range(13, ws.max_row+1) if ws.cell(r,1).value and ws.cell(r,2).value}
 if len(dai) < 6: bad.append(f"IPA の大項目が {len(dai)}（6 のはず）")
@@ -820,7 +829,7 @@ if n != 10: bad.append(f"API シートが {n} 行（10 のはず）")
 print("ALL OK" if not bad else " / ".join(bad))
 PYEOF
 )"
-  if printf '%s' "$V2" | grep '^ALL OK$' >/dev/null; then ok "make_register: 版と構成ごとの中身が正しい（2021/2025 の A10、個人情報 11 区分、IPA 6 大項目、API 10 行）"
+  if printf '%s' "$V2" | grep '^ALL OK$' >/dev/null; then ok "make_register: 版と構成ごとの中身が正しい（2021/2025 の A10、個人情報は通則編の 7 区分で人的・物理的は範囲外、IPA 6 大項目、API 10 行）"
   else ng "make_register: 版と構成ごとの中身" "$V2"; fi
 
   # 集計数式が、その構成の指摘一覧シートを正しく指しているか
@@ -864,6 +873,116 @@ PY
   if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-ext.xls" >/dev/null 2>&1 || [[ -e "$TMP/r-ext.xls" ]]; then
     ng "make_register: 拡張子が .xlsx でなければ止まる"
   else ok "make_register: 拡張子が .xlsx でなければ止まる"; fi
+
+  # 台帳の構成（references/04-findings-register.md）。判定・優先度・状態は別の軸で、
+  # 見送りとクローズは状態の値。集計は「判定が問題ありで、状態がクローズでも見送りでもないもの」。
+  M6="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-card.xlsx" --card --skill-version 9.9.9-FIXTURE 2>&1)"
+  contains "make_register: --card でカード決済のシートが末尾に増える（owasp なら 8 枚目）" "8_カード決済" "$M6"
+  M7="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-card-full.xlsx" --frameworks full --card 2>&1)"
+  contains "make_register: --card（full）は番号を飛ばさない（6b_ があっても 9_カード決済）" "9_カード決済" "$M7"
+  V3="$("$PY_BIN" - "$TMP/r-owasp.xlsx" "$TMP/r-full.xlsx" "$TMP/r-card.xlsx" "$TMP/r-card-full.xlsx" <<'PYEOF' 2>&1
+import re, sys
+from openpyxl import load_workbook
+res = []
+def check(name, cond, detail=""):
+    res.append(("OK|" + name) if cond else ("NG|" + name + "|" + detail))
+
+def lists(ws):
+    out = {}
+    for dv in ws.data_validations.dataValidation:
+        vals = (dv.formula1 or "").strip('"').split(",")
+        for rng in str(dv.sqref).split():
+            out[rng.split(":")[0].rstrip("0123456789")] = (vals, dv.showErrorMessage)
+    return out
+
+owasp, full, card, cardfull = (load_workbook(p) for p in sys.argv[1:5])
+for label, wb, fname in (("owasp", owasp, "3_指摘事項一覧"), ("full", full, "6_指摘事項一覧")):
+    fs = wb[fname]
+    heads = {fs.cell(3, c).value: fs.cell(3, c).column_letter for c in range(1, fs.max_column + 1) if fs.cell(3, c).value}
+    need = {"ID", "判定", "優先度", "状態", "確認の方法", "指摘事項", "AI実装(h)", "人手(h)", "是正案"}
+    check(f"指摘事項一覧に 判定・優先度・状態・確認の方法 の列がある（{label}）", need <= set(heads), f"不足: {sorted(need - set(heads))}")
+    check(f"「対応状況」は「状態」に改名されている（{label}）", "対応状況" not in heads)
+    lv = lists(fs)
+    j = lv.get(heads.get("判定"), ([], None))
+    check(f"判定は 問題あり／問題なし／判断保留 の入力規則（{label}）", set(j[0]) == {"問題あり", "問題なし", "判断保留"} and j[1], str(j))
+    p = lv.get(heads.get("優先度"), ([], None))
+    check(f"優先度に 見送り・クローズ を入れない（{label}）",
+          {"P0", "P1", "P2", "P3", "P4"} <= set(p[0]) and not any(("見送り" in v or "クローズ" in v) for v in p[0]) and p[1], str(p))
+    s = lv.get(heads.get("状態"), ([], None))
+    check(f"状態は クローズ を 2 つに分けた 5 値の入力規則（{label}）",
+          set(s[0]) == {"未対応", "対応中", "クローズ（解消）", "クローズ（該当なし）", "見送り"} and s[1], str(s))
+    m = lv.get(heads.get("確認の方法"), ([], None))
+    check(f"確認の方法の候補に コード・実機・依頼者の確認・取材 がある（{label}）",
+          {"コード", "実機", "依頼者の確認", "取材"} <= set(m[0]), str(m))
+
+    # 集計の数式が、正しい列に正しい条件を当てているか。列を並べ替えても、数式の列の文字だけが
+    # 取り残されると、別の列を数える（件数は数式なので、生成直後の値では気づけない）。
+    sm = wb[wb.sheetnames[0]]
+    col_of = {v: k for k, v in heads.items()}
+    rows = {}
+    for r in range(1, sm.max_row + 1):
+        a = sm.cell(r, 1).value
+        if isinstance(a, str) and a.startswith("P0（"):
+            rows = {c: sm.cell(r, c).value for c in (2, 4, 5)}
+            break
+    def pairs(f):
+        return re.findall(r"'[^']+'!\$([A-Z]+)\$4:\$[A-Z]+\$\d+,\"([^\"]*)\"", f or "")
+    def sumcol(f):
+        m_ = re.match(r"=SUMIFS\('[^']+'!\$([A-Z]+)\$4", f or "")
+        return col_of.get(m_.group(1)) if m_ else None
+    want = {("判定", "問題あり"), ("優先度", "P0"), ("状態", "<>クローズ*"), ("状態", "<>見送り")}
+    got = {(col_of.get(c), v) for c, v in pairs(rows.get(2))}
+    check(f"P0 の件数は 判定=問題あり・状態≠クローズ*・状態≠見送り の COUNTIFS（{label}）",
+          str(rows.get(2, "")).startswith("=COUNTIFS(") and got == want, f"{rows.get(2)} → {sorted(map(str, got))}")
+    ai = rows.get(4); hu = rows.get(5)
+    check(f"P0 の工数は AI実装(h)・人手(h) の列を同じ条件で SUMIFS（{label}）",
+          sumcol(ai) == "AI実装(h)" and sumcol(hu) == "人手(h)"
+          and {(col_of.get(c), v) for c, v in pairs(ai)} == want and {(col_of.get(c), v) for c, v in pairs(hu)} == want,
+          f"{ai} / {hu}")
+
+    # 評価の前提・気づいたこと・実機確認・ロードマップ
+    texts = [str(sm.cell(r, 1).value or "") for r in range(1, sm.max_row + 1)]
+    check(f"総合評価に「確認の範囲」の欄がある（{label}）", "確認の範囲" in texts)
+    check(f"総合評価に「気づいたこと」の置き場所がある（{label}）", any("気づいたこと" in t for t in texts))
+    allv = " ".join(str(c.value) for row in sm.iter_rows() for c in row if c.value)
+    check(f"総合評価に「脆弱性診断の代わりではない」と書く（{label}）", "脆弱性診断" in allv and "代わりではない" in allv)
+    rt = wb["2_実機確認サマリ"]
+    check(f"実機確認サマリの説明に「参考」の値を残さない（{label}）", "参考" not in str(rt["A2"].value))
+    rj = lists(rt).get("D", ([], None))
+    check(f"実機確認サマリの判定は 3 値の入力規則（{label}）", set(rj[0]) == {"問題あり", "問題なし", "判断保留"}, str(rj))
+    rm = wb[[n for n in wb.sheetnames if n.endswith("対応ロードマップ")][0]]
+    ids = [str(rm.cell(r, 3).value or "") for r in range(5, rm.max_row + 1)]
+    check(f"対応ロードマップに前提タスク（T-x）の置き場所がある（{label}）", any(i.startswith("T-") for i in ids), str(ids))
+    check(f"--card を付けなければカード決済のシートを作らない（{label}）", not any("カード" in n for n in wb.sheetnames), str(wb.sheetnames))
+
+def premise(wb, key):
+    sm = wb[wb.sheetnames[0]]
+    for r in range(1, 20):
+        if sm.cell(r, 1).value == key:
+            return sm.cell(r, 2).value
+    return "（欄が無い）"
+check("--skill-version の値が「評価に使ったスキルの版」に入る", premise(card, "評価に使ったスキルの版") == "9.9.9-FIXTURE", str(premise(card, "評価に使ったスキルの版")))
+check("--skill-version が無ければ「評価に使ったスキルの版」は空欄", premise(owasp, "評価に使ったスキルの版") is None, str(premise(owasp, "評価に使ったスキルの版")))
+
+cs = card["8_カード決済"]
+ct = " ".join(str(c.value) for row in cs.iter_rows() for c in row if c.value)
+for kw in ("6.4.3", "11.6.1", "SAQ A", "EMV 3-D セキュア", "6.1 版"):
+    check(f"カード決済のシートに {kw} がある", kw in ct)
+n5 = sum(1 for r in range(5, cs.max_row + 1) if str(cs.cell(r, 2).value or "").startswith("脆弱性対策 "))
+check("カード決済のシートに EC 加盟店の脆弱性対策が 5 項目ある", n5 == 5, str(n5))
+check("カード決済のシートは full でも末尾に 1 枚", cardfull.sheetnames[-1] == "9_カード決済", str(cardfull.sheetnames))
+print("\n".join(res))
+PYEOF
+)"
+  if ! printf '%s' "$V3" | grep -E '^(OK|NG)\|' >/dev/null; then
+    ng "make_register: 台帳の構成の検査を実行できた" "$(printf '%s' "$V3" | tail -3)"
+  fi
+  while IFS='|' read -r st name detail; do
+    case "$st" in
+      OK) ok "make_register: $name" ;;
+      NG) ng "make_register: $name" "$detail" ;;
+    esac
+  done <<< "$V3"
 fi
 
 # --- recon.sh / browser_probe.mjs は実サイトへ出る。発火台を立てて確かめる ---
