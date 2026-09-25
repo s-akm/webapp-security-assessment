@@ -6,7 +6,7 @@
 # 「動く」と「正しい」は別で、「正しい」と「配ってよい」も別になる。ここでは 4 段で見る。
 #
 #   1. 検査が通るか              tests/run.sh
-#   2. 検査が生きているか        tests/mutations.sh（--full のときだけ。8 分かかる）
+#   2. 検査が生きているか        tests/mutations.sh（--full のときだけ。2〜3 時間かかる）
 #   3. スキル自身が方針を守っているか
 #        - 自分の道具（audit_grep / scan_secrets）を自分に当てる
 #        - 「分からないことは分からないと書く」に反する曖昧語が無いか
@@ -48,7 +48,7 @@ if [[ $FULL -eq 1 ]]; then
   if printf '%s' "$mres" | grep -E '生きていない 0' >/dev/null; then ok "tests/mutations.sh: $mres"
   else ng "tests/mutations.sh: $mres" "$(printf '%s' "$mout" | grep -E '✗|\?' | head -5 | tr '\n' ' ')"; fi
 else
-  warn "tests/mutations.sh は省略（--full で実行。8 分ほどかかる）" \
+  warn "tests/mutations.sh は省略（--full で実行。変異ごとに検査を回すので 2〜3 時間かかる）" \
        "検査が「通る」ことと「壊れたときに落ちる」ことは別。配布前には一度は回す"
 fi
 

@@ -29,7 +29,8 @@ jobs:
         # macOS は評価者の標準の環境（bash 3.2、BSD の grep / sed）。Linux は GNU の道具と mawk
         os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # 週 1 回の検査の検査は変異ごとに検査を回すので数時間かかる（ホスト型のランナーの上限は 6 時間）
+    timeout-minutes: ${{ github.event_name == 'schedule' && 330 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
