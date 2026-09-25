@@ -161,8 +161,10 @@ mutate "audit_grep: React2Shell の修正版を取り違える" "scripts/audit_g
   's = s.replace("15.1) fix=15.1.9", "15.1) fix=15.1.0")'
 
 # ---- recon ----
+# 旧不具合は「自サイトの判定がポートを考えない」。ホスト名にポートを残すだけでは、最終的なホスト名も
+# 同じ関数を通るので打ち消し合う。旧実装と同じく、渡されたドメインとだけ比べる形に戻す
 mutate "recon: ホスト名にポートを残す（旧不具合）" "scripts/recon.sh" "自サイトを第三者に数えない" \
-  's = s.replace("s#[/:?\\#].*$##\x27 | tr", "s#[/?\\#].*$##\x27 | tr", 1)'
+  's = s.replace("s#[/:?\\#].*$##\x27 | tr", "s#[/?\\#].*$##\x27 | tr", 1).replace("[[ \"$h\" == \"$DOMAIN\" || \"$h\" == \"$FINAL_HOST\" ||", "[[ \"$h\" == \"$DOMAIN\" ||", 1)'
 mutate "recon: DNS の無応答を値として読む（旧不具合）" "scripts/recon.sh" "タイムアウトの文言を値として出さない" \
   's = s.replace("dq() {\n  local type", "dq() { dig_ +short \"$1\" \"$2\"; return 0; }\ndq_old() {\n  local type", 1)'
 mutate "recon: 親への遡りで無応答を「無い」とする" "scripts/recon.sh" "CAA は取得できないと言う" \
@@ -183,6 +185,8 @@ mutate "recon: LLM の鍵を見ない（旧不具合）" "scripts/recon.sh" "Ope
   's = s.replace("\x27OpenAI|sk-(proj|svcacct|admin)-", "\x27OpenAI|ZZZNOMATCH-")'
 mutate "recon: SPF をホスト名で引く（旧不具合）" "scripts/recon.sh" "組織のドメインの SPF を見つける" \
   's = s.replace("if [[ -n \"$DMARC_AT\" ]]; then ORG=\"${DMARC_AT#_dmarc.}\"", "if [[ -n \"$DMARC_AT\" ]]; then ORG=\"$DOMAIN\"")'
+mutate "recon: 重大な露出を 04 の優先度で言わない" "scripts/recon.sh" ".env の中身が取れれば P0 の候補と言う" \
+  's = s.replace("P0NOTE=\"← 中身が返っている。P0 の候補。", "P0NOTE=\"← 中身が返っている。最優先。")'
 if command -v node >/dev/null 2>&1; then
   mutate "recon: 既知タグの一覧を browser_probe とずらす" "scripts/recon.sh" "既知タグの一覧が一致する" \
     's = s.replace("  \x27Mouseflow|(^|\\.)mouseflow\\.com$\x27\n", "")'
@@ -215,7 +219,7 @@ if node -e 'import("playwright")' >/dev/null 2>&1; then
   mutate "browser_probe: default-src へ遡らない（旧不具合）" "scripts/browser_probe.mjs" "script-src が無ければ default-src で判定" \
     's = s.replace("\"script-src\", \"default-src\"]", "\"script-src\"]")'
   mutate "browser_probe: nonce と並ぶ unsafe-inline を咎める（誤検出）" "scripts/browser_probe.mjs" "nonce と並ぶ unsafe-inline を咎めない" \
-    's = s.replace("const cancels = low.some(", "const cancels = false && low.some(")'
+    's = s.replace("return { allowed: hasUI && !cancels, ignored: hasUI && cancels };", "return { allowed: hasUI, ignored: false };")'
   mutate "browser_probe: WebSocket を拾わない（旧不具合）" "scripts/browser_probe.mjs" "第三者への接続を拾う" \
     's = s.replace("page.on(\"websocket\", (ws) => {", "page.on(\"websocket-disabled\", (ws) => {")'
   mutate "browser_probe: WebSocket のクエリを伏せない" "scripts/browser_probe.mjs" "クエリのトークンを出さない" \
