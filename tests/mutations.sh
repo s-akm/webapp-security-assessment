@@ -106,8 +106,9 @@ fi
 # ---- 機密 ----
 mutate "案件固有語を混入させる" "SKILL.md" "案件固有語が含まれない" \
   's = s + "\n対象は CLIENT-NGWORD-CANARY のシステムである。\n"'
+# 入れるドメインは .test（予約済みで誰も登録できない）。許可リストに無いので検査が捕まえる
 mutate "実在しうるドメインを書く" "references/01-scoping.md" "実在しうるドメインが書かれていない" \
-  's = s + "\n参考: https://some-client.co.jp/\n"'
+  's = s + "\n参考: https://client-site.example.test/\n"'
 mutate "想定外の文字体系を混入させる" "references/02-code-audit.md" "想定外の文字体系" \
   's = s + "\nテスト用の混入 материал\n"'
 mutate "基準の最終確認日を消す" "references/06-frameworks.md" "基準の版に最終確認日" \

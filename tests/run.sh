@@ -22,6 +22,14 @@ PASS=0; FAIL=0
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; PASS=$((PASS+1)); }
 ng()   { printf '  \033[31m✗\033[0m %s\n' "$1"; [[ -n "${2:-}" ]] && printf '      %s\n' "$2"; FAIL=$((FAIL+1)); }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
+
+# 題材を一時ディレクトリへ写す。依存の定義ファイル（package.json・ロックファイル・requirements.txt）は、
+# リポジトリの中では末尾に .fixture を付けて置き、ここで元の名前に戻す。そのまま置くと GitHub の依存関係グラフが
+# 題材のわざと古い版を拾い、Dependabot の警告が出続ける。
+fixture_cp() {
+  cp -R "$1" "$2"
+  find "$2" -type f -name '*.fixture' | while IFS= read -r f; do mv "$f" "${f%.fixture}"; done
+}
 # 環境に道具が無くて検査を省いたとき。数えて結果の行に出す（省略で件数が減っても緑に見えないように）
 SKIPPED=0
 skip() { printf '  \033[33m-\033[0m %s\n' "$1"; SKIPPED=$((SKIPPED+1)); }
@@ -72,6 +80,11 @@ for f in "$SKILL"/references/*.md "$SKILL"/scripts/* "$SKILL"/templates/*; do
 done
 if [[ -z "$orphan" ]]; then ok "すべての references / scripts / templates が SKILL.md に載っている"
 else ng "孤児ファイルが無い" "SKILL.md に記載が無い:$orphan"; fi
+
+# 題材の依存の定義ファイルは .fixture を付けて置く（fixture_cp の説明を参照）
+raw="$(git -C "$ROOT" ls-files tests/fixtures 2>/dev/null | grep -E '(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Gemfile|Gemfile\.lock|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|pom\.xml|Package\.swift)$' || true)"
+if [[ -z "$raw" ]]; then ok "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）"
+else ng "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）" "$(printf '%s' "$raw" | tr '\n' ' ')"; fi
 
 # スクリプトの実行権限。拡張子で列挙すると新しい種類を足したときに漏れるため、
 # scripts/ 配下のファイルをすべて対象にする（ここには実行するものしか置かない）。
@@ -193,7 +206,7 @@ head_ "3. 動作 — スクリプトが期待どおり検出するか"
 # --- audit_grep.sh ---
 # 親リポジトリの git 履歴を舐めないよう、独立したリポジトリとして作り直す
 REPO="$TMP/repo"
-cp -R "$ROOT/tests/fixtures/repo" "$REPO"
+fixture_cp "$ROOT/tests/fixtures/repo" "$REPO"
 echo 'NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY=dummy' > "$REPO/.env.local"
 # 履歴の検査に使うのでコミットまでする。利用者の署名の設定・フック・GIT_DIR に左右されないようにする
 ( cd "$REPO" && unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -286,7 +299,7 @@ while IFS=: read -r fw mark guard danger; do
   [[ -z "$fw" ]] && continue
   SRC="$ROOT/tests/fixtures/repo-$fw"
   [[ -d "$SRC" ]] || { ng "題材がある: repo-$fw" "tests/fixtures/repo-$fw が無い"; continue; }
-  cp -R "$SRC" "$TMP/repo-$fw"
+  fixture_cp "$SRC" "$TMP/repo-$fw"
   F="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/repo-$fw" 2>&1)"
   # 中核はこの 3 つ。ハンドラを見つけ、ガードを読み、ガードの無いものを名指しできること。
   contains "audit_grep[$fw]: ハンドラを見つける"     "$mark"            "$F"
@@ -324,7 +337,9 @@ done <<< "$FRAMEWORKS"
 # 現実に近い構成の題材。これまでの題材は「ガードあり 1 本・なし 1 本」の最小構成で、
 # 入れ子・多層の認可・ミドルウェアの対象外といった、実際に穴が空く形を模していなかった。
 if [[ -d "$ROOT/tests/fixtures/repo-realistic" ]]; then
-  cp -R "$ROOT/tests/fixtures/repo-realistic" "$TMP/repo-realistic"
+  fixture_cp "$ROOT/tests/fixtures/repo-realistic" "$TMP/repo-realistic"
+  # 題材は「.gitignore で無視された .env を持つ構成」。無視されたファイルは clone に来ないので、ここで作る
+  printf 'NEXT_PUBLIC_API_URL=https://example.invalid\nSTRIPE_WEBHOOK_SECRET=whsec_dummy\n' > "$TMP/repo-realistic/.env.local"
   RE="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/repo-realistic" 2>&1)"
   contains "audit_grep[realistic]: 深い入れ子のルート" \
            "app/api/admin/tenants/[tenantId]/members/[memberId]/route.ts" "$RE"
@@ -353,7 +368,7 @@ fi
 # どの節にも「穴のある側」と「正しく作った側」を置き、検出と誤検出の両方を見る。
 # 名前を repo* にしないのは、枠組みごとの題材の数（README）に数えないため。
 if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
-  cp -R "$ROOT/tests/fixtures/supply-baas" "$TMP/supply-baas"
+  fixture_cp "$ROOT/tests/fixtures/supply-baas" "$TMP/supply-baas"
   # AI エージェントの設定ファイルは、開いた人の環境で実際に効くのでリポジトリに置かない。ここで作る
   A="$TMP/supply-baas"
   mkdir -p "$A/.claude" "$A/.vscode"
@@ -566,7 +581,7 @@ fi
 for fw in iac mobile; do
   SRC="$ROOT/tests/fixtures/repo-$fw"
   [[ -d "$SRC" ]] || continue
-  cp -R "$SRC" "$TMP/repo-$fw"
+  fixture_cp "$SRC" "$TMP/repo-$fw"
   C="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/repo-$fw" 2>&1)"
   case "$fw" in
     iac)
@@ -618,7 +633,7 @@ done
 # Angular のようなフロント専用の枠組みには、そもそもハンドラが無い。
 # 見るのは「クライアントに出る値」と「HTML を直接書き込む箇所」になる。
 if [[ -d "$ROOT/tests/fixtures/repo-angular" ]]; then
-  cp -R "$ROOT/tests/fixtures/repo-angular" "$TMP/repo-angular"
+  fixture_cp "$ROOT/tests/fixtures/repo-angular" "$TMP/repo-angular"
   A2="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/repo-angular" 2>&1)"
   contains "audit_grep[angular]: クライアント露出の特権鍵名" \
            "NG_APP_SUPABASE_SERVICE_ROLE_KEY" "$A2"
