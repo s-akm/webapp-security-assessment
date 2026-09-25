@@ -586,8 +586,70 @@ JWT: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlhdCI6MTYwMH0.zz
 カード: 4111 1111 1111 1111
 select * from users を実行した。
 EOF
-# LC_ALL=C で走らせる。cut -c はロケールによってバイト単位で動き、日本語を
-# 途中で切って文字化けさせる。その条件を再現しないと、この検査は素通りする。
+# 鍵の形式と、個人情報の書き方の揺れ。1 行に 1 つだけ置き、行番号で「どの形式を拾えたか」を見る。
+# 拡張子で絞っていたころに素通りしていた .yml / .env / .har / .log / 大文字の .MD に分けて置く。
+# 値はすべて架空（DUMMY / FIXTURE を含む）。ドメインは .test / example.com だけを使う。
+cat > "$REP/keys.yml" <<'EOF'
+openai: sk-proj-FIXTUREDUMMY0123456789abcdefXYZ
+openai_old: sk-FIXTUREDUMMY0123456789abcdefFIXTUREDUMMY01234567
+anthropic: sk-ant-api03-FIXTUREDUMMY0123456789abcdef
+gh1: github_pat_11FIXTUREDUMMY0123456789_abcdefFIXTURE
+gh2: gho_FIXTUREDUMMY0123456789abcdefABCD
+twilio_sid: AC<HEX32>
+twilio_key: SK<HEX32>
+stripe_r: rk_live_FIXTUREDUMMY0123456789
+stripe_t: sk_test_FIXTUREDUMMY0123456789
+whsec: whsec_FIXTUREDUMMY0123456789abcdef
+npm: npm_FIXTUREDUMMY0123456789abcdefABCDEF
+slackapp: xapp-1-AFIXTUREDUMMY0-0123456789-abcdef
+slackhook: https://hooks.slack.test/services/TFIXTURE0/BFIXTURE0/DUMMYDUMMYDUMMYDUMMY
+aws: ASIAFIXTUREDUMMY0123
+sendgrid: SG.FIXTUREDUMMY01234567.FIXTUREDUMMY0123456789abcdef
+url: https://admin:FIXTUREDUMMYPASS9@api.example.com/v1
+EOF
+# Twilio の形の架空の値は、実行時に組み立ててから書く。鍵の形のままリポジトリに置くと、
+# GitHub の push protection が本物の鍵として push を止める（2.18.0 の公開で実際に止まった）
+H32=0123456789abcdef0123456789abcdef
+sed "s/<HEX32>/${H32}/" "$REP/keys.yml" > "$REP/keys.yml.t" && mv "$REP/keys.yml.t" "$REP/keys.yml"
+printf '%s\n' '{ "type": "service_account", "project_id": "fixture-dummy" }' > "$REP/sa.json"
+cat > "$REP/.env" <<'EOF'
+API_KEY=FIXTUREDUMMY0123456789abcdef
+aws_secret_access_key = FIXTUREDUMMY0123456789abcdefFIXTURE
+PASSWORD="FIXTUREDUMMYPassword0123"
+EOF
+printf '%s\n' '{"name": "Authorization", "value": "Bearer FIXTUREDUMMYTOKEN0123456789abcdef"}' > "$REP/req.har"
+printf '%s\n' '-----BEGIN PGP PRIVATE KEY BLOCK-----' > "$REP/pgp.log"
+cat > "$REP/NOTES.MD" <<'EOF'
+SELECT * FROM users;
+電話 09000000000
+電話 (03)0000-0000
+電話 03(0000)0000
+電話 +81 90 0000 0000
+電話 ０９０－００００－００００
+番号 １２３４５６７８９０１２
+アメックス 3782 822463 10005
+住所 渋谷区神南1-2-3
+住所 横浜市西区みなとみらい2丁目3番1号
+〒150-0000 へ送付
+EOF
+# xlsx の台帳。grep はバイナリとして読み飛ばすので、展開して見ているかを確かめる。
+# 空白を含むパスに置く。セルの文字列・インライン文字列・コメントの 3 か所に 1 つずつ置く。
+mkdir -p "$REP/台帳 dir"
+python3 - "$REP/台帳 dir/台帳 v1.xlsx" <<'PYEOF'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr("[Content_Types].xml", "<Types/>")
+    z.writestr("xl/sharedStrings.xml",
+               '<?xml version="1.0"?><sst><si><t>接続: postgresql://fixture:FIXTUREDUMMY0@db.example.com/app</t></si>'
+               '<si><t xml:space="preserve">鍵 AKIAFIXTUREDUMMY0123 &amp; 電話 090-0000-0000</t></si></sst>')
+    z.writestr("xl/worksheets/sheet1.xml",
+               '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>'
+               'sk-proj-FIXTUREDUMMY0123456789abcdefXYZ</t></is></c></row></sheetData></worksheet>')
+    z.writestr("xl/comments1.xml",
+               '<comments><commentList><comment ref="B2"><text><t>〒150-0000</t></text></comment></commentList></comments>')
+PYEOF
+# LC_ALL=C で走らせる。伏字の前に残す部分はバイト単位で切るため、日本語の途中で切れる。
+# 不完全なバイト列を落とす処理が効いているかは、この条件でないと確かめられない。
 S="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"
 for pair in "JWT 形式のトークン" "接続文字列" "メールアドレス" "電話番号らしき並び" \
             "クレジットカード番号らしき並び" "住所らしき記述" "select * の使用"; do
@@ -600,12 +662,95 @@ if printf '%s' "$S" | grep -E '^  \./README\.md:[0-9]+:' >/dev/null; then
   ok "scan_secrets: 検出行の中身が表示される（相対パスで出る）"
 else ng "scan_secrets: 検出行の中身が表示される" "検出行が相対パスで始まっていない"; fi
 # 日本語が文字化けしていないか
-# 切り詰めが文字の途中で起きると、不正なバイト列が出力に混ざる。
+# 伏字の前に残す部分が文字の途中で切れると、不正なバイト列が出力に混ざる。
 # 特定の文字があるかではなく「出力全体が正しい UTF-8 か」で見る。
-# 長い行は 200 文字で切られるので、末尾の文字を期待値にすると正しい実装でも落ちる。
 if printf '%s' "$S" | python3 -c "import sys; sys.stdin.buffer.read().decode('utf-8')" 2>/dev/null; then
   ok "scan_secrets: 日本語が壊れない（出力が正しい UTF-8）"
 else ng "scan_secrets: 日本語が壊れない" "出力に不正な UTF-8 バイト列が混ざっている"; fi
+
+# 形式ごとに、正しい種類の節に、その行が出ているか。
+# 種類の見出しがあるだけでは、どの形式を取りこぼしたかが分からない。
+ss_sec() { printf '%s\n' "$S" | awk -v l="[検出] $1" '$0 == l { f = 1; next } /^\[検出\]/ { f = 0 } /^$/ { f = 0 } f'; }
+while IFS='|' read -r label loc what; do
+  [[ -n "$label" ]] || continue
+  contains "scan_secrets[形式]: $what" "  $loc: " "$(ss_sec "$label")"
+done <<'EOF'
+LLM の鍵（OpenAI・Anthropic）|./keys.yml:1|OpenAI（sk-proj-）
+LLM の鍵（OpenAI・Anthropic）|./keys.yml:2|OpenAI（旧形式の sk-）
+LLM の鍵（OpenAI・Anthropic）|./keys.yml:3|Anthropic（sk-ant-）
+コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:4|GitHub（github_pat_）
+コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:5|GitHub（gho_）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:6|Twilio（AC）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:7|Twilio（SK）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:8|Stripe（rk_live_）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:9|Stripe（sk_test_）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:10|Stripe（whsec_）
+コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:11|npm（npm_）
+チャットの鍵と Webhook（Slack）|./keys.yml:12|Slack（xapp-）
+チャットの鍵と Webhook（Slack）|./keys.yml:13|Slack の Webhook URL
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:14|AWS（ASIA）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:15|SendGrid（SG.）
+URL に埋め込んだ認証情報（user:pass@）|./keys.yml:16|URL の user:pass@
+Google・Supabase の鍵|./sa.json:1|GCP のサービスアカウント
+key/secret への値の代入|./.env:1|引用符なしの API_KEY=
+key/secret への値の代入|./.env:2|引用符なしの aws_secret_access_key =
+key/secret への値の代入|./.env:3|大文字の PASSWORD=
+Authorization ヘッダの値|./req.har:1|HAR の Authorization: Bearer
+秘密鍵ブロック|./pgp.log:1|PGP の秘密鍵ブロック
+select * の使用|./NOTES.MD:1|大文字の SELECT * FROM
+電話番号らしき並び|./NOTES.MD:2|電話番号（ハイフンなし）
+電話番号らしき並び|./NOTES.MD:3|電話番号（(03) の括弧付き）
+電話番号らしき並び|./NOTES.MD:4|電話番号（03(…) の括弧付き）
+電話番号らしき並び|./NOTES.MD:5|電話番号（+81 と空白）
+電話番号らしき並び|./NOTES.MD:6|電話番号（全角）
+12 桁の数字の並び（マイナンバー等）|./NOTES.MD:7|全角の 12 桁
+クレジットカード番号らしき並び|./NOTES.MD:8|American Express の 15 桁
+住所らしき記述（都道府県なし）|./NOTES.MD:9|都道府県の無い住所（区＋番地）
+住所らしき記述（都道府県なし）|./NOTES.MD:10|都道府県の無い住所（市＋丁目。ひらがなを挟む）
+郵便番号|./NOTES.MD:11|単独の郵便番号
+接続文字列|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:1|xlsx の台帳（セルの文字列）
+クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（同じセルの 2 つ目の値）
+電話番号らしき並び|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（実体参照 &amp; の後ろ）
+LLM の鍵（OpenAI・Anthropic）|./台帳 dir/台帳 v1.xlsx[xl/worksheets/sheet1.xml]:1|xlsx の台帳（インライン文字列）
+郵便番号|./台帳 dir/台帳 v1.xlsx[xl/comments1.xml]:1|xlsx の台帳（セルのコメント）
+EOF
+
+# 検出した値そのものを出さない。位置と種類と、先頭の数バイトだけを出す。
+# 題材の値は、先頭 4 バイトより後ろに DUMMY を含むように作ってある。
+for leak in "DUMMY" "456789abcdef" "yamada" "0000-0000" "神南" "みなとみらい" "５６７８" "822463" "150-0000" "4111 1111"; do
+  absent "scan_secrets: 検出した値を出さない（${leak}）" "$leak" "$S"
+done
+contains "scan_secrets: 伏字にした形で出す" "…<伏字>" "$S"
+contains "scan_secrets: 説明用のドメインならメールのドメインを見せる" "ta…<伏字>@example.invalid" "$S"
+
+# 誤検出しない。日時・UUID・バージョン番号・英単語の連なり・説明文の変数名・鍵の接頭辞だけ。
+# 数字の並びの検査は、境界を緩めるとここに当たる。
+CLEAN="$TMP/clean-report"
+mkdir -p "$CLEAN"
+cat > "$CLEAN/clean.md" <<'EOF'
+# 誤検出の題材（どれも検出されてはいけない）
+日時 2026-09-25 10:00:00 / 2026-09-25T10:00:00+09:00 / 202609251030 / 1727246400
+UUID 550e8400-e29b-41d4-a716-446655440000 / 550e8400-e29b-41d4-a716-123456789012
+版 v1.2.3 / 10.0.19045.3803 / 2.17.3 / 1.0.123456789012
+task-management-system-overview-for-the-assessment-document
+API_KEY=process.env.API_KEY / password: string / token = getToken()
+区分 1-2 を参照。3 区分の 1-2-3 節。市区町村まではマスクする
+sb_publishable_... という鍵、sk_live_ で始まる鍵、Bearer <トークン>
+接続先は postgresql://<伏字>@db.example.com
+EOF
+C="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$CLEAN" 2>&1)"
+if printf '%s' "$C" | grep '^検出なし。$' >/dev/null; then
+  ok "scan_secrets: 誤検出しない（日時・UUID・版・説明文）"
+else ng "scan_secrets: 誤検出しない（日時・UUID・版・説明文）" "$(printf '%s' "$C" | grep -A2 '^\[検出\]' | head -6 | tr '\n' ' ')"; fi
+
+# unzip が無い環境では、xlsx を黙って素通りさせず、見ていないことを出す。
+# unzip だけを除いた PATH を作って走らせる。
+NB="$TMP/no-unzip-bin"; mkdir -p "$NB"
+for t in grep sed cut iconv find sort mktemp rm awk tr head; do
+  p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$NB/$t"
+done
+U2="$(PATH="$NB" "$BASH" "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"
+contains "scan_secrets: unzip が無いと xlsx を未検査と知らせる" "台帳 v1.xlsx（unzip が無い）" "$U2"
 
 # --- make_register.py ---
 PY_BIN=""

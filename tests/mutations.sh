@@ -115,9 +115,23 @@ mutate "基準の最終確認日を消す" "references/06-frameworks.md" "基準
 
 # ---- scan_secrets ----
 mutate "scan_secrets: 絶対パスのまま検索する（旧不具合）" "scripts/scan_secrets.sh" "検出行の中身が表示される" \
-  's = s.replace("cd \"$DIR\" && grep -rnIE \"${TARGETS[@]}\" -e \"$pattern\" . ", "grep -rnIE \"${TARGETS[@]}\" -e \"$pattern\" \"$DIR\" ")'
+  's = s.replace("(cd \"$DIR\" && grep -rnoI \"${gopt[@]}\" -e \"$full\" . 2>/dev/null)", "grep -rnoI \"${gopt[@]}\" -e \"$full\" \"$DIR\" 2>/dev/null")'
 mutate "scan_secrets: iconv を外す（日本語が壊れる）" "scripts/scan_secrets.sh" "日本語が壊れない" \
-  's = s.replace("cut -c1-200 | iconv -c -f UTF-8 -t UTF-8", "cut -c1-160")'
+  's = s.replace("    iconv -c -f UTF-8 -t UTF-8 2>/dev/null\n", "    cat\n")'
+mutate "scan_secrets: 検出した値をそのまま出す" "scripts/scan_secrets.sh" "検出した値を出さない" \
+  's = s.replace("else v=\"$(mask_value \"$v\")\"; fi", "fi")'
+mutate "scan_secrets: 拡張子で絞る（旧不具合）" "scripts/scan_secrets.sh" "scan_secrets\\[形式\\]: HAR の Authorization" \
+  's = s.replace("grep -rnoI \"${gopt[@]}\"", "grep -rnoI --include=\x27*.md\x27 --include=\x27*.json\x27 \"${gopt[@]}\"")'
+mutate "scan_secrets: xlsx を展開しない（旧不具合）" "scripts/scan_secrets.sh" "xlsx の台帳（セルの文字列）" \
+  's = s.replace("-iname \x27*.xlsx\x27", "-iname \x27*.ZZZNOMATCH\x27")'
+mutate "scan_secrets: unzip が無いのを黙って飛ばす" "scripts/scan_secrets.sh" "unzip が無いと xlsx を未検査と知らせる" \
+  's = s.replace("UNREAD+=(\"${f}（unzip が無い）\"); continue", "continue")'
+mutate "scan_secrets: 大文字小文字を区別する（取りこぼし）" "scripts/scan_secrets.sh" "大文字の SELECT" \
+  's = s.replace("[[ \"$opts\" == *i* ]] && gopt+=(-i)", ":")'
+mutate "scan_secrets: 数字の並びの境界を外す（誤検出）" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID" \
+  's = s.replace("full=\"(^|[^0-9A-Za-z_.+-])(${pattern})([^0-9A-Za-z_-]|$)\"", "full=\"(${pattern})\"")'
+mutate "scan_secrets: 日時の 12 桁を除外しない（誤検出）" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID" \
+  's = s.replace("\x27^(19|20)[0-9]{2}(0[1-9]|1[0-2])", "\x27^ZZZNOMATCH(19|20)[0-9]{2}(0[1-9]|1[0-2])")'
 
 # ---- audit_grep ----
 mutate "audit_grep: ガードの語彙から Laravel を外す" "scripts/audit_grep.sh" "audit_grep\\[laravel\\]: ガードを読み取る" \
