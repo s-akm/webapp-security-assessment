@@ -119,12 +119,18 @@ npm test -- <テストのファイル>
 ```
 
 ```sql
--- 期待値: 0 行
-select table_name, grantee, privilege_type
-from information_schema.role_table_grants
-where table_schema = 'public' and grantee in ('anon', 'authenticated')
-  and privilege_type in ('SELECT','INSERT','UPDATE','DELETE');
+-- 期待値: 0 行（公開ロールへのデータの権限があり、かつ RLS が無効なテーブル）
+-- RLS 前提の構成では、authenticated への付与そのものは正常。付与と RLS の穴が揃ったものだけを見る
+select g.table_name, g.grantee, g.privilege_type
+from information_schema.role_table_grants g
+join pg_tables t on t.schemaname = g.table_schema and t.tablename = g.table_name
+where g.table_schema = 'public' and g.grantee in ('anon', 'authenticated', 'PUBLIC')
+  and g.privilege_type in ('SELECT','INSERT','UPDATE','DELETE')
+  and not t.rowsecurity;
 ```
+
+素通しのポリシー（`references/03-runtime-verification.md` の 1 節）も、同じ検証の中で 0 行になることを確かめる。
+**RLS を使わない構成では、上の `and not t.rowsecurity` を外し、公開ロールへの付与が 0 行であることを期待値にする。**
 
 **検証に副作用があるなら警告を添える。** 正常系を叩くとメールが実際に飛ぶ、テストデータが本番に入る、といった場合は、実行前に周知するよう書く。
 

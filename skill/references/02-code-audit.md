@@ -527,7 +527,7 @@ grep -rnoE 'dangerouslyAllowBrowser:\s*true|NEXT_PUBLIC_[A-Z_]*(OPENAI|ANTHROPIC
 
 | 基盤 | 見ること |
 |---|---|
-| Supabase | RLS は 03 の 1 節で実機を見る。コード側では**マイグレーションで作ったテーブルに RLS を有効にしているか**（ダッシュボードで作ると既定で有効、SQL で作ると無効のまま）、`GRANT` を明記しているか（2026-10-30 から既存プロジェクトでも新規テーブルへの自動 `GRANT` が止まる）、`supabase/config.toml` で `verify_jwt = false` の Edge Function が自前で認証か署名検証をしているか（**`false` であること自体は指摘にしない。** 新しい API キーへの移行で公式が `false` を勧めるページがあり、公式の文書の間でも推奨が食い違っている） |
+| Supabase | RLS は 03 の 1 節で実機を見る。コード側では**マイグレーションで作ったテーブルに RLS を有効にしているか**（ダッシュボードで作ると既定で有効、SQL で作ると無効のまま）、`GRANT` を明記しているか（2026-10-30 から既存プロジェクトでも新規テーブルへの自動 `GRANT` が止まる。**`authenticated` への付与は RLS 前提の構成では正常で、付与と RLS の穴が揃ったときだけ指摘にする**。03 の 1 節）、`supabase/config.toml` で `verify_jwt = false` の Edge Function が自前で認証か署名検証をしているか（**`false` であること自体は指摘にしない。** 新しい API キーへの移行で公式が `false` を勧めるページがあり、公式の文書の間でも推奨が食い違っている） |
 | Firebase | ルールに `allow read, write: if true` や期限付きのテストモードが残っていないか。**`request.auth != null` だけで認可したつもりになっていないか**（ログインした誰でも通る）。メールのドメインで判定するなら `email_verified` も見ているか。**App Check は認証やルールの代わりに数えない**（公式はこれらを「補う」ものと位置づけている）。HTTP の関数（`onRequest`）は `invoker` を書かなければ公開され、呼び出し可能な関数（`onCall`）は常に公開される。**関数の中で `request.auth` などで認証しているか**を見る |
 | Clerk | **`clerkMiddleware()` は既定で何も保護しない。** Route Handler と Server Action の中で `auth()` を確かめているか |
 | Convex | **公開の `query` / `mutation` は誰でも呼べる。** すべての関数で引数の検証と `ctx.auth.getUserIdentity()` を行っているか。内部からだけ呼ぶ関数を `internal` にしているか |

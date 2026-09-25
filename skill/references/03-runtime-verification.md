@@ -41,7 +41,7 @@
 ### 問い
 
 1. 全テーブルで行レベルの権限制御が有効になっているか
-2. 匿名／一般利用者の資格に、業務データへの読み書き権限が付いていないか
+2. 匿名／一般利用者の資格に付いた業務データへの読み書き権限が、行レベルの権限制御で絞られているか（RLS を使わない構成なら、権限そのものが付いていないか）
 3. 権限ポリシーの対象に、公開ロールが含まれていないか
 4. コードに定義が無かったテーブルは実在するか。実在するならその設定はどうなっているか
 
@@ -97,7 +97,32 @@ where table_schema = 'public' and grantee in ('anon', 'authenticated')
 group by table_name, grantee order by table_name, grantee;
 ```
 
-**読み方の注意**: 付与されている権限の種類を区別する。`SELECT` / `INSERT` / `UPDATE` / `DELETE` は行のデータに届く権限で、これが公開ロールに付いていれば直ちに指摘になる。一方 `REFERENCES` / `TRIGGER` / `TRUNCATE` はデータを読む権限ではない。ただし `TRUNCATE` は**行レベルのポリシーで止まらない**操作なので、DB への直接接続経路と併せて評価する。
+**読み方の注意**: 付与があることだけでは判定しない。**`GRANT` と RLS は別に見る**（この節の末尾）。
+
+- **RLS を前提にした構成**（Supabase のように、公開ロールのまま API からテーブルを読む構成）では、
+  `authenticated` への `SELECT` / `INSERT` / `UPDATE` / `DELETE` の付与は**正常**で、守りは RLS のポリシーが担う。
+  公開データを未ログインで読ませるなら `anon` への `SELECT` も正常
+- **指摘になるのは、RLS が無効なテーブル（1 番で `rowsecurity = false`）、または素通しのポリシー（次の小節）がある
+  テーブルに、公開ロールへの `SELECT` / `INSERT` / `UPDATE` / `DELETE` の付与があるとき。** 付与と RLS の穴が揃うと、
+  公開鍵だけで行に届く
+- **RLS を使わない構成**（アプリが特権資格で接続し、アプリのガードで守る構成。02 の E-1）では、公開ロールへの付与は
+  そもそも要らない。付与があれば、それ自体を指摘にする
+- `REFERENCES` / `TRIGGER` / `TRUNCATE` はデータを読む権限ではない。ただし `TRUNCATE` は**行レベルのポリシーで止まらない**
+  操作なので、DB への直接接続経路と併せて評価する
+
+```sql
+-- 公開ロールへのデータの権限があり、RLS が無効なテーブル（RLS 前提の構成では、ここに出たものが指摘になる）
+select g.table_name, g.grantee, string_agg(g.privilege_type, ' / ' order by g.privilege_type) as privs
+from information_schema.role_table_grants g
+join pg_tables t on t.schemaname = g.table_schema and t.tablename = g.table_name
+where g.table_schema = 'public'
+  and g.grantee in ('anon', 'authenticated', 'PUBLIC')
+  and g.privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
+  and not t.rowsecurity
+group by g.table_name, g.grantee order by g.table_name, g.grantee;
+```
+
+素通しのポリシーがあるテーブルは、次の小節のクエリで洗い出し、この付与の一覧と突き合わせる。
 
 ### 有効なだけでは足りない。ポリシーの中身を読む
 
@@ -224,6 +249,8 @@ select policyname, cmd, roles, qual, with_check from pg_policies where schemanam
 **`GRANT` と RLS は別に見る。** Supabase は新規テーブルへの公開ロールの自動 `GRANT` を止める方向に変わった
 （2026-05 に新規プロジェクトの既定、**2026-10-30 から既存プロジェクトにも適用**）。`GRANT` が無ければ RLS より
 手前で拒否される。逆に、変更前に作ったテーブルには `GRANT` が付いたままなので、RLS の中身が全てになる。
+**どちらの場合も、付与の有無だけで指摘にしない。** 指摘になるのは、付与と RLS の穴（無効、または素通しのポリシー）が
+同じテーブルで揃ったときで、判定のしかたは 2 番のクエリの「読み方の注意」にまとめてある。
 
 ---
 
