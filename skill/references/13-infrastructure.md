@@ -75,9 +75,18 @@ ls -la .dockerignore 2>/dev/null || echo "  .dockerignore が無い"
 ### 2-3. ベースイメージ
 
 - **版が固定されているか。** `:latest` は、ビルドのたびに中身が変わる。
-  何を監査したのかが言えなくなる（`references/10-dependencies.md` のロックファイルと同じ話）
+  何を監査したのかが言えなくなる（`references/10-dependencies.md` のロックファイルと同じ話）。
+  **版のタグも差し替えられる**（2026-03 に、公式のセキュリティツールのイメージの既存タグが悪性版に
+  置き換えられた）。確実なのは `FROM image@sha256:…` のダイジェスト固定
+- ビルドの中で依存を入れるとき、`npm ci --ignore-scripts` などで**インストール時のスクリプトを止めているか**。
+  `.npmrc` や `ARG NPM_TOKEN` でトークンをイメージに持ち込んでいないか
 - 由来が確かなイメージか。個人が公開しているものを土台にしていないか
 - 更新の仕組みがあるか。**ベースイメージの脆弱性は、アプリを直さなくても増える**
+
+```bash
+grep -nE '^FROM' Dockerfile* 2>/dev/null | grep -v '@sha256:'
+grep -nE 'npm (install|ci)|COPY .*\.npmrc|ARG .*TOKEN' Dockerfile* 2>/dev/null
+```
 
 ---
 
@@ -95,6 +104,8 @@ grep -rnE '0\.0\.0\.0/0|::/0|public|acl.*public-read|allUsers|allAuthenticatedUs
 - 全開放の受信規則（`0.0.0.0/0`）が、管理用のポートに付いていないか
 - ストレージが公開読み取りになっていないか
 - **意図した公開もある**（静的サイトの配信）。用途を確かめてから起票する
+- **既定値は作成時期で違う。** AWS の S3 は 2023-04 以降に作ったバケットだけ、公開ブロックが有効・ACL 無効が既定になった。
+  それより前からあるバケットは変わっていないので、作成日を確かめる
 
 ### 3-2. 権限の広さ
 
@@ -147,14 +158,23 @@ git log --all --oneline -- '*.tfstate' 2>/dev/null | head
 
 - **関数ごとの権限が分かれているか。** 全関数に同じ広い権限を渡していないか
 - 環境変数に秘密情報を直書きしていないか（**定義ファイルはリポジトリにある**）
-- 公開する関数と、内部からのみ呼ぶ関数が分かれているか
+- 公開する関数と、内部からのみ呼ぶ関数が分かれているか。**AWS Lambda の Function URL で `AuthType: NONE` は
+  認証なしの公開**で、関数の中で認証していなければ誰でも呼べる
 - タイムアウトと同時実行数の上限。**無制限なら、費用が青天井になる**（02 の F 節）
+
+```bash
+# 認証なしで公開される関数の URL（SAM / CloudFormation / CDK / Terraform / Serverless Framework / Firebase）
+grep -rnE 'AuthType.*NONE|authType:.*NONE|FunctionUrlAuthType|authorization_type[[:space:]]*=[[:space:]]*"NONE"|aws_lambda_function_url|^[[:space:]]*url:[[:space:]]*true|invoker:[[:space:]]*.?public' \
+  --include='*.y*ml' --include='*.ts' --include='*.json' --include='*.tf' . 2>/dev/null | grep -v node_modules
+```
 
 ---
 
 ## 6. マネージド構成の場合
 
-**この資料の出番は無い。** 設定は管理画面にあり、コードには現れない。
+**この資料の出番はほとんど無い。** 設定は管理画面にあり、コードには現れない。
+**ただし `.github/workflows/` は例外。** CI の定義は秘密情報と本番への権限を持つインフラの定義で、
+マネージド構成でもリポジトリにある。`references/10-dependencies.md` の 3-3 で見る。
 `references/03-runtime-verification.md` の 5〜8 節（ネットワーク、鍵、環境の分離、
 エッジ・WAF）で実機を見る。
 
