@@ -157,6 +157,14 @@ mutate "audit_grep: Convex の確認を次の関数へ持ち越す" "scripts/aud
   's = s.replace("(ok ? \"認証の確認あり\" : \"★ 認証の確認なし\"); name=\"\"; ok=0 }", "(ok ? \"認証の確認あり\" : \"★ 認証の確認なし\"); name=\"\" }")'
 mutate "audit_grep: パスを空白でも分割する（旧不具合）" "scripts/audit_grep.sh" "空白を含むパスのマイグレーションも読む" \
   's = s.replace("IFS=$\x27\\n\x27; set -f", "set -f")'
+mutate "audit_grep: find の除外を外す（旧不具合）" "scripts/audit_grep.sh" "node_modules を一覧に出さない" \
+  's = s.replace("find . $(prune_expr) -o -type f", "find . -type f", 1)'
+mutate "audit_grep: 出力全体の伏字を外す" "scripts/audit_grep.sh" "Host ヘッダの行の鍵を出さない" \
+  's = s.replace("2>&1 | out_filter", "2>&1 | cat")'
+mutate "audit_grep: 切り捨てを黙る" "scripts/audit_grep.sh" "切ったことと残りの件数を示す" \
+  's = s.replace("END { if (NR > n) printf", "END { if (0) printf")'
+mutate "audit_grep: messages.create を Twilio に限らない" "scripts/audit_grep.sh" "Anthropic の messages.create を SMS と言わない" \
+  's = s.replace("do grep -lE \"twilio|Twilio\" \"$f\" 2>/dev/null; done", "do echo \"$f\"; done")'
 mutate "audit_grep: React2Shell の修正版を取り違える" "scripts/audit_grep.sh" "React2Shell の修正前を判定" \
   's = s.replace("15.1) fix=15.1.9", "15.1) fix=15.1.0")'
 

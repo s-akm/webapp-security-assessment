@@ -498,6 +498,53 @@ JS
   contains "audit_grep[基盤]: 空白を含むパスのマイグレーションも読む" "★ public.secrets"          "$SPC"
   # 依存名は、実際のロックファイルのように間に integrity / dev が入っても取れること
   absent   "audit_grep[依存]: 取得元の URL の認証情報を伏せる"       "user:secret"                    "$S21"
+  # ---- 依存と生成物を読まない・値を出さない・切り捨てを示す（2.17.4 の修正） ----
+  G="$TMP/guards"; mkdir -p "$G/node_modules/pkg" "$G/.next/server/app/api/x" "$G/app/api/ok" "$G/app/api/host" \
+    "$G/.github/workflows" "$G/scripts/rebuild" "$G/theme" "$G/app/api/chat" "$G/app/api/many"
+  printf 'export function GET(){}\n' > "$G/node_modules/pkg/index.js"
+  printf 'export function GET(){}\n' > "$G/.next/server/app/api/x/route.js"
+  printf 'export async function GET(){ await requireUser(); }\n' > "$G/app/api/ok/route.ts"
+  # 伏字を通していなかった節（10b の Host ヘッダ、20 の CI、6 の DEBUG）に値を置く
+  printf 'export async function POST(req){ const h = req.headers.get("host"); const k = "AIzaFIXTUREFIXTUREFIXTUREFIXTUREFIX1"; }\n' > "$G/app/api/host/route.ts"
+  printf 'on: push\npermissions:\n  contents: read\njobs:\n  a:\n    steps:\n      - run: curl -u admin:FIXTURE-CI-PASSWORD https://example.invalid/\n' > "$G/.github/workflows/ci.yml"
+  printf 'DEBUG = "FIXTURE-DEBUG-SECRET-VALUE-1234567890"\n' > "$G/settings.py"
+  printf 'export const k = "x";\n' > "$G/scripts/rebuild/debug.ts"
+  # Anthropic の SDK の messages.create は SMS ではない
+  printf 'import Anthropic from "@anthropic-ai/sdk";\nexport async function POST(){ return client.messages.create({ model: "m", messages: [] }); }\n' > "$G/app/api/chat/route.ts"
+  # PHP のテンプレートの計測タグ
+  printf '<script async src="https://www.googletagmanager.com/gtag/js?id=G-FIXTURE"></script>\n' > "$G/theme/header.php"
+  # 切り捨て: 同じ危険な関数を 25 か所に置く（3 節の一覧は 20 件で切る）
+  for i in $(seq 1 25); do printf 'export function GET(){ el.innerHTML = x%s; }\n' "$i"; done > "$G/app/api/many/route.ts"
+  # 大文字の変数名と新しい鍵の形式（4 節）
+  printf 'API_KEY = "FIXTUREFIXTUREFIXTUREFIXTURE12"\nconst k = "sk-proj-FIXTUREFIXTUREFIXTUREFIXTURE"\n' > "$G/config.py"
+  # minify された長い 1 行
+  # 節ごとの伏字（200 文字で切る）を通らない節（12 節の例外の握りつぶし）に置く
+  { printf 'try{f()}catch(e){}'; for i in $(seq 1 300); do printf '+b'; done; printf '\n'; } > "$G/app/api/ok/bundle.js"
+  GD="$(bash "$SKILL/scripts/audit_grep.sh" "$G" 2>&1)"
+  S2G="$(printf '%s\n' "$GD" | LC_ALL=C awk 'index($0, "=== 2. ") == 1 { f = 1; print; next } f && /^=== / { exit } f')"
+  contains "audit_grep[除外]: 自前のハンドラは一覧に出す"            "app/api/ok/route.ts"            "$S2G"
+  absent   "audit_grep[除外]: node_modules を一覧に出さない"          "node_modules"                   "$S2G"
+  absent   "audit_grep[除外]: .next を一覧に出さない"                 ".next/"                         "$S2G"
+  absent   "audit_grep[伏字]: Host ヘッダの行の鍵を出さない"          "AIzaFIXTUREFIXTUREFIXTUREFIXTUREFIX1" "$GD"
+  absent   "audit_grep[伏字]: CI の curl -u の認証情報を出さない"     "FIXTURE-CI-PASSWORD"            "$GD"
+  absent   "audit_grep[伏字]: DEBUG の値を出さない"                   "FIXTURE-DEBUG-SECRET-VALUE"     "$GD"
+  absent   "audit_grep[伏字]: sk-proj の鍵を出さない"                 "sk-proj-FIXTUREFIXTUREFIXTUREFIXTURE" "$GD"
+  contains "audit_grep[鍵]: 大文字の変数名の鍵を拾う"                "config.py:1"                    "$GD"
+  contains "audit_grep[鍵]: sk-proj の鍵を拾う"                      "config.py:2"                    "$GD"
+  contains "audit_grep[除外]: rebuild を含むパスを落とさない"        "scripts/rebuild/debug.ts"       "$GD"
+  absent   "audit_grep[SMS]: Anthropic の messages.create を SMS と言わない" "=== 24."             "$GD"
+  contains "audit_grep[タグ]: PHP のテンプレートのタグを拾う"         "theme/header.php"               "$GD"
+  contains "audit_grep[切り捨て]: 切ったことと残りの件数を示す"       "（ほか "                        "$GD"
+  contains "audit_grep[長い行]: 長い行を切る"                         "（長い行を省略）"               "$GD"
+  if printf '%s\n' "$GD" | LC_ALL=C awk 'length($0) > 700 { bad = 1 } END { exit bad ? 0 : 1 }'; then
+    ng "audit_grep[長い行]: 700 バイトを超える行を出さない" "長い行がそのまま出ている"
+  else ok "audit_grep[長い行]: 700 バイトを超える行を出さない"; fi
+  contains "audit_grep[節]: 該当しないので省いた節を示す"           "該当しないので省いた節:"        "$GD"
+  contains "audit_grep[節]: 冒頭に節の一覧"                          "節: 0 構成 / 1 規模"            "$GD"
+  # 列の幅は表示の幅で揃える（日本語 2 桁）。「インフラの定義」は 7 文字＝14 桁なので、値は 29 桁目から始まる
+  if printf '%s\n' "$GD" | grep -E '^  インフラの定義 {12}(有|無)' >/dev/null; then ok "audit_grep[体裁]: 0 節の列を表示の幅で揃える"
+  else ng "audit_grep[体裁]: 0 節の列を表示の幅で揃える" "列がずれている"; fi
+
   # 題材に無い構成では、これらの節を出さない（見たことにしない）
   RN="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/repo-realistic" 2>&1)"
   absent   "audit_grep[基盤]: BaaS が無ければ 19 節を出さない"       "=== 19."                        "$RN"
