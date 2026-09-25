@@ -758,11 +758,18 @@ for c in python3 /usr/bin/python3 python; do
   command -v "$c" >/dev/null 2>&1 || continue
   "$c" -c 'import openpyxl' 2>/dev/null && { PY_BIN="$c"; break; }
 done
+# openpyxl が無いときの案内。import で失敗する openpyxl を PYTHONPATH の先頭に置いて、
+# どの環境でも「無い」状態を作る。Homebrew の python3.13 / 3.14 は PEP 668 で pip install が
+# 失敗するので、pip だけを案内すると、利用者は案内どおりにして失敗する。
+FAKE="$TMP/no-openpyxl/openpyxl"; mkdir -p "$FAKE"
+printf '%s\n' 'raise ImportError("題材: openpyxl が無い状態を作る")' > "$FAKE/__init__.py"
+msg="$(PYTHONPATH="$TMP/no-openpyxl" python3 "$SKILL/scripts/make_register.py" "$TMP/x.xlsx" 2>&1 || true)"
+contains "make_register: openpyxl 不在時に案内を出す" "openpyxl が見つからない" "$msg"
+contains "make_register: 導入の案内に venv がある（PEP 668 の環境向け）" "python3 -m venv" "$msg"
+contains "make_register: 導入の案内に uv がある" "uv run --with openpyxl" "$msg"
+contains "make_register: 導入の案内に apt がある" "apt install python3-openpyxl" "$msg"
 if [[ -z "$PY_BIN" ]]; then
   printf '  \033[33m-\033[0m make_register: openpyxl を持つ python が無いため省略\n'
-  # 依存が無いときに、素の ImportError ではなく案内を出すことだけは確かめる
-  msg="$(python3 "$SKILL/scripts/make_register.py" "$TMP/x.xlsx" 2>&1 || true)"
-  contains "make_register: openpyxl 不在時に案内を出す" "openpyxl が見つからない" "$msg"
 else
   for mode in none owasp full; do
     M="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-$mode.xlsx" --frameworks "$mode" 2>&1)"
@@ -825,6 +832,28 @@ PY
   if printf '%s' "$V" | grep '^NG' >/dev/null; then
     ng "make_register: 集計数式が指摘一覧シートを正しく指す" "$V"
   else ok "make_register: 集計数式が指摘一覧シートを正しく指す"; fi
+
+  # 総合評価の副題が、その構成の指摘一覧シートの名前を書いているか。
+  # full で「3_指摘事項一覧から自動集計」と書かれていた（full の 3 枚目は個人情報のシート）。
+  SUB="$("$PY_BIN" -c 'import sys; from openpyxl import load_workbook; wb = load_workbook(sys.argv[1]); print(wb[wb.sheetnames[0]]["A2"].value)' "$TMP/r-full.xlsx" 2>&1)"
+  contains "make_register: full の副題が 6_指摘事項一覧 を指す" "『6_指摘事項一覧』から自動集計" "$SUB"
+  absent "make_register: full の副題に 3_指摘事項一覧 と書かない" "3_指摘事項一覧" "$SUB"
+
+  # 既にあるファイルを黙って上書きしない。書きかけの台帳が雛形で潰れる。
+  printf '%s' "書きかけの台帳（題材）" > "$TMP/r-exist.xlsx"
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-exist.xlsx" >/dev/null 2>&1; then
+    ng "make_register: 既にあるファイルは上書きせずに止まる" "終了コードが 0"
+  elif [[ "$(cat "$TMP/r-exist.xlsx")" != "書きかけの台帳（題材）" ]]; then
+    ng "make_register: 既にあるファイルは上書きせずに止まる" "中身が書き換わった"
+  else ok "make_register: 既にあるファイルは上書きせずに止まる"; fi
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-exist.xlsx" --force >/dev/null 2>&1 \
+     && [[ "$(cat "$TMP/r-exist.xlsx" 2>/dev/null)" != "書きかけの台帳（題材）" ]]; then
+    ok "make_register: --force なら上書きする"
+  else ng "make_register: --force なら上書きする"; fi
+  # 拡張子が .xlsx でなければ止める（中身は xlsx なのに、表計算ソフトが別の形式として開こうとする）
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-ext.xls" >/dev/null 2>&1 || [[ -e "$TMP/r-ext.xls" ]]; then
+    ng "make_register: 拡張子が .xlsx でなければ止まる"
+  else ok "make_register: 拡張子が .xlsx でなければ止まる"; fi
 fi
 
 # --- recon.sh / browser_probe.mjs は実サイトへ出る。発火台を立てて確かめる ---

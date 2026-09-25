@@ -3,6 +3,9 @@
 
     python make_register.py <出力先.xlsx> [--service "サービス名"] [--date 2026-01-15]
                             [--frameworks none|owasp|full] [--owasp 2025|2021] [--api]
+                            [--force]
+
+出力先が既にあれば止まる（書きかけの台帳を雛形で潰さないため）。上書きするなら --force。
 
 --frameworks で枠組みへの当てはめシートの構成を選ぶ。
 
@@ -23,29 +26,59 @@
 
 import argparse
 import datetime as _dt
+import os
+import sys
+
+
+def _externally_managed():
+    """pip install がこの python に対して拒否されるか（PEP 668）。
+
+    Homebrew の python3.13 / 3.14 や Debian 系の python3 は EXTERNALLY-MANAGED を置いており、
+    仮想環境の外で pip install すると「externally-managed-environment」で失敗する。
+    その環境に pip install を案内すると、利用者は案内どおりにして失敗する。
+    """
+    if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
+        return False  # 仮想環境の中なら pip で入る
+    try:
+        import sysconfig
+        return os.path.exists(os.path.join(sysconfig.get_path("stdlib"), "EXTERNALLY-MANAGED"))
+    except Exception:  # noqa: BLE001
+        return False
+
 
 try:
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.datavalidation import DataValidation
 except ImportError:  # noqa: BLE001
     import shutil
     import subprocess
-    import sys as _sys
 
-    print("openpyxl が見つからない。次のいずれかで導入する。", file=_sys.stderr)
-    print(f"  {_sys.executable} -m pip install openpyxl", file=_sys.stderr)
+    _me = os.path.abspath(__file__)
+    print("openpyxl が見つからない。次のいずれかで導入する。", file=sys.stderr)
+    if _externally_managed():
+        print("  この python は外部管理（PEP 668）のため、pip install は失敗する。", file=sys.stderr)
+    else:
+        print(f"  {sys.executable} -m pip install openpyxl", file=sys.stderr)
+    print("  仮想環境を作る:", file=sys.stderr)
+    print("    python3 -m venv .venv && .venv/bin/pip install openpyxl", file=sys.stderr)
+    print(f"    .venv/bin/python {_me} <出力先.xlsx>", file=sys.stderr)
+    print("  uv があれば、入れずにその場で使える:", file=sys.stderr)
+    print(f"    uv run --with openpyxl python {_me} <出力先.xlsx>", file=sys.stderr)
+    print("  Debian / Ubuntu の python3 なら: sudo apt install python3-openpyxl", file=sys.stderr)
     # 別の python に入っていることが多い。探して案内する。
-    for _cand in ("/usr/bin/python3", "python3.13", "python3.12", "python3.11"):
+    for _cand in ("/usr/bin/python3", "python3.14", "python3.13", "python3.12",
+                  "python3.11", "python3.10", "python3.9"):
         _path = _cand if _cand.startswith("/") else shutil.which(_cand)
-        if not _path or _path == _sys.executable:
+        if not _path or not os.path.exists(_path) or os.path.realpath(_path) == os.path.realpath(sys.executable):
             continue
         _r = subprocess.run(
             [_path, "-c", "import openpyxl"], capture_output=True, check=False
         )
         if _r.returncode == 0:
-            print(f"  すでに入っている python がある: {_path}", file=_sys.stderr)
-            print(f"  例: {_path} {__file__} <出力先.xlsx>", file=_sys.stderr)
+            print(f"  すでに入っている python がある: {_path}", file=sys.stderr)
+            print(f"  例: {_path} {_me} <出力先.xlsx>", file=sys.stderr)
             break
     raise SystemExit(1)
 
@@ -138,7 +171,7 @@ def sheet_summary(wb, names, service, date):
     ws = wb.create_sheet(names["summary"])
     title_block(ws, f"{service} セキュリティ評価",
                 f"評価日 {date}／個人情報を取り扱う Web アプリケーションとしての適合性評価。"
-                "件数と工数は『3_指摘事項一覧』から自動集計される。", 5)
+                "件数と工数は『{}』から自動集計される。".format(names["findings"]), 5)
 
     ws["A4"] = "■ 評価の前提"
     ws["A4"].font = Font(name=FONT, size=11, bold=True, color=NAVY)
@@ -531,7 +564,19 @@ def main():
                     help="OWASP Top 10 の版（既定: 2025）")
     ap.add_argument("--api", action="store_true",
                     help="OWASP API Security Top 10 のシートも作る（API が主体の構成のとき）")
+    ap.add_argument("--force", action="store_true",
+                    help="出力先が既にあれば上書きする（既定では止まる）")
     args = ap.parse_args()
+
+    # 書きかけの台帳を雛形で黙って潰さない。拡張子が違えば、表計算ソフトが開けない
+    # ファイルができる（.xls や拡張子なしで保存しても中身は xlsx のまま）。
+    if not args.output.lower().endswith(".xlsx"):
+        ap.error(f"出力先の拡張子は .xlsx にする: {args.output}")
+    if os.path.exists(args.output) and not args.force:
+        print(f"既にある: {args.output}", file=sys.stderr)
+        print("  書きかけの台帳を雛形で上書きしないよう止めた。上書きするなら --force を付ける。",
+              file=sys.stderr)
+        raise SystemExit(1)
 
     names = dict(LAYOUTS[args.frameworks])
     if args.api:
