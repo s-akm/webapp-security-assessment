@@ -95,18 +95,18 @@ for f in "$SKILL"/scripts/*; do
 done
 
 # 構文
-for f in "$SKILL"/scripts/*.sh; do
+for f in "$SKILL"/scripts/*.sh "$ROOT"/build/hooks/*; do
   if bash -n "$f" 2>/dev/null; then ok "構文: $(basename "$f")"
   else ng "構文: $(basename "$f")"; fi
 done
 # bash 3.2（macOS の既定）は、UTF-8 の環境で "$v（" のように変数名の直後に全角文字が続くと、
 # その文字まで変数名として読み、set -u で止まる。実際に 1b 節がロックファイルの無い構成で止まっていた。
 # 構文検査（bash -n）では見つからないので、書き方で捕まえる。${v} と書けば起きない。
-mb="$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+mb="$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
 # pipefail のもとで「… | grep -q」と書くと、grep -q が見つけた時点で終わり、書き手が SIGPIPE で落ちて
 # パイプライン全体が失敗扱いになる。見つかったのに「無い」と判定することが確率的に起きる（Linux で 200 回に 1 回）。
 # 検査の absent では、本当は出ている文字列を「出ていない」として素通りさせる。grep ... >/dev/null で読み切らせる。
-gq="$(grep -nE '(^|[^|])\|[[:space:]]*grep[[:space:]]+-q' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh 2>/dev/null \
+gq="$(grep -nE '(^|[^|])\|[[:space:]]*grep[[:space:]]+-q' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
       | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#|s = s\.replace\(' || true)"
 if [[ -z "$gq" ]]; then ok "パイプで grep -q に渡していない（pipefail のもとで確率的に誤る書き方）"
 else ng "パイプで grep -q に渡していない（pipefail のもとで確率的に誤る書き方）" "$(printf '%s' "$gq" | head -3 | cut -c1-120)"; fi

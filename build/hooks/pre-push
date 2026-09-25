@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# pre-push — 公開してはいけないものを push しない（手元の最後の関門）
+#
+#   有効にする: git config core.hooksPath build/hooks
+#
+# このリポジトリは公開している。以前、案件の履歴を持つブランチが手元にあり、`git push` を 1 回打てば
+# 公開される状態だった（push.autosetupremote が有効な環境では特に）。ここで止める。
+#   1. main と版のタグ（v*）以外は push しない
+#   2. push するコミットの追加行に、案件語（tests/ngwords.local）が無いこと
+#   3. push するコミットの作者と記録者のメールアドレスが、GitHub の noreply であること
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+ZERO="0000000000000000000000000000000000000000"
+bad=0
+
+words=""
+if [[ -f "$ROOT/tests/ngwords.local" ]]; then
+  words="$(grep -vE '^[[:space:]]*(#|$)' "$ROOT/tests/ngwords.local" | paste -sd '|' -)"
+fi
+
+while read -r lref lsha rref rsha; do
+  [[ -z "${lref:-}" ]] && continue
+  case "$rref" in
+    refs/heads/main|refs/tags/v[0-9]*) ;;
+    *) echo "pre-push: $rref への push は許可していない（main と版のタグだけ）" >&2; bad=1; continue ;;
+  esac
+  [[ "$lsha" == "$ZERO" ]] && continue          # 削除
+  if [[ "$rsha" == "$ZERO" ]]; then range="$lsha --not --remotes"; else range="$rsha..$lsha"; fi
+  # shellcheck disable=SC2086
+  if [[ -n "$words" ]]; then
+    n="$(git log -p --format= $range 2>/dev/null | grep -E '^\+' | grep -ciE "$words" || true)"
+    if [[ "${n:-0}" -gt 0 ]]; then
+      echo "pre-push: push するコミットの追加行に案件語が $n 行ある（値は出さない。git log -p で確かめる）" >&2; bad=1
+    fi
+  fi
+  # shellcheck disable=SC2086
+  mails="$(git log --format='%ae%n%ce' $range 2>/dev/null | sort -u | grep -vE '@users\.noreply\.github\.com$|^noreply@anthropic\.com$' || true)"
+  if [[ -n "$mails" ]]; then
+    echo "pre-push: noreply でないメールアドレスのコミットがある（git config user.email で noreply にする）" >&2; bad=1
+  fi
+done
+
+exit $bad
