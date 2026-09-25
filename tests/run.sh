@@ -1452,7 +1452,9 @@ else
     # それを値として読むと「有」と誤る（実際に DKIM・CAA・配信用サブドメインで誤っていた）。
     R8="$(RECON_DNS="127.0.0.1:$DPORT" bash "$SKILL/scripts/recon.sh" "http://silent.test:1" 2>&1 || true)"
     contains "recon[DNS無応答]: 応答しないと言う"                 "DNS が応答しない"        "$R8"
-    absent   "recon[DNS無応答]: タイムアウトの文言を値として出さない" "connection timed out"  "$R8"
+    # dig の診断は版で文言が違う（macOS は connection timed out、Linux の BIND 9.18 以降は communications error）。
+    # どれも「;;」で始まるので、それで見る（文言で見ていたため、Linux では変異を入れても落ちなかった）
+    absent   "recon[DNS無応答]: タイムアウトの文言を値として出さない" ";;"  "$R8"
     absent   "recon[DNS無応答]: DKIM を「有」と言わない"          "[有] resend._domainkey"  "$R8"
     absent   "recon[DNS無応答]: SPF を「無」と言わない"           "[無] SPF"                "$R8"
     absent   "recon[DNS無応答]: DMARC を「無」と言わない"         "[無] DMARC"              "$R8"
@@ -1463,7 +1465,7 @@ else
     contains "recon[DNS一部無応答]: DS は取得できないと言う"      "DS     : （取得できない"  "$R9"
     contains "recon[DNS一部無応答]: 配信用サブドメインは取得できないと言う" "send.partial.test 以降: （取得できない" "$R9"
     contains "recon[DNS一部無応答]: DKIM は取得できないと言う"    "resend._domainkey 以降: （取得できない" "$R9"
-    absent   "recon[DNS一部無応答]: タイムアウトの文言を値として出さない" "connection timed out" "$R9"
+    absent   "recon[DNS一部無応答]: タイムアウトの文言を値として出さない" ";;" "$R9"
     # 受け口そのものに届かないとき（誰も待っていないポート）。最初の失敗で打ち切る
     R10="$(RECON_DNS="127.0.0.1:1" bash "$SKILL/scripts/recon.sh" "http://example.test:1" 2>&1 || true)"
     contains "recon[DNS不達]: 応答しないと言う"                   "DNS が応答しない"        "$R10"

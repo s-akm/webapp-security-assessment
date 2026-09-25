@@ -99,6 +99,9 @@
 - CI: 週 1 回の検査の検査と push の検査が互いを打ち切っていた。Linux で mawk、macOS で BSD の道具と bash 3.2 で
   回っていることを確かめる（以前は切り替えの失敗を無視していた）
 - 変異の 1 件が、置換対象の書き方が前の修正で変わって見つからず、生きていない扱いになっていた
+- **Linux でだけ生きていない検査があった。** DNS の無応答の文言を「connection timed out」で探していたが、
+  Linux の dig（BIND 9.18 以降）は「communications error」と出すので、壊しても落ちなかった。
+  dig の診断の先頭「;;」で見る
 - 配布物の中身の検査を広げた（`.env`・`node_modules`・`~$`・`.swp`・`.DS_Store`・`settings.local.json`・xlsx）。
   zip の一覧が `git ls-files skill` と一致するかを見る
 - 検査 404 → 632 件、変異 35 → 102 件。macOS と Linux（Docker）の両方で全件通り、変異はすべて落ちることを確かめた
