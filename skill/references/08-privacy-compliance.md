@@ -71,7 +71,7 @@ grep -rn 'Script\|<script' app/layout.tsx src/app/layout.tsx 2>/dev/null
 **確かめ方。** 送信の有無はブラウザで分かる（`references/09-browser-verification.md` の 1 節）。
 **何が記録されたかは、ツールの管理画面で録画を再生しないと分からない**（送信は圧縮されていて、通信を見ても読めないことが多い）。
 依頼者に、試験用のアカウントで目印の文字列（例: `SECTEST-1234`）を入力欄・プロフィールの表示・自由記述欄に入れてもらい、
-管理画面の録画で見えるかを確かめてもらう（`references/03-runtime-verification.md` のモード B）。確かめられなければ未確認事項に残す。
+管理画面の録画で見えるかを確かめてもらう（`references/03-runtime-verification.md` のモード B。手順と判定は `references/09-browser-verification.md` の 11 節、渡す文面は `templates/client-browser-checklist.md` の 9）。マスクの設定と保持期間は `templates/client-console-checklist.md` の 8 で聞く。確かめられなければ未確認事項に残す。
 
 **法令の観点では、事実を揃えて法務に渡す。**
 
@@ -132,7 +132,7 @@ gtag\(.?.?consent|__tcfapi|iabtcf' --include='*.ts' --include='*.tsx' --include=
 curl -s https://<domain>/ | grep -oE 'src="https://[^"]+"' | sort -u
 ```
 
-素のリクエストで広告・計測のスクリプトが返ってくるなら、**同意の有無にかかわらず読み込まれている**。ブラウザで確認できる環境なら、拒否を選んだ状態で通信が止まるかまで見る。
+素のリクエストで広告・計測のスクリプトが返ってくるなら、**同意の有無にかかわらず読み込まれている**。ブラウザで確認できる環境なら、拒否を選んだ状態で通信が止まるかまで見る（`references/09-browser-verification.md` の 8 節）。
 
 ---
 
