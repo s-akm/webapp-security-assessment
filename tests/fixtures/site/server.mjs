@@ -14,6 +14,7 @@
 //   - CSP に unsafe-inline がある
 //   - セキュリティヘッダが無い
 //   - /mypage が Cache-Control 無しで個人情報らしきものを出す
+//   - /.env の中身が外から取れる
 //   - /meta-csp は CSP を <meta> で置き、unsafe-inline を持つ（ヘッダだけを見ると「無い」と誤る）
 //   - /default-only は script-src が無く、default-src に unsafe-inline がある
 //   - /elem-csp は script-src-elem が厳しく、script-src（イベントハンドラ属性に効く）に unsafe-inline がある
@@ -113,6 +114,13 @@ const PAGES = {
     headers: { "content-type": "text/html; charset=utf-8" },
     body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>マイページ</title></head>
 <body><h1>マイページ</h1><p>ダミー太郎 さま</p></body></html>`,
+  }),
+
+  // 外から設定ファイルの中身が取れる（値は架空。出力に値が出てはいけない）
+  "/.env": () => ({
+    status: 200,
+    headers: { "content-type": "text/plain" },
+    body: "# dummy\nDUMMY_SETTING=dummy-env-value-should-not-be-printed\n",
   }),
 
   // 塞がれている想定のパス

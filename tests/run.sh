@@ -840,6 +840,11 @@ else
   # 1 節で Set-Cookie の値を出さないこと（名前と属性は残す）
   absent   "recon[実地]: Set-Cookie の値を出さない"          "dummyvalue123"        "$R1"
   contains "recon[実地]: Set-Cookie の名前と属性は残す"      "session_id=<伏字>; Path=/; SameSite=Lax" "$R1"
+  # 外から .env の中身が取れる。優先度は 04 の定義に合わせて「P0 の候補」とし、報告書を待たずに
+  # 知らせる対象だと示す（SKILL.md の守ること 6）。中身の値は出さない
+  contains "recon[実地]: .env の中身が取れれば P0 の候補と言う"  "中身が返っている。P0 の候補" "$R1"
+  contains "recon[実地]: 報告書を待たずに知らせると言う"         "報告書を待たずに依頼者へ知らせる" "$R1"
+  absent   "recon[実地]: .env の値を出さない"                   "dummy-env-value-should-not-be-printed" "$R1"
 
   # 正しく作られている側にも当てる。誤検出するツールは、指摘の山に埋もれて
   # 本当に危ないものを隠す。
@@ -858,6 +863,7 @@ else
   contains "recon[相対パス]: 一重引用符・相対パスの JS を拾う" "JS 1 件"            "$RR"
   contains "recon[LLM の鍵]: OpenAI の鍵を検出する"          "LLM の鍵（OpenAI）: sk-proj-DU" "$RR"
   contains "recon[LLM の鍵]: Anthropic の鍵を検出する"       "LLM の鍵（Anthropic）"  "$RR"
+  contains "recon[LLM の鍵]: P0 の候補として知らせると言う"  "→ P0 の候補。報告書を待たずに" "$RR"
   absent   "recon[LLM の鍵]: 鍵の値を伏字にする"             "DUMMYdummyDUMMYdummy0000notreal" "$RR"
 
   # 計測タグの判定は、HTML の src 属性と自サイトのコードだけで行う。

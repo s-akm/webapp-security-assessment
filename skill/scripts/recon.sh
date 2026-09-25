@@ -106,6 +106,11 @@ dmarc_tag() { printf '%s' "$2" | tr ';' '\n' | tr -d ' \t' | tr 'A-Z' 'a-z' | gr
 
 NODNS="（取得できない。DNS が応答しない）"
 
+# 重大な露出を見つけたときの添え書き。優先度は references/04-findings-register.md の定義で引き直してから台帳に書く。
+# 外から中身が取れる・特権の鍵が配られている、は報告書を待たずに知らせる対象になる（SKILL.md の守ること 6）
+P0NOTE="← 中身が返っている。P0 の候補。報告書を待たずに依頼者へ知らせる（SKILL.md の守ること 6）"
+P0KEY="P0 の候補。報告書を待たずに依頼者へ知らせる（SKILL.md の守ること 6）"
+
 # --------------------------------------------------------------------------
 # HTTP の取得まわり
 
@@ -295,11 +300,11 @@ if [[ $REACH -eq 1 ]]; then
       is_html=""; printf '%s' "$head_" | grep -iE '<(!doctype|html|head|body)' >/dev/null && is_html=1
       case "$p" in
         /.git/HEAD)
-          if printf '%s' "$head_" | grep -E '^(ref:|[0-9a-f]{40})' >/dev/null; then note="← 中身が返っている。最優先"
+          if printf '%s' "$head_" | grep -E '^(ref:|[0-9a-f]{40})' >/dev/null; then note="$P0NOTE"
           elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
           else note="（HTML ではない何かが返っている。要確認）"; fi ;;
         /.env*)
-          if printf '%s\n' "$head_" | grep -vE '^[[:space:]]*#' | grep -E '^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' >/dev/null; then note="← 中身が返っている。最優先"
+          if printf '%s\n' "$head_" | grep -vE '^[[:space:]]*#' | grep -E '^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' >/dev/null; then note="$P0NOTE"
           elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
           else note="（HTML ではない何かが返っている。要確認）"; fi ;;
         /.well-known/security.txt)
@@ -533,13 +538,17 @@ if grep -oE 'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}' a
     payload="$(printf '%s' "$k" | cut -d. -f2)"
     pad=$(( 4 - ${#payload} % 4 )); [[ $pad -lt 4 ]] && payload="${payload}$(printf '=%.0s' $(seq $pad))"
     role="$(printf '%s' "$payload" | tr '_-' '/+' | base64 -d 2>/dev/null | grep -oE '"role"[[:space:]]*:[[:space:]]*"[^"]+"' || true)"
-    [[ -n "$role" ]] && echo "        → $role  ※ service_role 等の特権ロールならこの時点で最優先の指摘"
+    if printf '%s' "$role" | grep -E 'service_role|supabase_admin' >/dev/null; then
+      echo "        → $role  ★ 特権ロールの鍵がクライアントに出ている。${P0KEY}"
+    elif [[ -n "$role" ]]; then
+      echo "        → $role  ※ service_role 等の特権ロールなら ${P0KEY}"
+    fi
   done
   found=1
 fi
 
-# LLM の鍵。ブラウザに出ていれば、誰でも依頼者の費用で API を呼べる（スキルが最優先に置く指摘。
-# references/12-ai-features.md）。値は他の鍵と同じく伏字にする。
+# LLM の鍵。ブラウザに出ていれば、誰でも依頼者の費用で API を呼べる（references/12-ai-features.md）。
+# 秘密鍵がクライアントに配られている状態で、報告書を待たずに知らせる対象（SKILL.md の守ること 6）。値は他の鍵と同じく伏字にする。
 #   "サービス名|正規表現"
 LLM_KEYS=(
   'OpenAI|sk-(proj|svcacct|admin)-[A-Za-z0-9_-]{20,}'
@@ -558,6 +567,7 @@ for entry in "${LLM_KEYS[@]}"; do
     grep -oE "$pat" all.js | sort -u | while read -r k; do
       echo "    ★ LLM の鍵（${label}）: $(printf '%s' "$k" | mask)"
     done
+    echo "      → ${P0KEY}"
     found=1
   fi
 done
@@ -571,6 +581,10 @@ for pat in 'sb_publishable_[A-Za-z0-9_-]{10,}' 'sb_secret_[A-Za-z0-9_-]{10,}' \
     grep -oE "$pat" all.js | sort -u | while read -r k; do
       echo "    $(printf '%s' "$k" | mask)"
     done
+    # 秘密鍵の種類（公開してよい pk_live_ / sb_publishable_ / AIza 以外）は、報告書を待たずに知らせる対象
+    case "$pat" in
+      sb_secret_*|sk_live_*|rk_live_*|AKIA*|ghp_*|github_pat_*|xox*) echo "      → クライアントに出てはいけない種類。${P0KEY}" ;;
+    esac
     found=1
   fi
 done
