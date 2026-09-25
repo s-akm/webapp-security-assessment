@@ -118,7 +118,7 @@ else ng "案件固有語が含まれない" "$(printf '%s' "$hit" | head -3)"; f
 # 例示以外のドメインが書かれていないか。example.com / example.invalid だけを許す。
 bad="$(grep -rhoE 'https?://[A-Za-z0-9.-]+' "$SKILL" 2>/dev/null \
        | grep -vE '://(example\.(com|invalid|org|net)|localhost)' \
-       | grep -vE '://(www\.)?(cisa\.gov|owasp\.org|genai\.owasp\.org|mas\.owasp\.org|jvn\.jp|jvndb\.jvn\.jp|jpcert\.or\.jp|ipa\.go\.jp|ppc\.go\.jp|cisecurity\.org|github\.com|nvd\.nist\.gov)' \
+       | grep -vE '://(www\.)?(cisa\.gov|owasp\.org|genai\.owasp\.org|mas\.owasp\.org|top10\.owasp\.org|api-security\.owasp\.org|jvn\.jp|jvndb\.jvn\.jp|jpcert\.or\.jp|ipa\.go\.jp|ppc\.go\.jp|soumu\.go\.jp|cisecurity\.org|github\.com|nvd\.nist\.gov|csrc\.nist\.gov|cwe\.mitre\.org|pcisecuritystandards\.org|j-credit\.or\.jp)' \
        | sort -u || true)"
 if [[ -z "$bad" ]]; then ok "実在しうるドメインが書かれていない（公的な基準・警告情報の発行元は除く）"
 else ng "実在しうるドメインが書かれていない" "$(printf '%s' "$bad" | tr '\n' ' ')"; fi
