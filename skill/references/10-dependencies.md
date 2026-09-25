@@ -158,13 +158,14 @@ awk '/^[[:space:]]*"node_modules\//{k=$1} /"hasInstallScript": true/{gsub(/[":]/
 
 **パッケージマネージャ側の既定が変わっている。** npm 12（2026-07）と pnpm 10 以降は、依存のスクリプトを
 既定で実行せず、許可したものだけを動かす。**ただし実際にビルドしているのが古い npm なら、この保護は効かない**
-（Vercel の既定は npm 10）。見るのは手元の設定ではなく、**本番のビルドで何の版が動いているか**。
+（Vercel の既定は Node 24 に付く npm 11。Node 20 / 22 を選んでいれば npm 10。どちらも npm 12 ではない）。
+見るのは手元の設定ではなく、**本番のビルドで何の版が動いているか**。
 
 **公開直後の版を入れない設定（クールダウン）があるか。** 2025〜2026 年の npm の乗っ取り
 （Shai-Hulud、axios など）は、悪性版の公開から取り下げまで数時間だった。数日の待機でその大半を避けられる。
 
 ```bash
-grep -nE 'ignore-scripts|min-release-age|allow-(git|remote|scripts)|^registry' .npmrc 2>/dev/null
+grep -nE 'ignore-scripts|min-release-age|allow-(git|remote|scripts)|dangerously-allow-all-scripts|^registry' .npmrc 2>/dev/null
 grep -c '_authToken' .npmrc 2>/dev/null   # 数だけ見る。値は出さない。1 以上ならトークンがリポジトリにある
 grep -nE '"(allowScripts|overrides|resolutions|packageManager)"' package.json
 grep -nE 'minimumReleaseAge|allowBuilds|onlyBuiltDependencies|dangerouslyAllowAllBuilds|blockExoticSubdeps' pnpm-workspace.yaml package.json 2>/dev/null
@@ -222,9 +223,12 @@ Vercel のようなマネージド構成でも、`.github/workflows/` は**秘�
 - **外部から来る値を `run:` に直接埋め込んでいないか。** PR のタイトルやブランチ名を `${{ }}` で `run:` に書くと、
   シェルに注入できる（nx の根本原因）。環境変数に入れてから参照するのが正しい
 - **`pull_request_target` / `workflow_run` で PR の中身を取得して動かしていないか。** 秘密情報を持った状態で
-  他人のコードが走る。`actions/checkout` は 2026-06 から既定でこれを拒否するが、解除する入力
-  （`allow-unsafe-pr-checkout`）や、手書きの `git fetch` / `gh pr checkout` には及ばない
-- **信頼できないトリガーからキャッシュを書けないか**（TanStack の事例。2026-06 から既定で読み取り専用）
+  他人のコードが走る。`actions/checkout` は既定で**フォークからの PR** の取得を拒否するようになった
+  （v7 で 2026-06、v2〜v6 の最新版にも 2026-07 に取り込み。v1 には無い）が、**古い版のハッシュで固定していれば効かない**。
+  解除する入力（`allow-unsafe-pr-checkout`）や、手書きの `git fetch` / `gh pr checkout` にも及ばない。
+  公開リポジトリでは、`pull_request_target` を既定で止めるルールが 2026-11-02 から適用される予定
+- **信頼できないトリガーからキャッシュを書けないか**（TanStack の事例。2026-06 から既定で読み取り専用だが、
+  2026-09 に足された `cache-mode` をワークフローに書くと上書きできる）
 - npm に公開する権限を持つトークンが CI にあるか。あれば、**公開は OIDC による Trusted Publishing か**。
   ただし**出所の証明（provenance）が正しくても安全とは言えない。** 正規の OIDC 経路から悪性版が公開された事例がある
 
@@ -235,7 +239,7 @@ grep -rnE 'uses:[[:space:]]*[^[:space:]#]+@' $W 2>/dev/null | grep -vE '@[0-9a-f
 grep -rnE 'uses:[[:space:]]*docker://' $W 2>/dev/null
 # 危険なトリガーと PR の中身の取得
 grep -rnE 'pull_request_target|workflow_run|issue_comment' $W 2>/dev/null
-grep -rnE 'allow-unsafe-pr-checkout|head\.(sha|ref)|refs/pull/|gh pr checkout' $W 2>/dev/null
+grep -rnE 'allow-unsafe-pr-checkout|cache-mode:|head\.(sha|ref)|refs/pull/|gh pr checkout' $W 2>/dev/null
 # 外部から来る値の ${{ }} 展開。run: | の複数行ブロックの中にも来るので、ファイル全体で拾い、run: の中かを目で見る
 grep -rnE '\$\{\{[[:space:]]*(github\.event\.(issue|pull_request|comment|review|head_commit|commits|pages)|github\.head_ref)' $W 2>/dev/null
 # 権限と秘密情報
