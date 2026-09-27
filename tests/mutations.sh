@@ -340,6 +340,11 @@ mutate "audit_grep: 2f でクラスの装飾子を読まない" "scripts/audit_g
 mutate "audit_grep: 2f で処理の宣言の引数を読まない" "scripts/audit_grep.sh" "処理の宣言の引数の認可を読む" \
   's = s.replace("    cut -f6 \"$HF_DECO\" | grep -nE \"$GUARD\" 2>/dev/null | cut -d: -f1 >> \"$HF_DECO.g\" || true\n", "")'
 
+mutate "audit_grep: 2g で注釈の読み方を拾わない" "scripts/audit_grep.sh" "権限の値をリクエストから読む（Spring）" \
+  's = s.replace("|@RequestParam\\((value *= *)?", "|@ZZZNEVER\\((value *= *)?")'
+mutate "audit_grep: 2g で項目を選んで読む書き方も並べる" "scripts/audit_grep.sh" "項目を選んで読む書き方は" \
+  's = s.replace("request\\.data|request\\.json)([^.A-Za-z_[]|$)\x27", "request\\.data|request\\.json)\x27")'
+
 # 手元の題材の変異（tests/eval/local/mutations.sh）。題材を特定できる情報を含むので公開しない。あるときだけ回す
 # shellcheck disable=SC1091
 [[ -f "$ROOT/tests/eval/local/mutations.sh" ]] && source "$ROOT/tests/eval/local/mutations.sh"

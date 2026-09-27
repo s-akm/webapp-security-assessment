@@ -748,6 +748,31 @@ else
   echo "  （装飾子でルートを宣言するファイルは無い）"
 fi
 
+hr "2g. 権限や更新の範囲を、利用者が送った値で決めていないか（02 の A-2・07 の 9 節）"
+# 認可の装飾子やガードが付いていても、判定の中身が利用者の送った値に頼っていれば成立しない。
+# 枠組みごとのリクエストの読み方（NestJS の @Query・Express の req.body・Rails の params・Django の request.data・
+# Spring の @RequestParam・PHP の $request->input など）と、権限を示す名前の組み合わせを表で拾う
+PRIV_NAME='(is_?admin|admin|roles?|permissions?|privileges?|is_?owner|is_?staff|is_?superuser|access_?level|user_?type)'
+PRIV_INPUT="(req|request|ctx|c|event)\.(query|body|params|headers|args|form|json|data|GET|POST)(\.|\[['\"]|\.get\(['\"])${PRIV_NAME}\b"
+PRIV_INPUT="$PRIV_INPUT|@(Query|Body|Param|Headers)\(['\"]${PRIV_NAME}['\"]|@RequestParam\((value *= *)?['\"]${PRIV_NAME}['\"]"
+PRIV_INPUT="$PRIV_INPUT|\[From(Query|Body|Header|Route)[^]]*\][^,)]*\b${PRIV_NAME}\b|params\[:${PRIV_NAME}\]"
+PRIV_INPUT="$PRIV_INPUT|\\\$_(GET|POST|REQUEST)\[['\"]${PRIV_NAME}['\"]\]|\\\$request->(input|get|query|post)\(['\"]${PRIV_NAME}['\"]"
+# 受け取ったもの全体（req.body・body・dto・request.data）だけを拾い、項目を選んで読むもの（req.body.email・body['x']）は外す
+WHOLE='(req\.body|request\.body|ctx\.request\.body|body|dto|request\.data|request\.json)([^.A-Za-z_[]|$)'
+WHOLE_INPUT='(update|updateOne|updateMany|findOneAndUpdate|findByIdAndUpdate|create|insert|save|merge|upsert|update_attributes|update!|assign_attributes|fill|forceFill)\([^)]{0,40}([^.A-Za-z_]|^)'"$WHOLE"'|\([^)]{0,40}(request\.get_json\(\)|\*\*request|\$request->all\(\)|\$_POST)'
+WHOLE_INPUT="$WHOLE_INPUT"'|Object\.assign\([^,]+,[[:space:]]*'"$WHOLE"'|\{[[:space:]]*\.\.\.'"$WHOLE"'|permit!|to_unsafe_h'
+INCL=(--include='*.ts' --include='*.js' --include='*.mjs' --include='*.py' --include='*.rb' --include='*.php' --include='*.java' --include='*.kt' --include='*.cs' --include='*.go')
+echo "  --- 権限を示す値を、リクエストから読んでいる（判定に使っていれば、利用者が自分で権限を上げられる）"
+{ grep -rnEi "${EXA[@]}" "$PRIV_INPUT" "${INCL[@]}" . 2>/dev/null | sed 's|^\./||' \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+:' \
+    | sed 's/^/  ★ /' | lim 30; } | show
+echo "  --- 受け取ったものを、そのまま作成・更新に渡している（許可する項目を絞っているかを確かめる）"
+{ grep -rnE "${EXA[@]}" "$WHOLE_INPUT" "${INCL[@]}" . 2>/dev/null | sed 's|^\./||' \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+:' \
+    | sed 's/^/  /' | lim 40; } | show
+echo "  ※ ★ は、読んだ値が権限の判定（管理者か、所有者か、役割は何か）に使われていれば指摘になる。絞り込みの条件に使うだけなら問題ない"
+echo "    受け取ったものを渡す行は、DTO や許可リストで項目を絞っていれば問題ない。絞っていなければ、利用者が権限や所有者の列を書き換えられる"
+
 hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）"
 # 'use server' のファイルでは、export された関数 1 つ 1 つが入口になる。
 # ファイル単位の「定義 N / ガード M」では、どの関数が素通しかまでは分からない。

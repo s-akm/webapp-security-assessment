@@ -1658,6 +1658,24 @@ absent   "audit_grep[2f]: 処理の宣言の引数の認可を読む（FastAPI�
 absent   "audit_grep[2f]: 下の装飾子の認可を読む（Flask）"            "api.py:9:"                        "$S2F"
 contains "audit_grep[2f]: 認可の無いルートを出す（FastAPI）"          "api.py:5: @app.post(\"/reports\")" "$S2F"
 
+# 2g. 権限や更新の範囲を、利用者が送った値で決める書き方。NestJS・Express・Rails・Django・Spring を架空の例で並べる
+CA="$TMP/client-authz"
+cp -R "$ROOT/tests/fixtures/client-authz" "$CA"
+S2G="$(bash "$SKILL/scripts/audit_grep.sh" "$CA" 2>&1 | LC_ALL=C awk 'index($0, "=== 2g.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2g]: 権限の値をリクエストから読む（NestJS）"   "★ photos.controller.ts:4:"      "$S2G"
+contains "audit_grep[2g]: 権限の値をリクエストから読む（Express）"  "★ routes.js:2:"                 "$S2G"
+contains "audit_grep[2g]: 権限の値をリクエストから読む（Rails）"    "★ users_controller.rb:4:"       "$S2G"
+contains "audit_grep[2g]: 権限の値をリクエストから読む（Django）"   "★ views.py:2:"                  "$S2G"
+contains "audit_grep[2g]: 権限の値をリクエストから読む（Spring）"   "★ AccountController.java:2:"    "$S2G"
+absent   "audit_grep[2g]: 権限と関係の無い値は並べない"             "photos.controller.ts:9:"        "$S2G"
+absent   "audit_grep[2g]: 絞り込みの値は並べない"                   "routes.js:9:"                   "$S2G"
+contains "audit_grep[2g]: 受け取ったものをそのまま渡す（NestJS）"   "photos.controller.ts:15:"       "$S2G"
+contains "audit_grep[2g]: 受け取ったものをそのまま渡す（Rails）"    "users_controller.rb:8:"         "$S2G"
+contains "audit_grep[2g]: 受け取ったものをそのまま渡す（Django）"   "views.py:6:"                    "$S2G"
+if printf '%s' "$S2G" | sed -n '/--- 受け取ったもの/,$p' | grep -F 'routes.js:2:' >/dev/null; then
+  ng "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない" "routes.js:2 が並んだ"
+else ok "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない"; fi
+
 # ★ の一覧。節に散らばった ★ を最後に集め、節の番号を付ける。説明文の ★ は数えない
 contains "audit_grep[★一覧]: 最後に ★ を集めて出す"                "=== ★ の一覧"                   "$SSTAR"
 contains "audit_grep[★一覧]: 節の番号を付ける"                     "[2b.] ★ server.js:6: app.get('/metrics'" "$SSTAR"
