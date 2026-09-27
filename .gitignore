@@ -34,3 +34,6 @@ node_modules/
 remediation/
 .env
 .env.*
+
+# 実地の評価の題材ごとの情報（取得元・下拵え・前提・結果）。公開しない
+tests/eval/local/

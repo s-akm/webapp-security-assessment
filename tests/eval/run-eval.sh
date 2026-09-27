@@ -5,15 +5,17 @@
 #     既定は --model sonnet --budget 10。配る前の節目だけ --model opus で回す
 #   tests/eval/run-eval.sh --score-only <出力のディレクトリ> [--record]
 #
-# 題材は tests/eval/targets.tsv にある、オープンソースの教材。固定したコミットを取ってきて、
+# 題材は手元の tests/eval/local/targets.tsv に書く（公開しない。書き方は tests/eval/README.md）。固定したコミットを取ってきて、
 # 答えの一覧を取り出し、答えの手掛かりを消してから、スキルだけを読み込ませた claude -p に当てる。
 #
 # tests/run.sh と違い、外部のネットワークに出て（GitHub から題材を取る・モデルを呼ぶ）、費用がかかる。
-# CI では回さない。スキルの版を上げる前に手で回し、--record で tests/eval/history.tsv に 1 行残す。
+# CI では回さない。スキルの版を上げる前に手で回し、--record で tests/eval/local/history.tsv に 1 行残す。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVAL="$ROOT/tests/eval"
+# 題材ごとの情報（取得元・下拵え・前提・結果）は手元の置き場に置く。題材を特定できる情報を公開リポジトリに入れないため
+LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
 MODEL="sonnet"; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""
 
 while [[ $# -gt 0 ]]; do
@@ -42,7 +44,8 @@ score_and_record() {
   local skill_commit dirty=""
   skill_commit="$(git -C "$ROOT" rev-parse --short HEAD)"
   git -C "$ROOT" diff --quiet HEAD -- skill || dirty="+未コミット"
-  python3 - "$out/summary.json" "$EVAL/history.tsv" "$(cat "$ROOT/VERSION")" "${skill_commit}${dirty}" "$target" "$tcommit" <<'PY'
+  [[ -f "$LOCAL/history.tsv" ]] || printf '日付\tスキルの版\tスキルのコミット\t題材\t題材のコミット\tモデル\t見つけた\tうち行で指した\t範囲内\t保留\t見誤り\t範囲が広い\t見落とし\t一覧外\t違反\t費用（米ドル）\t分\t入力トークン\tキャッシュ読みトークン\t出力トークン\n' > "$LOCAL/history.tsv"
+  python3 - "$out/summary.json" "$LOCAL/history.tsv" "$(cat "$ROOT/VERSION")" "${skill_commit}${dirty}" "$target" "$tcommit" <<'PY'
 import datetime, json, sys
 s = json.load(open(sys.argv[1], encoding='utf-8'))
 row = [datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6][:12], s.get('model', ''),
@@ -53,7 +56,7 @@ row = [datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5],
 with open(sys.argv[2], 'a', encoding='utf-8') as f:
     f.write('\t'.join(map(str, row)) + '\n')
 PY
-  echo "  tests/eval/history.tsv に記録した"
+  echo "  $LOCAL/history.tsv に記録した"
 }
 
 if [[ -n "$SCORE_ONLY" ]]; then
@@ -63,11 +66,16 @@ if [[ -n "$SCORE_ONLY" ]]; then
 fi
 
 [[ -n "$TARGET" ]] || { sed -n '2,12p' "$0"; exit 2; }
-line="$(grep -v '^#' "$EVAL/targets.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
+[[ -f "$LOCAL/targets.tsv" ]] || { echo "題材の一覧が無い: $LOCAL/targets.tsv（書き方は tests/eval/README.md）" >&2; exit 2; }
+line="$(grep -v '^#' "$LOCAL/targets.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
 [[ -n "$line" ]] || { echo "題材 $TARGET が targets.tsv に無い" >&2; exit 2; }
 REPO="$(printf '%s' "$line" | cut -f2)"; COMMIT="$(printf '%s' "$line" | cut -f3)"; PREP="$(printf '%s' "$line" | cut -f5)"
-# 下拵えの列は「スクリプト名 [引数]」（例: prep_anchors.py 題材.json）
+# 下拵えの列は「スクリプト名 [引数]」（例: prep_anchors.py 題材.json）。スクリプトは手元の置き場から探し、無ければ
+# 公開の tests/eval/ から探す。引数の相対パスは手元の置き場から見る（下拵えは手元の置き場で動かす）
 PREP_SCRIPT="${PREP%% *}"; PREP_ARGS="${PREP#"$PREP_SCRIPT"}"
+if [[ -f "$LOCAL/$PREP_SCRIPT" ]]; then PREP_PATH="$LOCAL/$PREP_SCRIPT"; else PREP_PATH="$EVAL/$PREP_SCRIPT"; fi
+# 前提の列（6 列目）。無ければ premise/<題材の名前>.md
+PREMISE="$(printf '%s' "$line" | cut -f6)"; [[ -n "$PREMISE" ]] || PREMISE="premise/$TARGET.md"
 
 # 作業場所はリポジトリの外。題材には本物の形をした鍵や穴のあるコードがあるので、リポジトリに混ぜない
 BASE="${WSA_EVAL_DIR:-${TMPDIR:-/tmp}/wsa-eval}"
@@ -91,7 +99,7 @@ done
 
 echo "答えの一覧を取り出し、手掛かりを消す"
 # shellcheck disable=SC2086  # 引数は targets.tsv に書いた語。分けて渡す
-python3 "$EVAL/$PREP_SCRIPT" $PREP_ARGS "$SRC" "$OUT/answers.json"
+( cd "$LOCAL" && python3 -B "$PREP_PATH" $PREP_ARGS "$SRC" "$OUT/answers.json" )
 
 # audit_grep.sh は先に回して、出力を読ませる。エージェントに回させると、変数やパイプを組み合わせたコマンドになり、
 # 許可の条件（読むことと audit_grep.sh の単独の呼び出し）に合わず止められる（初回の実測で 3 回止められ、1 度も回らなかった）。
@@ -113,8 +121,8 @@ fi
 
 command -v claude >/dev/null || { echo "claude が無い" >&2; exit 2; }
 echo "スキルを当てる（モデル ${MODEL}、予算 \$${BUDGET}。数十分かかる）"
-# 指示の「前提」は題材ごとのファイルから差し込む
-premise_file="$EVAL/premise/${TARGET%-server}.md"
+# 指示の「前提」は題材ごとのファイル（手元の置き場）から差し込む
+premise_file="$LOCAL/$PREMISE"
 [[ -f "$premise_file" ]] || { echo "前提のファイルが無い: $premise_file" >&2; exit 2; }
 prompt="$(python3 -c 'import sys; print(open(sys.argv[1], encoding="utf-8").read().replace("{{premise}}\n", open(sys.argv[2], encoding="utf-8").read()).replace("{{audit_grep}}", sys.argv[3]), end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt")"
 printf '%s\n' "$prompt" > "$OUT/prompt.txt"

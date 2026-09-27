@@ -593,6 +593,10 @@ hr "2b. ルート登録の行ごとの認可（登録の行に認可が挟まっ
 # どのルートが素通しかが見えない。登録の行ごとに、認可の語が挟まっているかを分けて出す。
 # パス付きの app.use('/x', …) も見る（静的配信・ディレクトリ一覧・メトリクスの公開はこの形で書かれる）。
 REG_LINE="$ROUTE_REG"'|(app|router)\.use\([[:space:]]*["'"'"'`]/'
+# パスの名前の表。枠組みを問わず、名前が内部向け・運用向けを示すもの（★）と、管理・文書化の口（確かめる）に分ける。
+# 引用符の直後の / から、区切り（/・引用符・?）までを 1 つの名前として見る
+INTERNAL_PATHS='["'"'"'`]/(_?internal|metrics|actuator|debug|__debug__|heapdump|threaddump|env|phpinfo|server-status|server-info|console|graphiql|playground|_profiler|telescope|horizon|jolokia|pprof)([/"'"'"'`?]|$)'
+REVIEW_PATHS='["'"'"'`]/(admin|administrator|manage(ment)?|dashboard|swagger(-ui)?|api-docs|openapi|docs|redoc)([/"'"'"'`?.]|$)'
 HF_REG="$HF_LIST.reg"; HF_REGT="$HF_LIST.regt"; HF_REGG="$HF_LIST.regg"
 grep -rnE "${EXA[@]}" "$REG_LINE" \
   --include='*.ts' --include='*.js' --include='*.mjs' --include='*.go' --include='*.php' \
@@ -601,7 +605,8 @@ grep -rnE "${EXA[@]}" "$REG_LINE" \
 cut -d: -f3- "$HF_REG" > "$HF_REGT"
 grep -nE "$GUARD" "$HF_REGT" 2>/dev/null | cut -d: -f1 > "$HF_REGG"
 if [[ -s "$HF_REG" ]]; then
-  LC_ALL=C awk -v gfile="$HF_REGG" -v cfile="$HF_LIST.regc" -v ufile="$HF_LIST.regu" '
+  LC_ALL=C awk -v gfile="$HF_REGG" -v cfile="$HF_LIST.regc" -v ufile="$HF_LIST.regu" \
+      -v ipath="$INTERNAL_PATHS" -v rpath="$REVIEW_PATHS" '
     BEGIN { while ((getline l < gfile) > 0) g[l] = 1 }
     {
       n++; f = $0; sub(/:.*/, "", f); ln = $0; sub(/^[^:]*:/, "", ln); sub(/:.*/, "", ln)
@@ -618,12 +623,14 @@ if [[ -s "$HF_REG" ]]; then
       if (t ~ /^(\/\/|#)/) { if (n in g) print "  ★ " f ":" ln ": " t > cfile; next }
       tot[f]++
       if (n in g) { grd[f]++; next }
-      note = ""
-      if (t ~ /serveIndex|autoindex|directory/) note = "  ← ディレクトリ一覧を公開"
-      else if (t ~ /["\047`]\/metrics/) note = "  ← メトリクスを公開"
+      # 認可の語の無い登録のうち、パスの名前で「内部向け・運用向け」と分かるものに注記する。
+      # 特定の枠組みのパスに絞らず、名前の表で見る（INTERNAL_PATHS は ★、REVIEW_PATHS は確かめる）
+      note = ""; star = 0
+      if (match(t, ipath)) { note = "  ← 内部向け・運用向けのパスを、登録の行に認可なしで公開"; star = 1 }
+      else if (match(t, rpath)) note = "  ← 管理・文書化の口。前段（2d）で認可しているかを確かめる"
       # ★ の付いた行は、打ち切り（lim）に掛からないよう別に出す
-      if (note != "") print "  ★ " f ":" ln ": " t note > (ufile ".star")
-      else print "  " f ":" ln ": " t > ufile
+      if (star) print "  ★ " f ":" ln ": " t note > (ufile ".star")
+      else print "  " f ":" ln ": " t note > ufile
     }
     END {
       for (i = 1; i <= k; i++) {
@@ -645,6 +652,20 @@ else
 fi
 echo "  ※ 行に認可の語が無くても、ハンドラの中や、前段の app.use / ミドルウェア（2d）で見ている場合がある。"
 echo "    公開してよいルートかどうかを 1 本ずつ確かめる。★ は、ほぼ確実に指摘になるもの"
+
+hr "2e. ディレクトリ一覧の公開（枠組み・サーバーの設定を問わず）"
+# 一覧の公開は、アプリのコードにも、Web サーバーやコンテナの設定にも書かれる。書き方の表で横断して拾う。
+# 置いてあるファイルの一覧がそのまま見えるので、鍵・ログ・バックアップが並んでいれば、それだけで露出になる
+DIRLIST='serveIndex\(|express-directory|autoindex[[:space:]]+on|Options[[:space:]]+[^#]*\+?Indexes|show_indexes["'"'"']?[[:space:]]*[:=][[:space:]]*True|directory_listing|DirectoryBrowser|UseDirectoryBrowser|http\.FileServer\(|listDirectories|dirListing|serve-index|directoryListing[[:space:]]*[:=][[:space:]]*true|IndexIgnore|fancyindex[[:space:]]+on'
+{
+  grep -rnE "${EXA[@]}" "$DIRLIST" \
+    --include='*.ts' --include='*.js' --include='*.mjs' --include='*.py' --include='*.go' --include='*.rb' --include='*.php' \
+    --include='*.java' --include='*.kt' --include='*.cs' --include='*.conf' --include='*.config' --include='.htaccess' \
+    --include='*.yml' --include='*.yaml' --include='*.toml' --include='*.json' --include='Caddyfile' --include='*.xml' \
+    . 2>/dev/null | sed 's|^\./||' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*|<!--)' | sed 's/^/  ★ /' | lim 30
+} | show
+echo "  ※ 一覧を出す設定は、公開してよいファイルだけを置いたディレクトリに限る。鍵・ログ・バックアップ・ソースが並んでいないかを見る"
+echo "    Go の http.FileServer は、index.html の無いディレクトリで既定のまま一覧を出す"
 
 hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）"
 # 'use server' のファイルでは、export された関数 1 つ 1 つが入口になる。

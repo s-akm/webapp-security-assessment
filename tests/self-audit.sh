@@ -105,7 +105,7 @@ n_ref="$(ls "$SKILL"/references/*.md | wc -l | tr -d ' ')"
 n_scr="$(ls "$SKILL"/scripts/* | wc -l | tr -d ' ')"
 # realistic・iac・mobile は枠組みの題材ではない（README でも別に書いている）
 n_fix="$(ls -d "$ROOT"/tests/fixtures/repo* | grep -vcE '/repo-(realistic|iac|mobile)$')"
-n_run="$(printf '%s' "$out" | grep -oE '成功 [0-9]+' | tail -1 | grep -oE '[0-9]+')"
+n_run="$(printf '%s' "$out" | grep -oE '成功 [0-9]+ / 失敗' | tail -1 | grep -oE '[0-9]+')"
 n_mut="$(( $(grep -cE '^\s*mutate "' "$ROOT/tests/mutations.sh") + 1 ))"
 mism=""
 grep -qE "スクリプト ${n_scr} 本" "$ROOT/README.md" || mism="$mism スクリプト(実態${n_scr})"
@@ -175,6 +175,24 @@ if [[ -d "$ROOT/cases" ]]; then
   else ng "公開するファイルに、事例と同じファイルパス・API のパスがある" "$(printf '%s' "$hits" | tr '\n' ' ')（値は出さない。手元で grep -F -f で確かめる）"; fi
 else
   warn "cases/ が無いので、事例との一致は見ていない" "事例を置いている手元の環境で回す"
+fi
+
+# 案件と、実地の評価の題材を特定できる語。公開するファイルと、すべてのコミットの文言を見る（文言も公開される）。
+# 語は build/identifying-words.sh が手元の非公開のファイルから作る（語そのものはここに出さない）
+IDW="$(bash "$ROOT/build/identifying-words.sh" "$ROOT" 2>/dev/null | paste -sd '|' -)"
+if [[ -z "$IDW" ]]; then
+  warn "題材を特定できる語の一覧が作れない" "tests/ngwords.local か tests/eval/local/ を置いた手元の環境で回す"
+else
+  f_hit="$(cd "$ROOT" && git ls-files -z | grep -zvE '^LICENSE$' | xargs -0 grep -liE "$IDW" 2>/dev/null || true)"
+  if [[ -z "$f_hit" ]]; then ok "公開するファイルに、案件や評価の題材を特定できる語が無い"
+  else ng "公開するファイルに、案件や評価の題材を特定できる語がある" "$(printf '%s' "$f_hit" | head -5 | tr '\n' ' ')"; fi
+  m_hit="$(git -C "$ROOT" log --all --format='%h %B' 2>/dev/null | grep -ciE "$IDW" || true)"
+  if [[ "${m_hit:-0}" -eq 0 ]]; then ok "コミットの文言に、案件や評価の題材を特定できる語が無い（全履歴）"
+  else ng "コミットの文言に、案件や評価の題材を特定できる語が $m_hit 行ある" "git log --all で確かめる（語は出さない）"; fi
+  # 過去のコミットの中身も公開されている。すべての版を見る（履歴を書き換えて消したものが戻っていないか）
+  r_hit="$(git -C "$ROOT" grep -liE "$IDW" $(git -C "$ROOT" rev-list --all) -- . ':(exclude)LICENSE' 2>/dev/null | cut -d: -f1 | sort -u | wc -l | tr -d ' ')"
+  if [[ "$r_hit" -eq 0 ]]; then ok "過去のコミットの中身に、案件や評価の題材を特定できる語が無い（全履歴）"
+  else ng "過去のコミットの中身に、案件や評価の題材を特定できる語がある（$r_hit コミット）" "履歴を書き換えて消す。git grep -liE で確かめる"; fi
 fi
 
 # 基準の版と既知の勧告の判定表の最終確認日。期限は tests/run.sh の STALE_DAYS と揃える（半年）

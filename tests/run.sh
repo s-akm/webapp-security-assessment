@@ -158,6 +158,24 @@ hit="$(grep -rniE "$NGWORDS" "$SKILL" 2>/dev/null || true)"
 if [[ -z "$hit" ]]; then ok "案件固有語が含まれない"
 else ng "案件固有語が含まれない" "$(printf '%s' "$hit" | head -3)"; fi
 
+# 案件と、実地の評価の題材を特定できる語。skill/ だけでなく、公開するファイル全体（git が追跡しているもの）を見る。
+# 語は build/identifying-words.sh が手元の非公開のファイル（ngwords.local・tests/eval/local/）から作る。
+# 以前は skill/ しか見ておらず、評価の題材の名前やパスを CHANGELOG・README・tests/ に書いて公開していた
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  # 検査の検査が混ぜる語（カナリア）。手元の語の一覧が無い環境でも、この検査が生きていることを確かめる。
+  # 語そのものがどのファイルにも現れないよう、分けて組み立てる（書いてあると、このファイル自身に当たる）
+  IDCANARY="$(printf '%s-%s' 'IDW' 'CANARY-7Q')"
+  IDW="$(printf '%s\n' "$IDCANARY"; bash "$ROOT/build/identifying-words.sh" "$ROOT" 2>/dev/null)"
+  IDW="$(printf '%s\n' "$IDW" | paste -sd '|' -)"
+  if [[ -n "$IDW" ]]; then
+    idhit="$(cd "$ROOT" && git ls-files -z | grep -zvE '^LICENSE$' | xargs -0 grep -liE "$IDW" 2>/dev/null || true)"
+    if [[ -z "$idhit" ]]; then ok "公開するファイルに、案件や評価の題材を特定できる語が無い"
+    else ng "公開するファイルに、案件や評価の題材を特定できる語が無い" "$(printf '%s' "$idhit" | head -5 | tr '\n' ' ')（語は出さない。build/identifying-words.sh で確かめる）"; fi
+  else
+    skip "題材を特定できる語: 手元の語の一覧（ngwords.local・tests/eval/local/）が無い"
+  fi
+fi
+
 # 例示以外のドメインが書かれていないか。example.com / example.invalid だけを許す。
 bad="$(grep -rhoE 'https?://[A-Za-z0-9.-]+' "$SKILL" 2>/dev/null \
        | grep -vE '://(example\.(com|invalid|org|net)|localhost)' \
@@ -279,6 +297,13 @@ if printf 'refs/heads/main %s refs/heads/main 1234567890123456789012345678901234
      | ( cd "$HK" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE bash "$ROOT/build/hooks/pre-push" ) >/dev/null 2>&1; then
   ng "pre-push: リモートの先端が手元に無ければ止める" "通ってしまった"
 else ok "pre-push: リモートの先端が手元に無ければ止める"; fi
+# 実地の評価の題材の名前（手元の tests/eval/local/targets.tsv にだけある）も、追加行にあれば止める
+mkdir -p "$HK/tests/eval/local"
+printf 'canary-target-app\thttps://github.com/example-owner/canary-target-app.git\t0\tMIT\tprep_anchors.py x.json\n' > "$HK/tests/eval/local/targets.tsv"
+printf '評価の題材は Canary Target App だった\n' > "$HK/eval-note.md"; hkgit add eval-note.md; hkcommit "$NRM" "note"
+if hkpush main refs/heads/main; then ng "pre-push: 評価の題材の名前が追加行にあれば止める" "通ってしまった"
+else ok "pre-push: 評価の題材の名前が追加行にあれば止める"; fi
+hkgit reset -q --hard HEAD~1 >/dev/null 2>&1
 
 # ==========================================================================
 head_ "3. 動作 — スクリプトが期待どおり検出するか"
@@ -973,6 +998,7 @@ sb_publishable_... という鍵、sk_live_ で始まる鍵、Bearer <トーク�
 引用: bcrypt.hash('<伏字>', 10) / createHmac('sha256', key) / password: '<伏字>' / bcrypt.hash(password, 10)
 jwt.sign(payload, JWT_SECRET, { algorithm: 'HS256', expiresIn: '1h' })
 パスワードの強度が弱い。パスワードは「<伏字>」で、暗証番号は 4 桁
+SQL の引用: WHERE email = '${email}' AND password = '${hash(password)}' / password = :password / password = '%s'
 EOF
 C="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$CLEAN" 2>&1)"
 if printf '%s' "$C" | grep '^検出なし。$' >/dev/null; then
@@ -1594,20 +1620,26 @@ else
   trap - EXIT
 fi
 
-# 2b. ルートを 1 ファイルに集めた構成。登録の行ごとに認可の語の有無を出し、コメントアウトした認可と公開の設定に ★ を付ける
+# 2b・2e. ルートを 1 ファイルに集めた構成と、ディレクトリ一覧の公開。特定の枠組みの書き方に寄らず、表で拾えているかを見る
 RT="$TMP/route-table"
 cp -R "$ROOT/tests/fixtures/route-table" "$RT"
 RTALL="$(bash "$SKILL/scripts/audit_grep.sh" "$RT" 2>&1)"
 S2B="$(printf '%s\n' "$RTALL" | LC_ALL=C awk 'index($0, "=== 2b.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+S2E="$(printf '%s\n' "$RTALL" | LC_ALL=C awk 'index($0, "=== 2e.") == 1 { f = 1; next } f && /^=== / { exit } f')"
 SSTAR="$(printf '%s\n' "$RTALL" | LC_ALL=C awk 'index($0, "=== ★ の一覧") == 1 { f = 1 } f')"
-contains "audit_grep[2b]: 登録の行ごとに認可の語の有無を数える"     "登録 4 / 行に認可の語あり 1 / なし 3" "$S2B"
+contains "audit_grep[2b]: 登録の行ごとに認可の語の有無を数える"     "登録 6 / 行に認可の語あり 1 / なし 5" "$S2B"
 contains "audit_grep[2b]: 認可の付いた登録のコメントアウトを知らせる" "★ server.js:4: // app.put('/api/products/:id', auth.isAuthorized())" "$S2B"
 contains "audit_grep[2b]: 認可の無い登録を行で出す"                 "server.js:3: app.post('/api/orders', createOrder)" "$S2B"
-contains "audit_grep[2b]: ディレクトリ一覧の公開に ★ を付ける"       "★ server.js:5: app.use('/ftp'"  "$S2B"
-contains "audit_grep[2b]: メトリクスの公開に ★ を付ける"             "← メトリクスを公開"             "$S2B"
+contains "audit_grep[2b]: 内部向けのパスに ★ を付ける（metrics）"  "★ server.js:6: app.get('/metrics'" "$S2B"
+contains "audit_grep[2b]: 内部向けのパスに ★ を付ける（actuator）" "★ server.js:9: app.get('/actuator/env'" "$S2B"
+contains "audit_grep[2b]: 管理の口は ★ にせず確かめる注記にする"    "server.js:8: app.get('/admin/users', listUsers)  ← 管理・文書化の口" "$S2B"
 absent   "audit_grep[2b]: 認可のある登録を、無い側に出さない"       "server.js:2:"                   "$S2B"
 absent   "audit_grep[2b]: 設定の読み出しをルートの登録と取り違えない" "config.get"                    "$S2B"
 contains "audit_grep[2b]: ファイル名を認可の語と取り違えない"       "routes/authenticatedUsers.js:1: router.get('/api/me', showProfile)" "$S2B"
+contains "audit_grep[2e]: ディレクトリ一覧（Express）"               "★ server.js:5:"                 "$S2E"
+contains "audit_grep[2e]: ディレクトリ一覧（nginx の設定）"          "★ nginx/site.conf:2:"           "$S2E"
+contains "audit_grep[2e]: ディレクトリ一覧（Go の http.FileServer）" "★ static.go:1:"                 "$S2E"
+contains "audit_grep[2e]: ディレクトリ一覧（Django の show_indexes）" "★ urls.py:1:"                  "$S2E"
 # ★ の一覧。節に散らばった ★ を最後に集め、節の番号を付ける。説明文の ★ は数えない
 contains "audit_grep[★一覧]: 最後に ★ を集めて出す"                "=== ★ の一覧"                   "$SSTAR"
 contains "audit_grep[★一覧]: 節の番号を付ける"                     "[2b.] ★ server.js:6: app.get('/metrics'" "$SSTAR"
@@ -1617,7 +1649,163 @@ if [[ "$(printf '%s\n' "$RTALL" | grep -c '=== ★ の一覧')" == "1" ]] && pri
 else ng "audit_grep[★一覧]: 出力の最後に 1 回だけ出す" "無いか、最後でないか、2 回出ている"; fi
 
 # ==========================================================================
+head_ "4. 実地の評価の道具 — 下拵えと採点が正しいか（tests/eval/。ネットワークには出ない）"
+# 実地の評価（tests/eval/run-eval.sh）は費用がかかるのでここでは回さない。
+# 見るのは、答えの一覧を正しく取り出せるか、手掛かりを消せるか、採点の規則どおりに数えるか。
+# ここが壊れていると、見つけた割合の数字そのものが信用できなくなる。
+# 採点。答え A（10 行目）・B（50 行目）・C（90 行目）・E（30 行目）が範囲内、D が範囲外。許容は前後 3 行
+cat > "$TMP/eval-sa.json" <<'EOF'
+{"secrets": ["dummy-embedded-secret"], "items": [
+  {"id": "A", "scope": "in",  "category": "Injection", "locations": [{"file": "routes/a.ts", "line": 10}], "ranges": []},
+  {"id": "B", "scope": "in",  "category": "XSS",       "locations": [{"file": "routes/b.ts", "line": 50}], "ranges": []},
+  {"id": "C", "scope": "in",  "category": "XSS",       "locations": [{"file": "routes/c.ts", "line": 90}], "ranges": []},
+  {"id": "E", "scope": "in",  "category": "Injection", "locations": [{"file": ".github/e.yml", "line": 30}], "ranges": []},
+  {"id": "D", "scope": "out", "category": "Misc",      "locations": [{"file": "routes/d.ts", "line": 5}],  "ranges": []},
+  {"id": "X", "scope": "in",  "category": "Misc",      "locations": [{"file": "routes/d2.ts", "line": 101}], "ranges": []},
+  {"id": "Y", "scope": "in",  "category": "Misc",      "locations": [{"file": "routes/d2.ts", "line": 106}], "ranges": []}
+]}
+EOF
+cat > "$TMP/eval-sr.json" <<'EOF'
+{"total_cost_usd": 1.5, "num_turns": 12, "duration_ms": 600000, "modelUsage": {"m": {}}, "permission_denials": [],
+ "structured_output": {
+  "findings": [
+    {"id": "S-01", "title": "SQL の組み立て", "verdict": "問題あり", "priority": "P0", "fact": "文字列で連結している", "assessment": "注入できる",
+     "locations": [{"file": "./routes/a.ts", "line": 13}]},
+    {"id": "S-02", "title": "出力", "verdict": "判断保留", "priority": "P2", "fact": "生の HTML を出す", "assessment": "入力元による",
+     "locations": [{"file": "/abs/work/target/routes/b.ts", "line": 48, "end_line": 52}]},
+    {"id": "S-03", "title": "CI", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "要検討",
+     "locations": [{"file": ".github/e.yml", "line": 34}]},
+    {"id": "S-04", "title": "別の穴", "verdict": "問題あり", "priority": "P1", "fact": "鍵 dummy-embedded-secret が埋まっている", "assessment": "y",
+     "locations": [{"file": "routes/z.ts", "line": 1}]},
+    {"id": "S-05", "title": "良い", "verdict": "問題なし", "priority": "P2", "fact": "x", "assessment": "y", "locations": []},
+    {"id": "S-06", "title": "ファイル全体", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "y",
+     "locations": [{"file": "routes/c.ts", "line": 1, "end_line": 5000}]},
+    {"id": "S-07", "title": "密な行の 1 行", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "y",
+     "locations": [{"file": "routes/d2.ts", "line": 104}]},
+    {"id": "S-08", "title": "隣の範囲", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "y",
+     "locations": [{"file": "routes/d2.ts", "line": 96, "end_line": 98}]}
+  ],
+  "unconfirmed": [], "maintain": []
+ }}
+EOF
+SC="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr.json" --summary "$TMP/eval-sum.json" 2>&1 || true)"
+contains "eval[採点]: 前後 3 行以内なら見つけたと数える"        "見つけた 2 / 6（範囲内。うち行で指したもの 2）" "$SC"
+# S-06 は答え C のファイル全体（1〜5000 行）を指す。どこを指したことにもならないので、C は見つけたとは数えず「範囲が広い」
+if printf '%s' "$SC" | grep -F "150 行を超える場所が 1 か所" >/dev/null \
+   && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); r={x['id']:x['status'] for x in d['rows']}; sys.exit(0 if r.get('C')=='範囲が広い' else 1)" "$TMP/eval-sum.json" 2>/dev/null; then
+  ok "eval[採点]: ファイル全体のような広い場所は一致に使わない"
+else ng "eval[採点]: ファイル全体のような広い場所は一致に使わない" "C が見つけたことになっているか、広い場所を数えていない"; fi
+# 密に並んだ答え（X: 101 行、Y: 106 行）。104 行の 1 行はどちらも前後 3 行に入るが、いちばん近い Y にだけ一致する。96〜98 行の範囲は X を含まないので一致しない
+if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); r={x['id']:x['status'] for x in d['rows']}; sys.exit(0 if r.get('Y')=='見つけた' and r.get('X')=='見落とし' else 1)" "$TMP/eval-sum.json" 2>/dev/null; then
+  ok "eval[採点]: 1 行はいちばん近い答えにだけ、範囲は含む答えにだけ一致させる"
+else ng "eval[採点]: 1 行はいちばん近い答えにだけ、範囲は含む答えにだけ一致させる" "隣の答えに偶然一致している"; fi
+contains "eval[採点]: 判断保留は見つけたと分けて数える"         "保留 1"                         "$SC"
+contains "eval[採点]: 前後 3 行を超えたら見落とし（境界）"      "範囲が広い 1  見落とし 2"       "$SC"
+contains "eval[採点]: 題材に埋め込まれた値の転記を咎める"       "S-04: 題材に埋め込まれた鍵・パスワードの値を書き写している" "$SC"
+contains "eval[採点]: 答えの一覧に無い「問題あり」を数える"     "S-04 P1 別の穴"                 "$SC"
+contains "eval[採点]: 判定を丸投げする言い回しを咎める"         "S-03: 判定を丸投げする言い回し「要検討」" "$SC"
+contains "eval[採点]: 問題なしに優先度を付けたら咎める"         "S-05: 問題なしなのに優先度"     "$SC"
+contains "eval[採点]: 未確認事項が 0 件なら咎める"              "未確認事項が 0 件"              "$SC"
+contains "eval[採点]: 費用と所要時間を出す"                     "費用 \$1.5  12 ターン  10.0 分" "$SC"
+if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d['found']==2 and d['in_total']==6 and d['extra']==4 else 1)" "$TMP/eval-sum.json" 2>/dev/null; then
+  ok "eval[採点]: 集計を JSON に書き出す（history.tsv の元）"
+else ng "eval[採点]: 集計を JSON に書き出す（history.tsv の元）" "summary の数が合わない"; fi
+contains "eval[採点]: トークン数を出す"                         "トークン 入力 0"                "$SC"
+# 未確認事項が止めている相手は、指摘（S-）でも別の未確認事項（U-）でもよい。実在しない ID だけを咎める
+cat > "$TMP/eval-su.json" <<'EOF'
+{"findings": [{"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y",
+               "locations": [{"file": "routes/a.ts", "line": 10}]}],
+ "unconfirmed": [{"id": "U-1", "text": "a", "blocks": ["S-01"]}, {"id": "U-2", "text": "b", "blocks": ["U-1"]},
+                 {"id": "U-3", "text": "c", "blocks": ["S-99"]}], "maintain": []}
+EOF
+SU="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-su.json" 2>&1 || true)"
+contains "eval[採点]: 実在しない相手を止めている未確認事項を咎める" "U-3: 止めている指摘 S-99 が指摘の一覧に無い" "$SU"
+absent   "eval[採点]: 未確認事項どうしの依存は咎めない"         "U-2: 止めている"                "$SU"
+# 実行の記録から、スキルの読み込み・読んだ資料・audit_grep の出力を読んだかを数える
+cat > "$TMP/eval-tr.jsonl" <<'EOF'
+{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Skill","input":{"skill":"webapp-security-assessment"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/w/.claude/skills/webapp-security-assessment/references/02-code-audit.md"}}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/w/evidence/audit-grep.txt"}}]}}
+EOF
+ST="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr.json" --transcript "$TMP/eval-tr.jsonl" 2>&1 || true)"
+contains "eval[採点]: スキルを読み込んだかを数える"               "スキルを読み込んだ: はい  読んだ資料: 02" "$ST"
+contains "eval[採点]: audit_grep の出力を読んだかを数える"        "audit_grep の出力を読んだ: はい" "$ST"
+
+# 汎用の下拵え（prep_anchors.py）。題材ごとの表（アンカー・消すもの・手掛かりの語）は手元に置くので、
+# ここでは架空の題材と表で、答えの行を決められるか・手掛かりのコメントだけを行を保って消せるかを見る
+PA="$TMP/eval-anchors"
+cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PA"
+if PAO="$(python3 -B "$ROOT/tests/eval/prep_anchors.py" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$PA" "$TMP/eval-pa.json" 2>&1)"; then
+  ok "eval[下拵え]: アンカーの表で下拵えが通る"
+else ng "eval[下拵え]: アンカーの表で下拵えが通る" "$PAO"; fi
+contains "eval[下拵え]: アンカーから答えの行を決める"       '"line": 5'                    "$(cat "$TMP/eval-pa.json" 2>/dev/null)"
+contains "eval[下拵え]: 題材に埋め込まれた値を答えに持たせる" '"dummy-embedded-value"'      "$(cat "$TMP/eval-pa.json" 2>/dev/null)"
+PAS="$(cat "$PA/app/server.js" 2>/dev/null || true)"
+absent   "eval[下拵え]: 手掛かりのコメントを消す"           "SQL injection"                "$PAS"
+contains "eval[下拵え]: 手掛かりの無いコメントは残す"       "// 取得先の一覧"              "$PAS"
+contains "eval[下拵え]: URL の中の // を壊さない"           "'https://example.com/weak-list' // 参照先" "$PAS"
+if [[ "$(wc -l < "$PA/app/server.js" | tr -d ' ')" == "$(wc -l < "$ROOT/tests/fixtures/eval-anchors/target/app/server.js" | tr -d ' ')" ]] \
+   && sed -n 5p "$PA/app/server.js" | grep -F 'SELECT id FROM items' >/dev/null; then
+  ok "eval[下拵え]: 行番号を保つ（答えの行と、評価者が見る行が一致する）"
+else ng "eval[下拵え]: 行番号を保つ（答えの行と、評価者が見る行が一致する）" "行がずれた"; fi
+if [[ ! -e "$PA/docs" ]]; then ok "eval[下拵え]: 答えの置き場を消す"
+else ng "eval[下拵え]: 答えの置き場を消す" "docs が残っている"; fi
+# 消し残しがあれば止まる（表の residual_regex に、残っている語を入れて確かめる）
+PB="$TMP/eval-anchors-residual"; cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PB"
+python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d['residual_regex']='取得先'; json.dump(d,open(sys.argv[2],'w'),ensure_ascii=False)" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$TMP/eval-pb-spec.json"
+if python3 -B "$ROOT/tests/eval/prep_anchors.py" "$TMP/eval-pb-spec.json" "$PB" "$TMP/eval-pb.json" >/dev/null 2>&1; then
+  ng "eval[下拵え]: 手掛かりの消し残しがあれば止まる" "止まらなかった"
+else ok "eval[下拵え]: 手掛かりの消し残しがあれば止まる"; fi
+# コメントの形ごとに、手掛かりのコメントだけを消す（行は保つ）
+ZH="$(cd "$ROOT/tests/eval" && python3 -B - <<'PY' 2>&1
+import re
+from prep_anchors import strip_hint_comments as f
+h = re.compile(r'vulnerab|insecure|injection|xss|weak', re.I)
+cases = [
+    ("        // SQL injection vulnerable query", ".js", ""),
+    ("    origin: true,  // Allow any origin (deliberately insecure)", ".js", "    origin: true,"),
+    # URL の中の // はコメントではない（URL に手掛かりの語があっても、コードを壊さない）
+    ("    const url = 'https://example.com/weak-list'; // 取得先", ".js", "    const url = 'https://example.com/weak-list'; // 取得先"),
+    ("        {/* XSS Vulnerability - code parameter displayed */}", ".jsx", ""),
+    ("    notes TEXT, -- Doctor notes (stored XSS vulnerable)", ".sql", "    notes TEXT,"),
+    ("/* Intentionally missing security-related CSS properties (insecure) */", ".css", ""),
+    # Ruby の文字列の中の #{…} はコメントではない（引用符の直後の # を消さない）
+    ("    user = User.where(\"id = '#{params[:id]}'\") # VULNERABLE: injection", ".rb", "    user = User.where(\"id = '#{params[:id]}'\")"),
+]
+bad = [(a, f(a, s, h), e) for a, s, e in cases if f(a, s, h) != e]
+print("ALL OK" if not bad else bad)
+PY
+)"
+if [[ "$ZH" == "ALL OK" ]]; then ok "eval[下拵え]: 手掛かりのコメントだけを消す（7 例）"
+else ng "eval[下拵え]: 手掛かりのコメントだけを消す（7 例）" "$ZH"; fi
+if grep -F '{{premise}}' "$ROOT/tests/eval/prompt.md" >/dev/null && grep -F 'premise_file="$LOCAL/$PREMISE"' "$ROOT/tests/eval/run-eval.sh" >/dev/null; then
+  ok "eval: 題材ごとの前提を、手元の置き場から指示に差し込む"
+else ng "eval: 題材ごとの前提を、手元の置き場から指示に差し込む" "prompt.md の {{premise}} か run-eval.sh の読み込みが無い"; fi
+
+if bash -n "$ROOT/tests/eval/run-eval.sh" 2>/dev/null; then ok "eval: run-eval.sh の構文"
+else ng "eval: run-eval.sh の構文"; fi
+# 題材の中のエージェント向けの設定を消す手順が残っているか（消さないと、評価の実行中に題材のフックや指示が読み込まれる）
+contains "eval: 題材のエージェント向けの設定を消す"              "for p in .claude CLAUDE.md"     "$(cat "$ROOT/tests/eval/run-eval.sh")"
+contains "eval: 利用者の手元の設定を読まない"                    "--setting-sources project"      "$(cat "$ROOT/tests/eval/run-eval.sh")"
+# audit_grep は、スキルを題材の中に置く前に回す（後だと、スキル自身のファイルが監査の対象に混ざる）
+if awk '/bash "\$ROOT\/skill\/scripts\/audit_grep.sh"/ && !a { a = NR } /cp -R "\$ROOT\/skill"/ && !c { c = NR } END { exit !(a && c && a < c) }' "$ROOT/tests/eval/run-eval.sh"; then
+  ok "eval: audit_grep をスキルを置く前に回す"
+else ng "eval: audit_grep をスキルを置く前に回す" "スキルを置いた後に回している"; fi
+
+# 手元の題材の検査（tests/eval/local/tests.sh）。題材を特定できる情報を含むので公開しない。
+# あるときだけ回し、成功の数は公開の件数とは別に出す（README の件数は公開の検査だけ）。失敗は全体の失敗に数える
+LOCAL_PASS=0
+if [[ -f "$ROOT/tests/eval/local/tests.sh" ]]; then
+  head_ "5. 手元の題材の検査（tests/eval/local/。公開しない）"
+  _p0=$PASS
+  # shellcheck disable=SC1091
+  source "$ROOT/tests/eval/local/tests.sh"
+  LOCAL_PASS=$((PASS - _p0)); PASS=$_p0
+fi
+# ==========================================================================
 printf '\n\033[1m結果\033[0m  成功 %d / 失敗 %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIPPED"
+[[ $LOCAL_PASS -gt 0 ]] && printf '  ※ ほかに手元の題材の検査が成功 %d 件（公開の件数には入れていない）\n' "$LOCAL_PASS"
 [[ $SKIPPED -gt 0 ]] && printf '  ※ 省略した検査がある。道具（node・playwright・dig・openpyxl）を入れて全件を回す\n'
 if [[ $FAIL -gt 0 ]]; then exit 1; fi
 rm -rf "$TMP"

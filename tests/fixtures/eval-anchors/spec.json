@@ -1,0 +1,12 @@
+{
+  "name": "example",
+  "require": ["docs/answers.md"],
+  "items": [
+    {"id": "sqli-search", "basis": "例", "category": "Injection", "anchors": [["app/server.js", "SELECT id FROM items WHERE name"]]}
+  ],
+  "remove": ["docs"],
+  "hint_regex": "injection|vulnerab|weak",
+  "residual_regex": "injection|vulnerab",
+  "replace": [["app/server.js", "// 検索の処理", "// 検索"]],
+  "secrets": ["dummy-embedded-value"]
+}

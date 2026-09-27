@@ -107,6 +107,10 @@ fi
 mutate "案件固有語を混入させる" "SKILL.md" "案件固有語が含まれない" \
   's = s + "\n対象は CLIENT-NGWORD-CANARY のシステムである。\n"'
 # 入れるドメインは .test（予約済みで誰も登録できない）。許可リストに無いので検査が捕まえる
+mutate "skill/ の外に案件語を書く" "../README.md" "公開するファイルに、案件や評価の題材を特定できる語が無い" \
+  's = s + "\n対象は " + "IDW-" + "CANARY-7Q" + " のシステムである。\n"'
+mutate "評価の題材の一覧から語を取り出さない" "../build/identifying-words.sh" "評価の題材の名前が追加行にあれば止める" \
+  's = s.replace("t = local / \x27targets.tsv\x27", "t = local / \x27no-such.tsv\x27")'
 mutate "実在しうるドメインを書く" "references/01-scoping.md" "実在しうるドメインが書かれていない" \
   's = s + "\n参考: https://client-site.example.test/\n"'
 mutate "「効」を動詞に使う" "references/05-remediation-plan.md" "「効」を動詞に使う言い回しが無い" \
@@ -155,6 +159,9 @@ mutate "scan_secrets: アルゴリズム名を値と取り違える" "scripts/sc
 
 mutate "scan_secrets: 日本語の文の中の値を見ない" "scripts/scan_secrets.sh" "日本語の文の中の値" \
   's = s.replace("|(パスワード|暗証番号)(は|が|を|:|：)?[[:space:]]*)", ")")'
+
+mutate "scan_secrets: テンプレートの差し込みを値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
+  's = s.replace("(\\$\\{|#\\{|\\{\\{|%\\(|%s|\\?|:[A-Za-z_])", "(ZZZNEVER)")'
 
 # ---- make_register ----
 mutate "make_register: 既にあるファイルを黙って上書きする（旧不具合）" "scripts/make_register.py" "既にあるファイルは上書きせずに止まる" \
@@ -268,6 +275,30 @@ mutate "資料: grep のパターンを引用符の中で改行する" "referenc
   's = s.replace("evaluateJavascript\x27 \\\n  -e \x27javaScriptEnabled", "evaluateJavascript|\njavaScriptEnabled", 1)'
 
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
+mutate "eval: URL の // もコメントとして消す" "../tests/eval/prep_anchors.py" "URL の中の // を壊さない" \
+  's = s.replace("SLASH = [re.compile(r\x27(^|(?<=[\\s;,)\\]}]))//.*$\x27)", "SLASH = [re.compile(r\x27//.*$\x27)")'
+mutate "eval: 手掛かりの消し残しがあっても止めない" "../tests/eval/prep_anchors.py" "手掛かりの消し残しがあれば止まる" \
+  's = s.replace("            sys.exit(\x27手掛かりの消し残しがある: \x27", "            print(\x27手掛かりの消し残しがある: \x27")'
+mutate "eval: 手掛かりのコメントを消さない" "../tests/eval/prep_anchors.py" "手掛かりのコメントを消す" \
+  's = s.replace("                line = line[:m.start()] + line[m.end():]\n", "                pass\n")'
+mutate "eval: ファイル全体の場所も一致に使う" "../tests/eval/score.py" "広い場所は一致に使わない" \
+  's = s.replace("    if hi - lo > WIDE:\n        return False\n", "")'
+mutate "eval: 埋め込まれた値の転記を咎めない" "../tests/eval/score.py" "題材に埋め込まれた値の転記を咎める" \
+  's = s.replace("        for v in answers.get(\x27secrets\x27) or []:\n", "        for v in []:\n")'
+mutate "eval: 範囲にも前後の許容を付ける" "../tests/eval/score.py" "範囲は含む答えにだけ一致" \
+  's = s.replace("        return lo <= line <= hi\n", "        return lo - tol <= line <= hi + tol\n")'
+mutate "eval: 1 行をいちばん近い答え以外にも一致させる" "../tests/eval/score.py" "範囲は含む答えにだけ一致" \
+  's = s.replace("    return abs(line - lo) <= min(abs(x - lo) for x in others)\n", "    return True\n")'
+mutate "eval: スキルを置いてから audit_grep を回す" "../tests/eval/run-eval.sh" "audit_grep をスキルを置く前に回す" \
+  's = s.replace("# スキルを題材の中に置く。", "mkdir -p \"$SRC/.claude/skills\"; cp -R \"$ROOT/skill\" \"$SRC/.claude/skills/x\"\n# スキルを題材の中に置く。", 1).replace("EVID=\"$WORK/evidence\"; mkdir -p \"$EVID\"", "mkdir -p \"$SRC/.claude/skills\"; cp -R \"$ROOT/skill\" \"$SRC/.claude/skills/y\"\nEVID=\"$WORK/evidence\"; mkdir -p \"$EVID\"", 1)'
+mutate "eval: 未確認事項どうしの依存を咎める" "../tests/eval/score.py" "未確認事項どうしの依存は咎めない" \
+  's = s.replace("    ids |= {u.get(\x27id\x27) for u in unconfirmed}\n", "")'
+mutate "eval: 採点の許容を広げる" "../tests/eval/score.py" "前後 3 行を超えたら見落とし" \
+  's = s.replace("    if abs(line - lo) > tol:\n", "    if abs(line - lo) > tol + 5:\n")'
+mutate "eval: 丸投げの言い回しを咎めない" "../tests/eval/score.py" "判定を丸投げする言い回しを咎める" \
+  's = s.replace("BANNED = [\x27要検討\x27, ", "BANNED = [")'
+mutate "eval: 題材のエージェント設定を消さない" "../tests/eval/run-eval.sh" "題材のエージェント向けの設定を消す" \
+  's = s.replace("for p in .claude CLAUDE.md", "for p in .cursor")'
 
 mutate "audit_grep: コメントアウトした認可を知らせない" "scripts/audit_grep.sh" "認可の付いた登録のコメントアウトを知らせる" \
   's = s.replace("if (n in g) print \"  ★ \" f \":\" ln \": \" t > cfile; next", "next")'
@@ -280,6 +311,17 @@ mutate "audit_grep: ★ の一覧を出さない" "scripts/audit_grep.sh" "最�
   's = s.replace("  [[ \"$st\" -eq 0 ]] && star_list < \"$ALL_OUT\"\n", "")'
 mutate "audit_grep: ★ の一覧に説明文の ★ も入れる" "scripts/audit_grep.sh" "説明文の ★ を数えない" \
   's = s.replace("&& $0 !~ /※/ && $0 !~ /★ (の|が|は|を)/ {", "{")'
+
+mutate "audit_grep: 内部向けのパスの表を使わない" "scripts/audit_grep.sh" "内部向けのパスに ★ を付ける（actuator）" \
+  's = s.replace("if (match(t, ipath)) {", "if (0) {")'
+mutate "audit_grep: 2e で設定ファイルを見ない" "scripts/audit_grep.sh" "ディレクトリ一覧（nginx の設定）" \
+  's = s.replace("--include=\x27*.conf\x27 ", "")'
+mutate "audit_grep: 2e で Django の書き方を拾わない" "scripts/audit_grep.sh" "Django の show_indexes" \
+  's = s.replace("[:=][[:space:]]*True|directory_listing", "=[[:space:]]*True|directory_listing")'
+
+# 手元の題材の変異（tests/eval/local/mutations.sh）。題材を特定できる情報を含むので公開しない。あるときだけ回す
+# shellcheck disable=SC1091
+[[ -f "$ROOT/tests/eval/local/mutations.sh" ]] && source "$ROOT/tests/eval/local/mutations.sh"
 
 # ---- recon ----
 # 旧不具合は「自サイトの判定がポートを考えない」。ホスト名にポートを残すだけでは、最終的なホスト名も
