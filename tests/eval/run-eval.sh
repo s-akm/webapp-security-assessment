@@ -115,7 +115,8 @@ mkdir -p "$SRC/.claude/skills"
 cp -R "$ROOT/skill" "$SRC/.claude/skills/webapp-security-assessment"
 # 当てるスキルの版とコミットを、写した時点で控える（記録に使う）
 cat "$ROOT/VERSION" > "$OUT/skill_version"
-{ git -C "$ROOT" rev-parse --short HEAD; git -C "$ROOT" diff --quiet HEAD -- skill || echo "+未コミット"; } | paste -sd '' - > "$OUT/skill_commit"
+# 行をつなぐのに paste -sd '' は使わない（macOS の paste は区切りを空にできず、失敗して評価が始まらない）
+{ git -C "$ROOT" rev-parse --short HEAD; git -C "$ROOT" diff --quiet HEAD -- skill || echo "+未コミット"; } | tr -d '\n' > "$OUT/skill_commit"
 
 
 if [[ "$PREP_ONLY" -eq 1 ]]; then

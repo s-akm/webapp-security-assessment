@@ -310,6 +310,8 @@ mutate "eval: スキルを置いてから audit_grep を回す" "../tests/eval/r
   's = s.replace("# スキルを題材の中に置く。", "mkdir -p \"$SRC/.claude/skills\"; cp -R \"$ROOT/skill\" \"$SRC/.claude/skills/x\"\n# スキルを題材の中に置く。", 1).replace("EVID=\"$WORK/evidence\"; mkdir -p \"$EVID\"", "mkdir -p \"$SRC/.claude/skills\"; cp -R \"$ROOT/skill\" \"$SRC/.claude/skills/y\"\nEVID=\"$WORK/evidence\"; mkdir -p \"$EVID\"", 1)'
 mutate "eval: 未確認事項どうしの依存を咎める" "../tests/eval/score.py" "未確認事項どうしの依存は咎めない" \
   's = s.replace("    ids |= {u.get(\x27id\x27) for u in unconfirmed}\n", "")'
+mutate "eval: 行をつなぐのに paste -sd を使う" "../tests/eval/run-eval.sh" "macOS で失敗する paste" \
+  's = s.replace("| tr -d \x27\\n\x27 > \"$OUT/skill_commit\"", "| paste -sd \x27\x27 - > \"$OUT/skill_commit\"")'
 mutate "eval: 採点の許容を広げる" "../tests/eval/score.py" "前後 3 行を超えたら見落とし" \
   's = s.replace("    if abs(line - lo) > tol:\n", "    if abs(line - lo) > tol + 5:\n")'
 mutate "eval: 丸投げの言い回しを咎めない" "../tests/eval/score.py" "判定を丸投げする言い回しを咎める" \

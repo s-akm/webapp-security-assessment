@@ -1839,6 +1839,10 @@ if awk '/cp -R "\$ROOT\/skill"/ && !c { c = NR } /> "\$OUT\/skill_version"/ && !
    && grep -F 'skill_version="$(cat "$out/skill_version"' "$ROOT/tests/eval/run-eval.sh" >/dev/null; then
   ok "eval: 当てたスキルの版を、写した時点で控えて記録する"
 else ng "eval: 当てたスキルの版を、写した時点で控えて記録する" "記録の時点の版を使っている"; fi
+# macOS の paste は区切りを空にできない（paste -sd '' は失敗する）。スクリプトで使っていないか
+pbad="$(grep -rnE "paste -s?d ?''" "$SKILL/scripts" "$ROOT/tests/eval" "$ROOT/build" 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#' || true)"
+if [[ -z "$pbad" ]]; then ok "スクリプトが、macOS で失敗する paste -sd '' を使っていない"
+else ng "スクリプトが、macOS で失敗する paste -sd '' を使っていない" "$(printf '%s' "$pbad" | head -2)"; fi
 contains "eval: 利用者の手元の設定を読まない"                    "--setting-sources project"      "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # audit_grep は、スキルを題材の中に置く前に回す（後だと、スキル自身のファイルが監査の対象に混ざる）
 if awk '/bash "\$ROOT\/skill\/scripts\/audit_grep.sh"/ && !a { a = NR } /cp -R "\$ROOT\/skill"/ && !c { c = NR } END { exit !(a && c && a < c) }' "$ROOT/tests/eval/run-eval.sh"; then
