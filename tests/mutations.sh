@@ -268,6 +268,11 @@ mutate "audit_grep: 2b で行全体（ファイル名込み）から認可の語
 mutate "audit_grep: 2b で設定の読み出しを外さない" "scripts/audit_grep.sh" "設定の読み出しをルートの登録と取り違えない" \
   's = s.replace("&& t !~ /(^|[^A-Za-z0-9_$.])(app|router|r|e|mux|srv|api|fastify|server|routes?|group|g)", "&& 0 && t !~ /(^|[^A-Za-z0-9_$.])(app|router|r|e|mux|srv|api|fastify|server|routes?|group|g)")'
 
+mutate "audit_grep: ★ の一覧を出さない" "scripts/audit_grep.sh" "最後に ★ を集めて出す" \
+  's = s.replace("  [[ \"$st\" -eq 0 ]] && star_list < \"$ALL_OUT\"\n", "")'
+mutate "audit_grep: ★ の一覧に説明文の ★ も入れる" "scripts/audit_grep.sh" "説明文の ★ を数えない" \
+  's = s.replace("&& $0 !~ /※/ && $0 !~ /★ (の|が|は|を)/ {", "{")'
+
 # ---- recon ----
 # 旧不具合は「自サイトの判定がポートを考えない」。ホスト名にポートを残すだけでは、最終的なホスト名も
 # 同じ関数を通るので打ち消し合う。旧実装と同じく、渡されたドメインとだけ比べる形に戻す

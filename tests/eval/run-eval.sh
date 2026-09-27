@@ -93,16 +93,18 @@ echo "答えの一覧を取り出し、手掛かりを消す"
 # shellcheck disable=SC2086  # 引数は targets.tsv に書いた語。分けて渡す
 python3 "$EVAL/$PREP_SCRIPT" $PREP_ARGS "$SRC" "$OUT/answers.json"
 
+# audit_grep.sh は先に回して、出力を読ませる。エージェントに回させると、変数やパイプを組み合わせたコマンドになり、
+# 許可の条件（読むことと audit_grep.sh の単独の呼び出し）に合わず止められる（初回の実測で 3 回止められ、1 度も回らなかった）。
+# 出力の置き場は題材の外で、答えの一覧（$OUT）とも分ける。スキルを題材の中に置く前に回す
+# （後に回すと、スキル自身のファイルまで監査の対象に混ざる。2.20.1 までの実測で recon.sh の行が出ていた）
+EVID="$WORK/evidence"; mkdir -p "$EVID"
+( cd "$SRC" && bash "$ROOT/skill/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
+echo "audit_grep.sh を先に回した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
+
 # スキルを題材の中に置く。--setting-sources project で、利用者の手元の設定・スキル・CLAUDE.md は読まない
 mkdir -p "$SRC/.claude/skills"
 cp -R "$ROOT/skill" "$SRC/.claude/skills/webapp-security-assessment"
 
-# audit_grep.sh は先に回して、出力を読ませる。エージェントに回させると、変数やパイプを組み合わせたコマンドになり、
-# 許可の条件（読むことと audit_grep.sh の単独の呼び出し）に合わず止められる（初回の実測で 3 回止められ、1 度も回らなかった）。
-# 出力の置き場は題材の外で、答えの一覧（$OUT）とも分ける
-EVID="$WORK/evidence"; mkdir -p "$EVID"
-( cd "$SRC" && bash "$ROOT/skill/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
-echo "audit_grep.sh を先に回した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
 
 if [[ "$PREP_ONLY" -eq 1 ]]; then
   echo "下拵えだけで止めた: ${SRC}（答えの一覧は ${OUT}/answers.json）"

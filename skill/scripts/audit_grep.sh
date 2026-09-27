@@ -51,8 +51,29 @@ if [[ -z "${AUDIT_GREP_INNER:-}" ]]; then
     | LC_ALL=C sed -E 's/^(.{250}.{150}).{20,}$/\1 …（長い行を省略）/' \
     | { if command -v iconv >/dev/null 2>&1; then iconv -c -f UTF-8 -t UTF-8 2>/dev/null; else cat; fi; }
   }
-  AUDIT_GREP_INNER=1 bash "$0" "$@" 2>&1 | out_filter
-  exit "${PIPESTATUS[0]}"
+  # ★ の一覧。節の途中に散らばった ★ を最後に集めて出す。★ は「ほぼ確実に指摘になるもの」だが、
+  # 節の中に埋もれると読み流される（実地の評価で、2b 節の ★ の /metrics が 2 回続けて台帳に載らなかった）。
+  # 説明文の中の ★（「★ は、…」「※ ★ が無くても…」）は数えない
+  star_list() {
+    LC_ALL=C awk '
+      /^=== / { sec = $2; next }
+      index($0, "★") && $0 !~ /※/ && $0 !~ /★ (の|が|は|を)/ {
+        l = $0; sub(/^[ \t]+/, "", l); n++; item[n] = "  [" sec "] " l
+      }
+      END {
+        printf "\n=== ★ の一覧（%d 件。1 件ずつ判定して台帳に残す） ===\n", n
+        if (n == 0) print "  （なし）"
+        for (i = 1; i <= n; i++) print item[i]
+        print "  ※ 問題あり・問題なし・判断保留のどれかにし、問題なしも理由を「確認の方法」に書く。"
+        print "    同じ原因のものは 1 件にまとめてよいが場所を全部並べ、原因の違うものはまとめない（SKILL.md の「スクリプト」）"
+      }'
+  }
+  ALL_OUT="$(mktemp "${TMPDIR:-/tmp}/audit_grep_all.XXXXXX")"
+  AUDIT_GREP_INNER=1 bash "$0" "$@" 2>&1 | out_filter | tee "$ALL_OUT"
+  st="${PIPESTATUS[0]}"
+  [[ "$st" -eq 0 ]] && star_list < "$ALL_OUT"
+  rm -f "$ALL_OUT"
+  exit "$st"
 fi
 
 REPO="${1:-.}"

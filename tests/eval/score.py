@@ -172,6 +172,8 @@ def score(answers, result, tol):
         if f.get('verdict') == '問題あり' and not f.get('locations'):
             violations.append(f'{fid}: 問題ありなのに場所が無い')
     unconfirmed = result.get('unconfirmed') or []
+    # 止めている相手は指摘（S-）でも、別の未確認事項（U-）でもよい。実在しない ID だけを咎める
+    ids |= {u.get('id') for u in unconfirmed}
     if not unconfirmed:
         violations.append('未確認事項が 0 件（実機確認をしていないのに、確かめられなかったことが無いことになっている）')
     for u in unconfirmed:
