@@ -1753,6 +1753,17 @@ if [[ "$(wc -l < "$PA/app/server.js" | tr -d ' ')" == "$(wc -l < "$ROOT/tests/fi
 else ng "eval[下拵え]: 行番号を保つ（答えの行と、評価者が見る行が一致する）" "行がずれた"; fi
 if [[ ! -e "$PA/docs" ]]; then ok "eval[下拵え]: 答えの置き場を消す"
 else ng "eval[下拵え]: 答えの置き場を消す" "docs が残っている"; fi
+# 答えを処理の範囲で持つ（until）。次の処理の装飾子の手前で止まり、無ければファイルの終わりまで
+if python3 -c "import json,sys; d={x['id']:x for x in json.load(open(sys.argv[1]))['items']}; l=d['list-handler']['ranges'][0]; r=d['run-handler']['ranges'][0]; sys.exit(0 if (l['start'],l['end'])==(3,7) and r['start']==8 and r['end']>=11 and not d['run-handler']['locations'] else 1)" "$TMP/eval-pa.json" 2>/dev/null; then
+  ok "eval[下拵え]: 答えを処理の範囲で持つ（次の装飾子の手前まで）"
+else ng "eval[下拵え]: 答えを処理の範囲で持つ（次の装飾子の手前まで）" "範囲が期待どおりでない"; fi
+PH="$(cat "$PA/app/header.html.erb" 2>/dev/null || true)"
+if [[ "$(wc -l < "$PA/app/header.html.erb" | tr -d ' ')" == "7" ]] && ! printf '%s' "$PH" | grep -F 'VULNERABLE' >/dev/null \
+   && sed -n 5p "$PA/app/header.html.erb" | grep -F 'html_safe' >/dev/null && printf '%s' "$PH" | grep -F '<!-- 見出しの部品 -->' >/dev/null; then
+  ok "eval[下拵え]: 複数行にまたがる手掛かりのコメントを、行を保って消す"
+else ng "eval[下拵え]: 複数行にまたがる手掛かりのコメントを、行を保って消す" "消えていないか、行がずれたか、ほかのコメントまで消えた"; fi
+if [[ ! -e "$PA/app/routes.desc.ts" && -e "$PA/app/routes.ts" ]]; then ok "eval[下拵え]: ワイルドカードで指定したファイルだけを消す"
+else ng "eval[下拵え]: ワイルドカードで指定したファイルだけを消す" "消えていないか、消しすぎた"; fi
 # 消し残しがあれば止まる（表の residual_regex に、残っている語を入れて確かめる）
 PB="$TMP/eval-anchors-residual"; cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PB"
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d['residual_regex']='取得先'; json.dump(d,open(sys.argv[2],'w'),ensure_ascii=False)" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$TMP/eval-pb-spec.json"

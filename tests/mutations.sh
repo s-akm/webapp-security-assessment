@@ -284,6 +284,12 @@ mutate "eval: URL の // もコメントとして消す" "../tests/eval/prep_anc
   's = s.replace("SLASH = [re.compile(r\x27(^|(?<=[\\s;,)\\]}]))//.*$\x27)", "SLASH = [re.compile(r\x27//.*$\x27)")'
 mutate "eval: 手掛かりの消し残しがあっても止めない" "../tests/eval/prep_anchors.py" "手掛かりの消し残しがあれば止まる" \
   's = s.replace("            sys.exit(\x27手掛かりの消し残しがある: \x27", "            print(\x27手掛かりの消し残しがある: \x27")'
+mutate "eval: 範囲を次の装飾子で止めない" "../tests/eval/prep_anchors.py" "答えを処理の範囲で持つ" \
+  's = s.replace("if until.search(lines[i - 1])), len(lines))", "if False), len(lines))")'
+mutate "eval: ワイルドカードを使わない" "../tests/eval/prep_anchors.py" "ワイルドカードで指定したファイルだけを消す" \
+  's = s.replace("(list(root.glob(rel)) if any(c in rel for c in \x27*?[\x27) else [root / rel])", "[root / rel]")'
+mutate "eval: 複数行のコメントを消さない" "../tests/eval/prep_anchors.py" "複数行にまたがる手掛かりのコメント" \
+  's = s.replace("        text = pat.sub(blank, text)\n", "        pass\n")'
 mutate "eval: 手掛かりのコメントを消さない" "../tests/eval/prep_anchors.py" "手掛かりのコメントを消す" \
   's = s.replace("                line = line[:m.start()] + line[m.end():]\n", "                pass\n")'
 mutate "eval: ファイル全体の場所も一致に使う" "../tests/eval/score.py" "広い場所は一致に使わない" \

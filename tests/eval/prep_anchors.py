@@ -9,9 +9,11 @@
     "require": ["challenges.md"],            写しが正しい題材かの確かめ。無ければ止める
     "items": [                               答え。anchors は (ファイル, そのファイルの中の一節)
       {"id": "sqli-login", "basis": "課題 2", "category": "Injection", "scope": "in",
-       "anchors": [["server.js", "`SELECT * FROM users WHERE email = '${email}'`"]]}
-    ],
-    "remove": ["challenges.md", "docs"],     答えや手順が書いてあるもの。消す
+       "anchors": [["server.js", "`SELECT * FROM users WHERE email = '${email}'`"]]},
+      {"id": "cmd", "anchors": [["src/app.controller.ts", "@Get('spawn')"]],
+       "until": "^\\s*@(Get|Post|Put|Delete|Patch|All)\\("}   範囲で持つ。アンカーの行から、次に until に
+    ],                                                          一致する行の手前まで（無ければファイルの終わりまで）
+    "remove": ["challenges.md", "docs", "src/**/*.desc.ts"],  答えや手順が書いてあるもの。消す（* と ** を使える）
     "hint_regex": "vulnerab|injection|…",    これを含むコメントだけを消す（行は保つ）
     "residual_regex": "vulnerab|…",          消したあとに残ってはいけない語。残れば止める
     "replace": [["package.json", "古い文", "新しい文"]],   コメント以外に残る性格の文（そのファイルだけ）
@@ -29,7 +31,7 @@ import re
 import shutil
 import sys
 
-TEXT_SUFFIXES = {'.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.py', '.rb', '.erb', '.php', '.go', '.java', '.kt',
+TEXT_SUFFIXES = {'.vue', '.svelte', '.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.py', '.rb', '.erb', '.php', '.go', '.java', '.kt',
                  '.cs', '.rs', '.ex', '.exs', '.swift', '.json', '.sql', '.sh', '.yml', '.yaml', '.toml', '.html',
                  '.css', '.scss', '.md', '.example', '.txt', '.conf', ''}
 # コメントを消す対象（設定や文書はコメントの書き方が揃わないので、残り語の確かめだけにする）
@@ -40,6 +42,20 @@ SLASH = [re.compile(r'(^|(?<=[\s;,)\]}]))//.*$'), re.compile(r'\{?/\*.*?\*/\}?')
 HASH = [re.compile(r'(^|\s)#.*$')]
 DASH = [re.compile(r'(^|\s)--.*$')]
 COMMENTS = {'.sql': DASH, '.sh': HASH, '.py': HASH, '.rb': HASH, '.ex': HASH, '.exs': HASH}
+# 複数行にまたがるコメント。手掛かりの語を含めば、行数を保ったまま中身を空にする
+BLOCKS = [re.compile(r'<!--.*?-->', re.S), re.compile(r'/\*.*?\*/', re.S), re.compile(r'<%#.*?%>', re.S),
+          re.compile(r'^=begin\b.*?^=end\b', re.S | re.M)]
+BLOCK_SUFFIXES = {'.js', '.jsx', '.mjs', '.cjs', '.ts', '.tsx', '.php', '.go', '.java', '.kt', '.cs', '.rs', '.swift',
+                  '.css', '.scss', '.html', '.erb', '.vue', '.svelte', '.rb'}
+
+
+def strip_hint_blocks(text, hint):
+    """手掛かりの語を含む複数行のコメントを、改行だけを残して消す（行番号を保つ）"""
+    def blank(m):
+        return '\n' * m.group(0).count('\n') if hint.search(m.group(0)) else m.group(0)
+    for pat in BLOCKS:
+        text = pat.sub(blank, text)
+    return text
 
 
 def text_files(root):
@@ -71,21 +87,37 @@ def main():
     # 1. アンカーから答えの場所を決める（手掛かりを消す前。行番号は消した後も変わらない）
     items = []
     for it in spec['items']:
-        locs = []
+        locs, ranges = [], []
+        until = re.compile(it['until']) if it.get('until') else None
         for rel, anchor in it['anchors']:
             lines = (root / rel).read_text(encoding='utf-8').split('\n')
             hits = [i for i, l in enumerate(lines, start=1) if anchor in l]
             if not hits:
                 sys.exit(f'アンカーが見つからない: {rel}: {anchor}（題材のコードが変わった。表を直す）')
-            locs.append({'file': rel, 'line': hits[0]})
+            if until:
+                # 処理の範囲で持つ。指摘は処理の本文の中を指すことが多く、アンカーの 1 行からは離れるため
+                end = next((i - 1 for i in range(hits[0] + 1, len(lines) + 1) if until.search(lines[i - 1])), len(lines))
+                ranges.append({'file': rel, 'start': hits[0], 'end': end})
+            else:
+                locs.append({'file': rel, 'line': hits[0]})
         items.append({'id': it['id'], 'keys': [it.get('basis', it['id'])], 'name': it.get('basis', ''),
-                      'category': it.get('category', ''), 'scope': it.get('scope', 'in'), 'locations': locs, 'ranges': []})
+                      'category': it.get('category', ''), 'scope': it.get('scope', 'in'), 'locations': locs, 'ranges': ranges})
 
     # 2. 手掛かりのコメントを消す
     hint = re.compile(spec['hint_regex'], re.I) if spec.get('hint_regex') else None
     stripped = 0
     if hint:
         for p in text_files(root):
+            if p.suffix.lower() in BLOCK_SUFFIXES:
+                try:
+                    t = p.read_text(encoding='utf-8')
+                except UnicodeDecodeError:
+                    t = None
+                if t is not None:
+                    t2 = strip_hint_blocks(t, hint)
+                    if t2 != t:
+                        stripped += 1
+                        p.write_text(t2, encoding='utf-8')
             if p.suffix.lower() not in CODE_SUFFIXES:
                 continue
             try:
@@ -119,11 +151,11 @@ def main():
 
     # 4. 答えや手順が書いてあるファイルを消す
     for rel in spec.get('remove', []):
-        t = root / rel
-        if t.is_dir():
-            shutil.rmtree(t)
-        elif t.exists():
-            t.unlink()
+        for t in (list(root.glob(rel)) if any(c in rel for c in '*?[') else [root / rel]):
+            if t.is_dir():
+                shutil.rmtree(t)
+            elif t.exists():
+                t.unlink()
 
     # 消し残しの確認
     if spec.get('residual_regex'):

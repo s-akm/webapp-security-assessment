@@ -8,3 +8,6 @@
 - `target/docs/` は答えの置き場（消えるべきもの）
 
 表（`spec.json`）は題材の写しの外に置く（写しの中に置くと、表の中の語が消し残しに見える）。
+- `target/app/routes.ts` の run の処理は、答えを範囲（8〜12 行目）で持つ例（until）
+- `target/app/routes.desc.ts` は、ワイルドカードで消すファイルの例
+- `target/app/header.html.erb` の 2〜4 行目は、複数行にまたがる手掛かりのコメント（行数を保って消えるべきもの）。6 行目のコメントは残る

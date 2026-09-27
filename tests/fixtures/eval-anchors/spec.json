@@ -1,12 +1,59 @@
 {
   "name": "example",
-  "require": ["docs/answers.md"],
-  "items": [
-    {"id": "sqli-search", "basis": "例", "category": "Injection", "anchors": [["app/server.js", "SELECT id FROM items WHERE name"]]}
+  "require": [
+    "docs/answers.md"
   ],
-  "remove": ["docs"],
+  "items": [
+    {
+      "id": "sqli-search",
+      "basis": "例",
+      "category": "Injection",
+      "anchors": [
+        [
+          "app/server.js",
+          "SELECT id FROM items WHERE name"
+        ]
+      ]
+    },
+    {
+      "id": "list-handler",
+      "basis": "例",
+      "category": "Misc",
+      "anchors": [
+        [
+          "app/routes.ts",
+          "@Get('list')"
+        ]
+      ],
+      "until": "^\\s*@(Get|Post|Put|Delete|Patch|All)\\("
+    },
+    {
+      "id": "run-handler",
+      "basis": "例",
+      "category": "Injection",
+      "anchors": [
+        [
+          "app/routes.ts",
+          "@Get('run')"
+        ]
+      ],
+      "until": "^\\s*@(Get|Post|Put|Delete|Patch|All)\\("
+    }
+  ],
+  "remove": [
+    "docs",
+    "app/**/*.desc.ts"
+  ],
   "hint_regex": "injection|vulnerab|weak",
   "residual_regex": "injection|vulnerab",
-  "replace": [["app/server.js", "// 検索の処理", "// 検索"]],
-  "secrets": ["dummy-embedded-value"]
+  "replace": [
+    [
+      "app/server.js",
+      "// 検索の処理",
+      "// 検索"
+    ]
+  ],
+  "secrets": [
+    "dummy-embedded-value"
+  ]
 }

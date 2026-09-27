@@ -1,0 +1,7 @@
+<div class="header">
+  <!--
+  VULNERABLE: the name is rendered without escaping
+  -->
+  <span><%= current_user.first_name.html_safe %></span>
+  <!-- 見出しの部品 -->
+</div>
