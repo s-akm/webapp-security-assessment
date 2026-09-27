@@ -999,6 +999,8 @@ sb_publishable_... という鍵、sk_live_ で始まる鍵、Bearer <トーク�
 jwt.sign(payload, JWT_SECRET, { algorithm: 'HS256', expiresIn: '1h' })
 パスワードの強度が弱い。パスワードは「<伏字>」で、暗証番号は 4 桁
 SQL の引用: WHERE email = '${email}' AND password = '${hash(password)}' / password = :password / password = '%s'
+パスワードは`crypto.createHash('md5')`でハッシュ化される。パスワード「hashPassword(x)」を呼ぶ
+カード番号の列は 1000000000000000〜9999999999999999 の範囲で検証する
 EOF
 C="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$CLEAN" 2>&1)"
 if printf '%s' "$C" | grep '^検出なし。$' >/dev/null; then

@@ -163,6 +163,11 @@ mutate "scan_secrets: 日本語の文の中の値を見ない" "scripts/scan_sec
 mutate "scan_secrets: テンプレートの差し込みを値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
   's = s.replace("(\\$\\{|#\\{|\\{\\{|%\\(|%s|\\?|:[A-Za-z_])", "(ZZZNEVER)")'
 
+mutate "scan_secrets: カード番号を Luhn で確かめない" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
+  's = s.replace("\"\" dL", "\"\" d")'
+mutate "scan_secrets: 括弧を含むコードを値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
+  's = s.replace("|([\"\x27\"\x27\"\x27`]|「)[^\"\x27\"\x27\"\x27`」]*\\(", "")'
+
 # ---- make_register ----
 mutate "make_register: 既にあるファイルを黙って上書きする（旧不具合）" "scripts/make_register.py" "既にあるファイルは上書きせずに止まる" \
   's = s.replace("if os.path.exists(args.output) and not args.force:", "if False:")'
