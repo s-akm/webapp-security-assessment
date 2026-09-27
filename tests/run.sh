@@ -995,6 +995,7 @@ API_KEY=process.env.API_KEY / password: string / token = getToken()
 区分 1-2 を参照。3 区分の 1-2-3 節。市区町村まではマスクする
 sb_publishable_... という鍵、sk_live_ で始まる鍵、Bearer <トークン>
 接続先は postgresql://<伏字>@db.example.com
+接続文字列の書き方は postgres://<ユーザー>:<パスワード>@<ホスト>:<ポート>/<スキーマ> の形
 引用: bcrypt.hash('<伏字>', 10) / createHmac('sha256', key) / password: '<伏字>' / bcrypt.hash(password, 10)
 jwt.sign(payload, JWT_SECRET, { algorithm: 'HS256', expiresIn: '1h' })
 パスワードの強度が弱い。パスワードは「<伏字>」で、暗証番号は 4 桁
@@ -1642,6 +1643,21 @@ contains "audit_grep[2e]: ディレクトリ一覧（Express）"               "
 contains "audit_grep[2e]: ディレクトリ一覧（nginx の設定）"          "★ nginx/site.conf:2:"           "$S2E"
 contains "audit_grep[2e]: ディレクトリ一覧（Go の http.FileServer）" "★ static.go:1:"                 "$S2E"
 contains "audit_grep[2e]: ディレクトリ一覧（Django の show_indexes）" "★ urls.py:1:"                  "$S2E"
+# 2f. 装飾子・注釈で書くルート。NestJS・Spring・ASP.NET・FastAPI・Flask の書き方を、架空の小さな例で並べる
+DR="$TMP/deco-routes"
+cp -R "$ROOT/tests/fixtures/deco-routes" "$DR"
+S2F="$(bash "$SKILL/scripts/audit_grep.sh" "$DR" 2>&1 | LC_ALL=C awk 'index($0, "=== 2f.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2f]: ルートごとに認可の有無を数える（NestJS）"   "items.controller.ts                            ルート 4 / 装飾子に認可の語あり 2" "$S2F"
+contains "audit_grep[2f]: 認可の無いルートを出す（NestJS）"           "items.controller.ts:14: @Delete(':id')" "$S2F"
+absent   "audit_grep[2f]: 複数行の装飾子をはさんでも認可を読む"       "items.controller.ts:11:"         "$S2F"
+contains "audit_grep[2f]: 内部向けのパスに ★ を付ける"                "★ items.controller.ts:17: @Get('/metrics')" "$S2F"
+contains "audit_grep[2f]: クラスに付いた認可を読む（Spring）"         "ルート 1 / 装飾子に認可の語あり 1（うちクラス単位 1）" "$S2F"
+contains "audit_grep[2f]: 認可の無いルートを出す（ASP.NET）"          "OrdersController.cs:12: [HttpPost(\"orders\")]" "$S2F"
+contains "audit_grep[2f]: 明示的な公開に注記する（ASP.NET）"          "← 明示的に公開"                   "$S2F"
+absent   "audit_grep[2f]: 処理の宣言の引数の認可を読む（FastAPI）"    "api.py:1:"                        "$S2F"
+absent   "audit_grep[2f]: 下の装飾子の認可を読む（Flask）"            "api.py:9:"                        "$S2F"
+contains "audit_grep[2f]: 認可の無いルートを出す（FastAPI）"          "api.py:5: @app.post(\"/reports\")" "$S2F"
+
 # ★ の一覧。節に散らばった ★ を最後に集め、節の番号を付ける。説明文の ★ は数えない
 contains "audit_grep[★一覧]: 最後に ★ を集めて出す"                "=== ★ の一覧"                   "$SSTAR"
 contains "audit_grep[★一覧]: 節の番号を付ける"                     "[2b.] ★ server.js:6: app.get('/metrics'" "$SSTAR"

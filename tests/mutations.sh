@@ -168,6 +168,9 @@ mutate "scan_secrets: カード番号を Luhn で確かめない" "scripts/scan_
 mutate "scan_secrets: 括弧を含むコードを値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
   's = s.replace("|([\"\x27\"\x27\"\x27`]|「)[^\"\x27\"\x27\"\x27`」]*\\(", "")'
 
+mutate "scan_secrets: 見本の接続文字列を値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
+  's = s.replace("\x27://(<伏字>|<[^>]+>(:<[^>]+>)?)@\x27", "\x27://<伏字>@\x27")'
+
 # ---- make_register ----
 mutate "make_register: 既にあるファイルを黙って上書きする（旧不具合）" "scripts/make_register.py" "既にあるファイルは上書きせずに止まる" \
   's = s.replace("if os.path.exists(args.output) and not args.force:", "if False:")'
@@ -329,6 +332,13 @@ mutate "audit_grep: 2e で設定ファイルを見ない" "scripts/audit_grep.sh
   's = s.replace("--include=\x27*.conf\x27 ", "")'
 mutate "audit_grep: 2e で Django の書き方を拾わない" "scripts/audit_grep.sh" "Django の show_indexes" \
   's = s.replace("[:=][[:space:]]*True|directory_listing", "=[[:space:]]*True|directory_listing")'
+
+mutate "audit_grep: 2f で装飾子の括弧の深さを数えない" "scripts/audit_grep.sh" "複数行の装飾子をはさんでも認可を読む" \
+  's = s.replace("blk = blk \" \" line; d += depth(line); if (d < 0) d = 0", "blk = blk \" \" line")'
+mutate "audit_grep: 2f でクラスの装飾子を読まない" "scripts/audit_grep.sh" "クラスに付いた認可を読む" \
+  's = s.replace("{ cls = blk; n = 0 }", "{ n = 0 }")'
+mutate "audit_grep: 2f で処理の宣言の引数を読まない" "scripts/audit_grep.sh" "処理の宣言の引数の認可を読む" \
+  's = s.replace("    cut -f6 \"$HF_DECO\" | grep -nE \"$GUARD\" 2>/dev/null | cut -d: -f1 >> \"$HF_DECO.g\" || true\n", "")'
 
 # 手元の題材の変異（tests/eval/local/mutations.sh）。題材を特定できる情報を含むので公開しない。あるときだけ回す
 # shellcheck disable=SC1091

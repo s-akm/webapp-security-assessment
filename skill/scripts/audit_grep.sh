@@ -667,6 +667,87 @@ DIRLIST='serveIndex\(|express-directory|autoindex[[:space:]]+on|Options[[:space:
 echo "  ※ 一覧を出す設定は、公開してよいファイルだけを置いたディレクトリに限る。鍵・ログ・バックアップ・ソースが並んでいないかを見る"
 echo "    Go の http.FileServer は、index.html の無いディレクトリで既定のまま一覧を出す"
 
+hr "2f. 装飾子・注釈で書くルートごとの認可（NestJS・Spring・ASP.NET・FastAPI・Flask・Symfony など）"
+# ルートを装飾子（@Get('x')・@GetMapping・[HttpGet]・@app.get・#[Route]）で宣言する枠組みでは、認可も装飾子で掛ける
+# （@UseGuards・@PreAuthorize・[Authorize]・Depends・@login_required・#[IsGranted]）。2b 節の「登録の行」には現れず、
+# 2 節のファイル単位の集計では、ルートの多いファイルのどのルートに認可が無いかが見えない。
+# ルートの装飾子と、その上下に続く装飾子のまとまり（引数が複数行にまたがるものも含む）と、クラスに付いた装飾子を合わせて見る
+DECO_FILES="$(grep -rlE "${EXA[@]}" '@(Get|Post|Put|Patch|Delete|All)\(|@(Get|Post|Put|Patch|Delete|Request)Mapping|\[Http(Get|Post|Put|Patch|Delete)|@[A-Za-z_]+\.(get|post|put|patch|delete|route|api_route)\(|#\[Route\(|@(GET|POST|PUT|PATCH|DELETE)([^A-Za-z]|$)' \
+  --include='*.ts' --include='*.js' --include='*.py' --include='*.java' --include='*.kt' --include='*.cs' --include='*.php' \
+  . 2>/dev/null | sed 's|^\./||' | grep -vE '(^|/)(test|tests|__tests__|spec|e2e)/|\.(test|spec)\.[a-z]+$' || true)"
+if [[ -n "$DECO_FILES" ]]; then
+  HF_DECO="$HF_LIST.deco"; : > "$HF_DECO"
+  # 1 ルート 1 行: ファイル <TAB> 行 <TAB> 装飾子の行 <TAB> 装飾子のまとまり <TAB> クラスの装飾子 <TAB> 次の行（処理の宣言）
+  printf '%s\n' "$DECO_FILES" | while IFS= read -r f; do
+    LC_ALL=C awk -v f="$f" '
+      function isdeco(l) { return l ~ /^[ \t]*(@[A-Za-z_]|\[[A-Z][A-Za-z]*[(\]]|#\[)/ }
+      function isroute(l) {
+        return l ~ /@(Get|Post|Put|Patch|Delete|All|Options|Head)\(/ || l ~ /@(Get|Post|Put|Patch|Delete|Request)Mapping/ \
+          || l ~ /\[Http(Get|Post|Put|Patch|Delete)/ || l ~ /@[A-Za-z_]+\.(get|post|put|patch|delete|route|api_route)\(/ \
+          || l ~ /#\[Route\(/ || l ~ /@(GET|POST|PUT|PATCH|DELETE)([^A-Za-z]|$)/
+      }
+      function depth(l,   o, c) { o = gsub(/\(/, "(", l); c = gsub(/\)/, ")", l); return o - c }
+      {
+        line = $0; sub(/\r$/, "", line)
+        if (d > 0 || isdeco(line)) {
+          blk = blk " " line; d += depth(line); if (d < 0) d = 0
+          if (isroute(line)) { n++; rl[n] = NR; rt[n] = line }
+          next
+        }
+        if (line ~ /^[ \t]*$/ && blk == "") next
+        sig = line; gsub(/\t/, " ", sig); sub(/^ +/, "", sig)
+        # 直後がクラスの宣言なら、まとまりはクラスの装飾子（@RequestMapping("/admin") はパスの前置きで、ルートではない）
+        if (line ~ /(^|[^A-Za-z_])class[ \t]/) { cls = blk; n = 0 }
+        for (i = 1; i <= n; i++) {
+          t = rt[i]; gsub(/\t/, " ", t); sub(/^ +/, "", t); b = blk; gsub(/\t/, " ", b); c = cls; gsub(/\t/, " ", c)
+          printf "%s\t%d\t%s\t%s\t%s\t%s\n", f, rl[i], substr(t, 1, 140), b, c, substr(sig, 1, 100)
+        }
+        n = 0; blk = ""; d = 0
+      }' "$f" 2>/dev/null
+  done > "$HF_DECO"
+  if [[ -s "$HF_DECO" ]]; then
+    # 認可の語は、装飾子のまとまりとクラスの装飾子だけで探す（行の番号で突き合わせる）
+    cut -f4 "$HF_DECO" | grep -nE "$GUARD" 2>/dev/null | cut -d: -f1 > "$HF_DECO.g" || true
+    cut -f5 "$HF_DECO" | grep -nE "$GUARD" 2>/dev/null | cut -d: -f1 > "$HF_DECO.c" || true
+    # 処理の宣言の引数に書く認可（FastAPI の user = Depends(get_current_user) など）も数える
+    cut -f6 "$HF_DECO" | grep -nE "$GUARD" 2>/dev/null | cut -d: -f1 >> "$HF_DECO.g" || true
+    cut -f4 "$HF_DECO" | grep -nE 'AllowAnonymous|@Public\(|permitAll|IS_AUTHENTICATED_ANONYMOUSLY' 2>/dev/null | cut -d: -f1 > "$HF_DECO.p" || true
+    LC_ALL=C awk -F'\t' -v gf="$HF_DECO.g" -v cf="$HF_DECO.c" -v pf="$HF_DECO.p" -v ipath="$INTERNAL_PATHS" -v rpath="$REVIEW_PATHS" \
+        -v ufile="$HF_DECO.u" '
+      BEGIN { while ((getline l < gf) > 0) g[l] = 1; while ((getline l < cf) > 0) c[l] = 1; while ((getline l < pf) > 0) pub[l] = 1 }
+      {
+        n++; f = $1
+        if (!(f in tot)) order[++k] = f
+        tot[f]++
+        if (n in g) { own[f]++; next }
+        if (n in c) { cls[f]++; next }
+        note = ""; star = 0
+        if (n in pub) note = "  ← 明示的に公開（AllowAnonymous など）。公開してよいかを確かめる"
+        else if (match($3, ipath)) { note = "  ← 内部向け・運用向けのパスを、認可の装飾子なしで公開"; star = 1 }
+        else if (match($3, rpath)) note = "  ← 管理・文書化の口。全体に掛ける認可があるかを確かめる"
+        out = "  " f ":" $2 ": " $3 "  → " $6 note
+        if (star) print "  ★" substr(out, 2) > (ufile ".star"); else print out > ufile
+      }
+      END {
+        for (i = 1; i <= k; i++) {
+          f = order[i]
+          printf "  %-46s ルート %d / 装飾子に認可の語あり %d（うちクラス単位 %d） / なし %d\n", f, tot[f], own[f] + cls[f], cls[f] + 0, tot[f] - own[f] - cls[f]
+        }
+      }' "$HF_DECO"
+    if [[ -s "$HF_DECO.u.star" || -s "$HF_DECO.u" ]]; then
+      echo "  --- 装飾子に認可の語が無いルート（★ を先に出す）"
+      [[ -s "$HF_DECO.u.star" ]] && cat "$HF_DECO.u.star"
+      [[ -s "$HF_DECO.u" ]] && lim 80 < "$HF_DECO.u"
+    fi
+  else
+    echo "  （検出なし）"
+  fi
+  echo "  ※ 全体に掛ける認可（NestJS の APP_GUARD・useGlobalGuards、Spring の SecurityFilterChain、ASP.NET の FallbackPolicy、"
+  echo "    FastAPI の APIRouter(dependencies=…)）があれば、それを先に確かめる。無ければ、認可の語が無いルートは 1 本ずつ読む"
+else
+  echo "  （装飾子でルートを宣言するファイルは無い）"
+fi
+
 hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）"
 # 'use server' のファイルでは、export された関数 1 つ 1 つが入口になる。
 # ファイル単位の「定義 N / ガード M」では、どの関数が素通しかまでは分からない。
