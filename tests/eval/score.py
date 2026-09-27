@@ -72,11 +72,27 @@ def span(loc):
     return (hi, lo) if hi < lo else (lo, hi)
 
 
-def overlaps(loc, line, tol):
+# ファイルごとの、答えの穴の行の一覧（score() が作る）。1 行で指した場所を、いちばん近い答えにだけ一致させるのに使う
+ANSWER_LINES = {}
+
+
+def overlaps(loc, line, tol, answer_file=''):
+    """指摘の場所 loc が、答えの行 line に掛かるか。
+
+    範囲で指したものは、範囲に答えの行が入っているときだけ一致させる（前後の許容は付けない）。
+    1 行で指したものは前後 tol 行まで許すが、同じファイルのいちばん近い答えの行にだけ一致させる。
+    ルートが密に並んだファイルで、隣の答えに偶然掛かるのを防ぐため（実測で、隣のルートを範囲で指した指摘が、
+    許容のせいで 3 行先の別の答えに一致していた）
+    """
     lo, hi = span(loc)
     if hi - lo > WIDE:
         return False
-    return lo - tol <= line <= hi + tol
+    if hi > lo:
+        return lo <= line <= hi
+    if abs(line - lo) > tol:
+        return False
+    others = ANSWER_LINES.get(norm(answer_file), [line])
+    return abs(line - lo) <= min(abs(x - lo) for x in others)
 
 
 def matching_locs(item, finding, tol, wide=False):
@@ -87,7 +103,7 @@ def matching_locs(item, finding, tol, wide=False):
         if wide and hi - lo <= WIDE:
             continue
         for al in item['locations']:
-            if same_file(al['file'], fl.get('file', '')) and (overlaps(fl, al['line'], tol) if not wide
+            if same_file(al['file'], fl.get('file', '')) and (overlaps(fl, al['line'], tol, al['file']) if not wide
                                                                else lo - tol <= al['line'] <= hi + tol):
                 out.append(fl)
                 break
@@ -106,6 +122,10 @@ def matches(item, finding, tol):
 
 def score(answers, result, tol):
     findings = result.get('findings') or []
+    ANSWER_LINES.clear()
+    for it in answers['items']:
+        for al in it['locations']:
+            ANSWER_LINES.setdefault(norm(al['file']), []).append(al['line'])
     rows, matched_ids = [], set()
     for it in answers['items']:
         hit = [f for f in findings if matches(it, f, tol)]
