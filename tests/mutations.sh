@@ -171,6 +171,9 @@ mutate "scan_secrets: 括弧を含むコードを値と取り違える" "scripts
 mutate "scan_secrets: 見本の接続文字列を値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
   's = s.replace("\x27://(<伏字>|<[^>]+>(:<[^>]+>)?)@\x27", "\x27://<伏字>@\x27")'
 
+mutate "scan_secrets: 差し込みの記法の接続文字列を値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
+  's = s.replace("|\\$\\{[^}]*\\}", "", 1)'
+
 # ---- make_register ----
 mutate "make_register: 既にあるファイルを黙って上書きする（旧不具合）" "scripts/make_register.py" "既にあるファイルは上書きせずに止まる" \
   's = s.replace("if os.path.exists(args.output) and not args.force:", "if False:")'

@@ -41,11 +41,12 @@ score_and_record() {
   bash "$ROOT/skill/scripts/scan_secrets.sh" "$out/scan" > "$out/scan_secrets.txt" 2>&1 || true
   echo "秘密情報の検査: $(grep -E '^(検出なし|[0-9]+ 種類)' "$out/scan_secrets.txt" || echo '結果を読めない')（詳細は $out/scan_secrets.txt）"
   [[ "$RECORD" -eq 1 ]] || return 0
-  local skill_commit dirty=""
-  skill_commit="$(git -C "$ROOT" rev-parse --short HEAD)"
-  git -C "$ROOT" diff --quiet HEAD -- skill || dirty="+未コミット"
+  # 版とコミットは、スキルを題材に写した時点で控えたものを使う（実行中に版を上げても、当てた版を記録する）
+  local skill_version skill_commit
+  skill_version="$(cat "$out/skill_version" 2>/dev/null || cat "$ROOT/VERSION")"
+  skill_commit="$(cat "$out/skill_commit" 2>/dev/null || git -C "$ROOT" rev-parse --short HEAD)"
   [[ -f "$LOCAL/history.tsv" ]] || printf '日付\tスキルの版\tスキルのコミット\t題材\t題材のコミット\tモデル\t見つけた\tうち行で指した\t範囲内\t保留\t見誤り\t範囲が広い\t見落とし\t一覧外\t違反\t費用（米ドル）\t分\t入力トークン\tキャッシュ読みトークン\t出力トークン\n' > "$LOCAL/history.tsv"
-  python3 - "$out/summary.json" "$LOCAL/history.tsv" "$(cat "$ROOT/VERSION")" "${skill_commit}${dirty}" "$target" "$tcommit" <<'PY'
+  python3 - "$out/summary.json" "$LOCAL/history.tsv" "$skill_version" "$skill_commit" "$target" "$tcommit" <<'PY'
 import datetime, json, sys
 s = json.load(open(sys.argv[1], encoding='utf-8'))
 row = [datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6][:12], s.get('model', ''),
@@ -112,6 +113,9 @@ echo "audit_grep.sh を先に回した（$(wc -l < "$EVID/audit-grep.txt" | tr -
 # スキルを題材の中に置く。--setting-sources project で、利用者の手元の設定・スキル・CLAUDE.md は読まない
 mkdir -p "$SRC/.claude/skills"
 cp -R "$ROOT/skill" "$SRC/.claude/skills/webapp-security-assessment"
+# 当てるスキルの版とコミットを、写した時点で控える（記録に使う）
+cat "$ROOT/VERSION" > "$OUT/skill_version"
+{ git -C "$ROOT" rev-parse --short HEAD; git -C "$ROOT" diff --quiet HEAD -- skill || echo "+未コミット"; } | paste -sd '' - > "$OUT/skill_commit"
 
 
 if [[ "$PREP_ONLY" -eq 1 ]]; then

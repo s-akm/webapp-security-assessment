@@ -236,10 +236,13 @@ check "Google・Supabase の鍵" \
       "※ \"type\": \"service_account\" は GCP のサービスアカウントの鍵ファイル。中身ごと貼られていないか確認する"
 # 角括弧の中の \t は「\ と t」の 2 文字になる（POSIX）。空白は [:space:] で書く。
 # 認証情報を「<伏字>」に置き換えたもの（audit_grep.sh の出力を貼った形）は数えない。
-# 認証情報の部分が <伏字> や <ユーザー>:<パスワード> のような見本のものは、値ではないので外す
-check "接続文字列" '(postgres(ql)?|mysql|mongodb(\+srv)?|redis|rediss|amqps?)://[^[:space:]"'"'"'`]{8,}' "" "" '://(<伏字>|<[^>]+>(:<[^>]+>)?)@'
+# 認証情報の部分が見本（<伏字>・<ユーザー>:<パスワード>）や、テンプレートの差し込み（${user}・#{pw}・{{ pass }}・%(pw)s）の
+# ものは、値ではないので外す
+PH='(<[^>]+>|\$\{[^}]*\}|#\{[^}]*\}|\{\{[^}]*\}\}|%\([^)]*\)s)'
+check "接続文字列" '(postgres(ql)?|mysql|mongodb(\+srv)?|redis|rediss|amqps?)://[^[:space:]"'"'"'`]{8,}' "" "" "://${PH}(:${PH})?@"
+
 # URL に埋め込んだ認証情報。「://<伏字>@」のように伏せたものは「:」を含まないので当たらない。
-check "URL に埋め込んだ認証情報（user:pass@）" '[A-Za-z][A-Za-z0-9+.-]*://[^/:@[:space:]"'"'"'`<>]+:[^/@[:space:]"'"'"'`<>]+@'
+check "URL に埋め込んだ認証情報（user:pass@）" '[A-Za-z][A-Za-z0-9+.-]*://[^/:@[:space:]"'"'"'`<>]+:[^/@[:space:]"'"'"'`<>]+@' "" "" "://${PH}(:${PH})?@"
 check "秘密鍵ブロック" '-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----'
 check "Authorization ヘッダの値" \
       '(authorization["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"']?(bearer|basic|token)[[:space:]]+|bearer[[:space:]]+)[A-Za-z0-9._~+/-]{16,}=*' \

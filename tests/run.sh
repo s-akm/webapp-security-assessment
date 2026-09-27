@@ -996,6 +996,7 @@ API_KEY=process.env.API_KEY / password: string / token = getToken()
 sb_publishable_... という鍵、sk_live_ で始まる鍵、Bearer <トークン>
 接続先は postgresql://<伏字>@db.example.com
 接続文字列の書き方は postgres://<ユーザー>:<パスワード>@<ホスト>:<ポート>/<スキーマ> の形
+設定は `postgres://${user}:${password}@${host}/${db}` のように環境変数から組み立てる
 引用: bcrypt.hash('<伏字>', 10) / createHmac('sha256', key) / password: '<伏字>' / bcrypt.hash(password, 10)
 jwt.sign(payload, JWT_SECRET, { algorithm: 'HS256', expiresIn: '1h' })
 パスワードの強度が弱い。パスワードは「<伏字>」で、暗証番号は 4 桁
@@ -1834,6 +1835,10 @@ if bash -n "$ROOT/tests/eval/run-eval.sh" 2>/dev/null; then ok "eval: run-eval.s
 else ng "eval: run-eval.sh の構文"; fi
 # 題材の中のエージェント向けの設定を消す手順が残っているか（消さないと、評価の実行中に題材のフックや指示が読み込まれる）
 contains "eval: 題材のエージェント向けの設定を消す"              "for p in .claude CLAUDE.md"     "$(cat "$ROOT/tests/eval/run-eval.sh")"
+if awk '/cp -R "\$ROOT\/skill"/ && !c { c = NR } /> "\$OUT\/skill_version"/ && !v { v = NR } END { exit !(c && v && c < v) }' "$ROOT/tests/eval/run-eval.sh" \
+   && grep -F 'skill_version="$(cat "$out/skill_version"' "$ROOT/tests/eval/run-eval.sh" >/dev/null; then
+  ok "eval: 当てたスキルの版を、写した時点で控えて記録する"
+else ng "eval: 当てたスキルの版を、写した時点で控えて記録する" "記録の時点の版を使っている"; fi
 contains "eval: 利用者の手元の設定を読まない"                    "--setting-sources project"      "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # audit_grep は、スキルを題材の中に置く前に回す（後だと、スキル自身のファイルが監査の対象に混ざる）
 if awk '/bash "\$ROOT\/skill\/scripts\/audit_grep.sh"/ && !a { a = NR } /cp -R "\$ROOT\/skill"/ && !c { c = NR } END { exit !(a && c && a < c) }' "$ROOT/tests/eval/run-eval.sh"; then
