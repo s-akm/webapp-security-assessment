@@ -863,6 +863,14 @@ with zipfile.ZipFile(sys.argv[2], "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("ppt/slides/slide1.xml",
                '<p:sld><a:p><a:r><a:t>鍵 sk-proj-FIXTUREDUMMY0123456789abcdefXYZ</a:t></a:r></a:p></p:sld>')
 PYEOF
+# コードの引用に残った値。関数の引数と、パスワードらしき名前への短い値の代入（値はすべて架空）
+cat > "$REP/code-quote.md" <<'EOF'
+引用: bcrypt.hash('FIXTUREpw1', 10)
+引用: jwt.sign(payload, 'fixture-dev-key')
+引用: password: 'hunter2x'
+const DB_PASSWORD = "fixtr9pw"
+全アカウントが同一パスワード'fixtjapw'で作成されている。初期の暗証番号は「fixt4pin」
+EOF
 printf '%%PDF-1.4 fixture\n' > "$REP/報告書.pdf"
 # LC_ALL=C で走らせる。伏字の前に残す部分はバイト単位で切るため、日本語の途中で切れる。
 # 不完全なバイト列を落とす処理が働いているかは、この条件でないと確かめられない。
@@ -891,6 +899,11 @@ while IFS='|' read -r label loc what; do
   [[ -n "$label" ]] || continue
   contains "scan_secrets[形式]: $what" "  $loc: " "$(ss_sec "$label")"
 done <<'EOF'
+パスワード・鍵らしき値の直書き（関数の引数・短い値の代入）|./code-quote.md:1|ハッシュ関数に渡した値
+パスワード・鍵らしき値の直書き（関数の引数・短い値の代入）|./code-quote.md:2|署名に渡した鍵
+パスワード・鍵らしき値の直書き（関数の引数・短い値の代入）|./code-quote.md:3|password への短い値
+パスワード・鍵らしき値の直書き（関数の引数・短い値の代入）|./code-quote.md:4|大文字の定数への短い値
+パスワード・鍵らしき値の直書き（関数の引数・短い値の代入）|./code-quote.md:5|日本語の文の中の値
 LLM の鍵（OpenAI・Anthropic）|./keys.yml:1|OpenAI（sk-proj-）
 LLM の鍵（OpenAI・Anthropic）|./keys.yml:2|OpenAI（旧形式の sk-）
 LLM の鍵（OpenAI・Anthropic）|./keys.yml:3|Anthropic（sk-ant-）
@@ -936,7 +949,7 @@ EOF
 
 # 検出した値そのものを出さない。位置と種類と、先頭の数バイトだけを出す。
 # 題材の値は、先頭 4 バイトより後ろに DUMMY を含むように作ってある。
-for leak in "DUMMY" "456789abcdef" "yamada" "0000-0000" "神南" "みなとみらい" "５６７８" "822463" "150-0000" "4111 1111"; do
+for leak in "DUMMY" "456789abcdef" "yamada" "FIXTUREpw1" "hunter2x" "fixtr9pw" "fixtjapw" "fixt4pin" "0000-0000" "神南" "みなとみらい" "５６７８" "822463" "150-0000" "4111 1111"; do
   absent "scan_secrets: 検出した値を出さない（${leak}）" "$leak" "$S"
 done
 contains "scan_secrets: 伏字にした形で出す" "…<伏字>" "$S"
@@ -957,6 +970,9 @@ API_KEY=process.env.API_KEY / password: string / token = getToken()
 区分 1-2 を参照。3 区分の 1-2-3 節。市区町村まではマスクする
 sb_publishable_... という鍵、sk_live_ で始まる鍵、Bearer <トークン>
 接続先は postgresql://<伏字>@db.example.com
+引用: bcrypt.hash('<伏字>', 10) / createHmac('sha256', key) / password: '<伏字>' / bcrypt.hash(password, 10)
+jwt.sign(payload, JWT_SECRET, { algorithm: 'HS256', expiresIn: '1h' })
+パスワードの強度が弱い。パスワードは「<伏字>」で、暗証番号は 4 桁
 EOF
 C="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$CLEAN" 2>&1)"
 if printf '%s' "$C" | grep '^検出なし。$' >/dev/null; then

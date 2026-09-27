@@ -148,6 +148,14 @@ mutate "scan_secrets: PDF を黙って飛ばす" "scripts/scan_secrets.sh" "PDF 
 mutate "scan_secrets: 日時の 12 桁を除外しない（誤検出）" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID" \
   's = s.replace("\x27^(19|20)[0-9]{2}(0[1-9]|1[0-2])", "\x27^ZZZNOMATCH(19|20)[0-9]{2}(0[1-9]|1[0-2])")'
 
+mutate "scan_secrets: 関数に渡した値を見ない" "scripts/scan_secrets.sh" "ハッシュ関数に渡した値" \
+  's = s.replace("((hash|compare|sign|encrypt|decrypt|createHmac|pbkdf2|scrypt|login|authenticate|signIn)", "((zzzhash)")'
+mutate "scan_secrets: アルゴリズム名を値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
+  's = s.replace("(HS|RS|ES|PS)(256|384|512)|none|", "")'
+
+mutate "scan_secrets: 日本語の文の中の値を見ない" "scripts/scan_secrets.sh" "日本語の文の中の値" \
+  's = s.replace("|(パスワード|暗証番号)(は|が|を|:|：)?[[:space:]]*)", ")")'
+
 # ---- make_register ----
 mutate "make_register: 既にあるファイルを黙って上書きする（旧不具合）" "scripts/make_register.py" "既にあるファイルは上書きせずに止まる" \
   's = s.replace("if os.path.exists(args.output) and not args.force:", "if False:")'

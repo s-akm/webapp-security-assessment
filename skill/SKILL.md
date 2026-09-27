@@ -253,7 +253,7 @@ AI で書かれたコードを読むだけなら 12 は開かない。
 | `scripts/audit_grep.sh <repo>` | コード監査の機械的な下拵え（規模、**枠組みの版と既知の重大な勧告**、ハンドラ×認可ガード、ミドルウェアの対象範囲、危険な関数、秘密情報、**LLM の鍵の露出**、fail-open、開発用の抜け道、参照テーブル名、トークン検証、**サーバー側のセッション検証**、Webhook、例外の握りつぶし、乱数と暗号、証明書の検証、XML、LLM の利用。**構成に応じてインフラの定義、モバイル、BaaS の設定（RLS・ルール）、CI の定義、インストール時の防御、AI エージェントの設定、リアルタイム通信、画面操作の記録（セッションリプレイ）、SMS の送信経路も**） | `grep`、`git`（任意） |
 | `scripts/make_register.py <out.xlsx> [--frameworks none\|owasp\|full] [--owasp 2025\|2021] [--api] [--card] [--skill-version <版>] [--force]` | 指摘台帳の xlsx 雛形を生成。判定・優先度・状態を別の列で持ち、集計は数式なので行を足せば自動で追従する。`--frameworks` で枠組みシートの構成、`--owasp` で版、`--api` で OWASP のシートを API Security Top 10 に置き換え、`--card` でカード決済のシートを足す。既存のファイルは `--force` が無ければ上書きしない（詳細は `references/04-findings-register.md`） | `openpyxl` |
 | `scripts/browser_probe.mjs <url> [パス...]` | ブラウザで実際に読み込み、curl では見えないものを取る（同意前の第三者送信・**WebSocket の接続先**・Cookie 属性・保存領域のキー名・CSP の実効性（`<meta>` の CSP と `script-src-elem` / `default-src` を含む））。`references/09-browser-verification.md` の一部を自動化したもの | Node.js 20 以降、`playwright` 1.63（**評価対象のリポジトリには入れない**。スキルの外に入れて `NODE_PATH` で渡す） |
-| `scripts/scan_secrets.sh <dir>` | 成果物に秘密情報・個人情報が混入していないかの最終検査。拡張子で絞らずテキストをすべて見て、xlsx の台帳と docx・pptx の報告書も展開して見る（PDF は中身を読めないので未検査と出す）。検出した値は先頭だけ残して伏せる | `grep`、`iconv`（任意）、`unzip`（Office の文書を見るとき） |
+| `scripts/scan_secrets.sh <dir>` | 成果物に秘密情報・個人情報が混入していないかの最終検査。**コードの引用や文の中に残った短いパスワード・鍵**（`hash('…')`・`password: '…'`・「パスワード『…』」）も見る。拡張子で絞らずテキストをすべて見て、xlsx の台帳と docx・pptx の報告書も展開して見る（PDF は中身を読めないので未検査と出す）。検出した値は先頭だけ残して伏せる | `grep`、`iconv`（任意）、`unzip`（Office の文書を見るとき） |
 
 いずれも読み取り専用で、対象システムの状態を変えない。検出した鍵の値は伏字で出力する。
 
