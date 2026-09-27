@@ -1578,6 +1578,19 @@ else
   trap - EXIT
 fi
 
+# 2b. ルートを 1 ファイルに集めた構成。登録の行ごとに認可の語の有無を出し、コメントアウトした認可と公開の設定に ★ を付ける
+RT="$TMP/route-table"
+cp -R "$ROOT/tests/fixtures/route-table" "$RT"
+S2B="$(bash "$SKILL/scripts/audit_grep.sh" "$RT" 2>&1 | LC_ALL=C awk 'index($0, "=== 2b.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2b]: 登録の行ごとに認可の語の有無を数える"     "登録 4 / 行に認可の語あり 1 / なし 3" "$S2B"
+contains "audit_grep[2b]: 認可の付いた登録のコメントアウトを知らせる" "★ server.js:4: // app.put('/api/products/:id', auth.isAuthorized())" "$S2B"
+contains "audit_grep[2b]: 認可の無い登録を行で出す"                 "server.js:3: app.post('/api/orders', createOrder)" "$S2B"
+contains "audit_grep[2b]: ディレクトリ一覧の公開に ★ を付ける"       "★ server.js:5: app.use('/ftp'"  "$S2B"
+contains "audit_grep[2b]: メトリクスの公開に ★ を付ける"             "← メトリクスを公開"             "$S2B"
+absent   "audit_grep[2b]: 認可のある登録を、無い側に出さない"       "server.js:2:"                   "$S2B"
+absent   "audit_grep[2b]: 設定の読み出しをルートの登録と取り違えない" "config.get"                    "$S2B"
+contains "audit_grep[2b]: ファイル名を認可の語と取り違えない"       "routes/authenticatedUsers.js:1: router.get('/api/me', showProfile)" "$S2B"
+
 # ==========================================================================
 printf '\n\033[1m結果\033[0m  成功 %d / 失敗 %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIPPED"
 [[ $SKIPPED -gt 0 ]] && printf '  ※ 省略した検査がある。道具（node・playwright・dig・openpyxl）を入れて全件を回す\n'

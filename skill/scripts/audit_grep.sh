@@ -390,7 +390,7 @@ echo "  ※ 判定はファイルの有無による。手作業で作った資�
 # ハンドラの一覧は 1 回だけ作って使い回す（以前は 3 回計算し、大きなリポジトリで数分かかった）
 HF_LIST="$(mktemp "${TMPDIR:-/tmp}/audit_grep.XXXXXX")"
 HF_DEF="$HF_LIST.def"; HF_GRD="$HF_LIST.grd"
-trap 'rm -f "$HF_LIST" "$HF_DEF" "$HF_GRD"' EXIT
+trap 'rm -f "$HF_LIST" "$HF_LIST".*' EXIT
 handler_files > "$HF_LIST"
 # ファイルごとの数は、全ファイルをまとめて grep に渡して 1 回で数える。ファイルごとに grep を起動すると、
 # ハンドラの多い大きなリポジトリで、1 節と 2 節だけで数分かかっていた。
@@ -516,6 +516,8 @@ GUARD="$GUARD"'|CRON_SECRET|WEBHOOK_SECRET|REVALIDATE_SECRET|API_SECRET'
 GUARD="$GUARD"'|permission_callback|current_user_can|is_user_logged_in'
 GUARD="$GUARD"'|beforeHandle|sharedMap|grouped\(|authAction|AuthenticatedAction'
 GUARD="$GUARD"'|IS_AUTHENTICATED|SecurityRule|@Secured'
+# ルートの登録の行で呼ぶ認可の関数（isAuthorized()・Spring の denyAll() など）
+GUARD="$GUARD"'|isAuthorized|isAuthenticated|isLoggedIn|denyAll'
 
 # ガードの一致は全ファイルをまとめて 1 回だけ取り（ファイル名:行:一致）、ファイルごとに
 # 「一致した語（重複なし・並べ替え）」と「一致した行の数」に集める。出す順は一覧の順。
@@ -564,15 +566,64 @@ echo "    N と M が違えば、ガードの無いハンドラが混じって�
 echo "  ※ ガード名が出ていても、そのハンドラに掛かっているとは限らない。"
 echo "    同じファイルの別の場所にあるだけのことがある。空欄と同じ重さで 1 本ずつ読む"
 
-hr "2b. ルート登録の一覧（登録の行に認可が挟まっているか）"
+hr "2b. ルート登録の行ごとの認可（登録の行に認可が挟まっているか）"
 # app.get('/x', requireAuth, handler) のように、登録の行で認可を挟む書き方を見る。
-{
-  grep -rnE "${EXA[@]}" \
-    "$ROUTE_REG" \
-    --include='*.ts' --include='*.js' --include='*.mjs' --include='*.go' --include='*.php' \
-    . 2>/dev/null | lim 40
-} | show
-echo "  ※ この行に認可の語が無くても、ハンドラの中で見ている場合がある。2 の表と併せて読む"
+# ルートを 1 ファイルに集める構成（Express の server.ts など）では、2 の「定義 N / ガード M」だけでは
+# どのルートが素通しかが見えない。登録の行ごとに、認可の語が挟まっているかを分けて出す。
+# パス付きの app.use('/x', …) も見る（静的配信・ディレクトリ一覧・メトリクスの公開はこの形で書かれる）。
+REG_LINE="$ROUTE_REG"'|(app|router)\.use\([[:space:]]*["'"'"'`]/'
+HF_REG="$HF_LIST.reg"; HF_REGT="$HF_LIST.regt"; HF_REGG="$HF_LIST.regg"
+grep -rnE "${EXA[@]}" "$REG_LINE" \
+  --include='*.ts' --include='*.js' --include='*.mjs' --include='*.go' --include='*.php' \
+  . 2>/dev/null | sed 's|^\./||' > "$HF_REG"
+# 認可の語は行の本文だけで探す（ファイル名の authenticatedUsers.ts などが一致しないように）。行の番号で突き合わせる
+cut -d: -f3- "$HF_REG" > "$HF_REGT"
+grep -nE "$GUARD" "$HF_REGT" 2>/dev/null | cut -d: -f1 > "$HF_REGG"
+if [[ -s "$HF_REG" ]]; then
+  LC_ALL=C awk -v gfile="$HF_REGG" -v cfile="$HF_LIST.regc" -v ufile="$HF_LIST.regu" '
+    BEGIN { while ((getline l < gfile) > 0) g[l] = 1 }
+    {
+      n++; f = $0; sub(/:.*/, "", f); ln = $0; sub(/^[^:]*:/, "", ln); sub(/:.*/, "", ln)
+      t = $0; sub(/^[^:]*:[0-9]+:/, "", t); sub(/^[ \t]+/, "", t)
+      # チェーンの書き方（.get('/x', …)）を拾う緩い形は、config.get('キー') のような読み出しにも一致する。
+      # 引数が / で始まらず、レシーバもルート登録らしい名前でなければ、登録ではないとして外す
+      if (t ~ /\.(get|post|put|patch|delete)\([ \t]*["\047`][^\/]/ \
+          && t !~ /(^|[^A-Za-z0-9_$.])(app|router|r|e|mux|srv|api|fastify|server|routes?|group|g)\.(get|post|put|patch|delete)\(/) {
+        next
+      }
+      if (length(t) > 160) t = substr(t, 1, 160) "…"
+      if (!(f in tot)) order[++k] = f
+      # コメントアウトされた登録。認可の語を含むものは、その認可が外れて動いている可能性がある
+      if (t ~ /^(\/\/|#)/) { if (n in g) print "  ★ " f ":" ln ": " t > cfile; next }
+      tot[f]++
+      if (n in g) { grd[f]++; next }
+      note = ""
+      if (t ~ /serveIndex|autoindex|directory/) note = "  ← ディレクトリ一覧を公開"
+      else if (t ~ /["\047`]\/metrics/) note = "  ← メトリクスを公開"
+      # ★ の付いた行は、打ち切り（lim）に掛からないよう別に出す
+      if (note != "") print "  ★ " f ":" ln ": " t note > (ufile ".star")
+      else print "  " f ":" ln ": " t > ufile
+    }
+    END {
+      for (i = 1; i <= k; i++) {
+        f = order[i]; if (!(f in tot)) continue
+        printf "  %-46s 登録 %d / 行に認可の語あり %d / なし %d\n", f, tot[f], grd[f] + 0, tot[f] - grd[f]
+      }
+    }' "$HF_REG"
+  if [[ -s "$HF_LIST.regc" ]]; then
+    echo "  --- 認可の語を含む登録が、コメントアウトされている（その認可が外れたまま動いている可能性がある）"
+    cat "$HF_LIST.regc"
+  fi
+  if [[ -s "$HF_LIST.regu.star" || -s "$HF_LIST.regu" ]]; then
+    echo "  --- 登録の行に認可の語が無いもの（★ を先に出す）"
+    [[ -s "$HF_LIST.regu.star" ]] && cat "$HF_LIST.regu.star"
+    [[ -s "$HF_LIST.regu" ]] && lim 80 < "$HF_LIST.regu"
+  fi
+else
+  echo "  （検出なし）"
+fi
+echo "  ※ 行に認可の語が無くても、ハンドラの中や、前段の app.use / ミドルウェア（2d）で見ている場合がある。"
+echo "    公開してよいルートかどうかを 1 本ずつ確かめる。★ は、ほぼ確実に指摘になるもの"
 
 hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）"
 # 'use server' のファイルでは、export された関数 1 つ 1 つが入口になる。

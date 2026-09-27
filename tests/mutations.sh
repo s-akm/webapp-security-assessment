@@ -261,6 +261,13 @@ mutate "資料: grep のパターンを引用符の中で改行する" "referenc
 
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 
+mutate "audit_grep: コメントアウトした認可を知らせない" "scripts/audit_grep.sh" "認可の付いた登録のコメントアウトを知らせる" \
+  's = s.replace("if (n in g) print \"  ★ \" f \":\" ln \": \" t > cfile; next", "next")'
+mutate "audit_grep: 2b で行全体（ファイル名込み）から認可の語を探す" "scripts/audit_grep.sh" "ファイル名を認可の語と取り違えない" \
+  's = s.replace("cut -d: -f3- \"$HF_REG\" > \"$HF_REGT\"", "cp \"$HF_REG\" \"$HF_REGT\"")'
+mutate "audit_grep: 2b で設定の読み出しを外さない" "scripts/audit_grep.sh" "設定の読み出しをルートの登録と取り違えない" \
+  's = s.replace("&& t !~ /(^|[^A-Za-z0-9_$.])(app|router|r|e|mux|srv|api|fastify|server|routes?|group|g)", "&& 0 && t !~ /(^|[^A-Za-z0-9_$.])(app|router|r|e|mux|srv|api|fastify|server|routes?|group|g)")'
+
 # ---- recon ----
 # 旧不具合は「自サイトの判定がポートを考えない」。ホスト名にポートを残すだけでは、最終的なホスト名も
 # 同じ関数を通るので打ち消し合う。旧実装と同じく、渡されたドメインとだけ比べる形に戻す

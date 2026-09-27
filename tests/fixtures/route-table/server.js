@@ -1,0 +1,7 @@
+const app = require('express')()
+app.get('/api/orders', auth.isAuthorized(), listOrders)
+app.post('/api/orders', createOrder)
+// app.put('/api/products/:id', auth.isAuthorized())
+app.use('/ftp', serveIndex('ftp', { icons: true }))
+app.get('/metrics', metrics.serve())
+const siteUrl = config.get('application.url')
