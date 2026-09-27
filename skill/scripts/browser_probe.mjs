@@ -8,7 +8,7 @@
 //      リアルタイム通信（WebSocket）の接続先
 //   2. Cookie の属性（HttpOnly / Secure / SameSite）
 //   3. localStorage / sessionStorage に置かれたキーの名前（値は取得しない）
-//   4. CSP の実効性（ヘッダと <meta> の両方。実際に効く指令で判定し、Report-Only か、違反の発生も見る）
+//   4. CSP の実効性（ヘッダと <meta> の両方。実際に適用される指令で判定し、Report-Only か、違反の発生も見る）
 //   5. 認証後の画面に関わるキャッシュヘッダ
 //
 // 対象システムの状態は変えない。GET のみで、フォームの送信もクリックもしない。
@@ -68,7 +68,7 @@ export const REALTIME = [
   [/(^|\.)(firebaseio\.com|firebasedatabase\.app)$/, "Firebase Realtime Database"],
 ];
 
-// CSP の文字列を指令ごとに分ける。同じ指令が 2 回あれば最初のものだけが効く（CSP Level 3）。
+// CSP の文字列を指令ごとに分ける。同じ指令が 2 回あれば最初のものだけが使われる（CSP Level 3）。
 export function parseCsp(policy) {
   const d = new Map();
   for (const part of String(policy).split(";")) {
@@ -81,7 +81,7 @@ export function parseCsp(policy) {
 }
 
 // 1 つの CSP を、references/07-web-vulnerabilities.md の 1-6 の基準で判定する。
-//   - script-src が無ければ default-src が使われる（実際に効く値で判定する）
+//   - script-src が無ければ default-src が使われる（実際に適用される値で判定する）
 //   - <script> 要素は script-src-elem、イベントハンドラ属性は script-src-attr が優先される。
 //     script-src-elem を script-src と取り違えない（以前は "script-src" の前方一致で拾っていた）
 //   - 同じ指令に nonce・hash・'strict-dynamic' のいずれかがあれば、'unsafe-inline' は無視される
@@ -357,28 +357,28 @@ async function main() {
     for (const { from, enforce, p } of policies) {
       const j = judgeCsp(p);
       console.log(`  [${from}]`);
-      const show = (label, x) => console.log(`    ${label}: ${x.sources ? x.sources.join(" ") : "（指定なし）"}${x.directive ? `  ← ${x.directive} が効く` : ""}`);
+      const show = (label, x) => console.log(`    ${label}: ${x.sources ? x.sources.join(" ") : "（指定なし）"}${x.directive ? `  ← ${x.directive} が適用される` : ""}`);
       if (j.attr.directive === j.elem.directive) show("スクリプト", j.elem);
       else { show("<script> 要素", j.elem); show("イベントハンドラ属性", j.attr); }
       if (j.noScriptRestriction) {
         console.log("    → script-src も default-src も無い。スクリプトの実行を制限していない");
         if (j.frameAncestorsOnly) console.log("    → frame-ancestors のみ。クリックジャッキング対策であって XSS 対策ではない");
       }
-      if (j.unsafeInline) console.log(`    → **unsafe-inline がある。XSS に対しては実質的に効かない**${enforce ? "" : "（Report-Only）"}`);
+      if (j.unsafeInline) console.log(`    → **unsafe-inline がある。XSS に対しては実質的に防御にならない**${enforce ? "" : "（Report-Only）"}`);
       else if (j.unsafeInlineIgnored) console.log("    → 'unsafe-inline' は nonce・hash・'strict-dynamic' と並んでいるため、ブラウザは無視する（指摘しない）");
       if (j.unsafeEval) console.log("    → **unsafe-eval がある**");
     }
     if (policies.filter((x) => x.enforce).length > 1) {
-      console.log("  ※ 強制の CSP が複数ある。ブラウザはすべてを同時に適用する（いちばん厳しいものが効く）");
+      console.log("  ※ 強制の CSP が複数ある。ブラウザはすべてを同時に適用する（結果として、いちばん厳しい制限になる）");
     }
     if (metaCsp.length > 0) {
-      console.log("  ※ <meta> の CSP は、それより前に書かれた要素には効かない。frame-ancestors・report-uri・sandbox は無視され、");
+      console.log("  ※ <meta> の CSP は、それより前に書かれた要素には適用されない。frame-ancestors・report-uri・sandbox は無視され、");
       console.log("    Report-Only は <meta> では使えない。ヘッダに移すのが確実");
     }
   }
   console.log(`  読み込み中に観測した CSP 違反: ${cspViolations.length} 件`);
   for (const v of cspViolations.slice(0, 5)) console.log(`    ${v}`);
-  console.log("  ※ 違反 0 件は「効いている」証拠にならない。違反する記述が無いだけかもしれない");
+  console.log("  ※ 違反 0 件は「防御になっている」証拠にならない。違反する記述が無いだけかもしれない");
 
   // --------------------------------------------------------------------------
   hr("5. セキュリティヘッダとキャッシュ");

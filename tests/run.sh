@@ -166,25 +166,36 @@ bad="$(grep -rhoE 'https?://[A-Za-z0-9.-]+' "$SKILL" 2>/dev/null \
 if [[ -z "$bad" ]]; then ok "実在しうるドメインが書かれていない（公的な基準・警告情報の発行元は除く）"
 else ng "実在しうるドメインが書かれていない" "$(printf '%s' "$bad" | tr '\n' ' ')"; fi
 
-# 外部の基準は変わる。最後に版を確認した日から時間が経っていれば知らせる。
+# 外部の基準と既知の勧告は変わる。最後に確認した日から半年を超えていれば知らせる。
 # 失敗にはしない。日付が過ぎただけで検査が赤くなると、本当の失敗が埋もれる。
-STD="$(grep -oE 'standards-reviewed:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}' \
-        "$SKILL/references/06-frameworks.md" 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
-if [[ -z "$STD" ]]; then
-  ng "基準の版に最終確認日が書いてある" "06-frameworks.md に standards-reviewed が無い"
-else
+# 期限は tests/self-audit.sh と references/06 の本文と揃える（STALE_DAYS を変えたら両方も直す）
+STALE_DAYS=180
+check_reviewed() {
+  local label="$1" file="$2" pattern="$3" what="$4" d days
+  d="$(grep -oE "$pattern" "$file" 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1 || true)"
+  if [[ -z "$d" ]]; then
+    ng "$label" "$(basename "$file") に確認日が無い"; return
+  fi
   days="$(python3 -c "
 import datetime, sys
 d = datetime.date.fromisoformat(sys.argv[1])
 print((datetime.date.today() - d).days)
-" "$STD" 2>/dev/null || echo 0)"
-  if [[ "$days" -ge 365 ]]; then
-    printf '  \033[33m!\033[0m 基準の版の確認から %s 日（%s）。評価に入る前に版を確かめる\n' "$days" "$STD"
-    ok "基準の版に最終確認日が書いてある（${STD}・${days} 日前）"
-  else
-    ok "基準の版の確認は ${days} 日前（${STD}）"
+" "$d" 2>/dev/null || echo 0)"
+  if [[ "$days" -ge "$STALE_DAYS" ]]; then
+    printf '  \033[33m!\033[0m %s の確認から %s 日（%s）。半年を超えている。%s\n' "$what" "$days" "$d" "一次情報で確かめて日付を更新する"
   fi
-fi
+  ok "${label}（${d}・${days} 日前）"
+}
+check_reviewed "基準の版に最終確認日が書いてある" "$SKILL/references/06-frameworks.md" \
+  'standards-reviewed:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}' "基準の版"
+check_reviewed "既知の勧告の判定表に照合日が書いてある" "$SKILL/scripts/audit_grep.sh" \
+  '^ADVISORIES_REVIEWED="[0-9]{4}-[0-9]{2}-[0-9]{2}"' "audit_grep.sh 1b 節の勧告の判定表"
+
+# 「効」を動詞に使う言い回しは、何がどうなるかを言っていない。
+# 働く・適用される・防御になる・読み込まれる、のように具体的に書く（2.19.0 で全体から外した）。有効・無効は対象外
+kiku="$(grep -rnE '(^|[^有無])効(く|い|か|き|け|こ)' "$SKILL" "$ROOT/README.md" "$ROOT/tests/eval" "$ROOT/tests/fixtures" 2>/dev/null | head -3 || true)"
+if [[ -z "$kiku" ]]; then ok "「効」を動詞に使う言い回しが無い"
+else ng "「効」を動詞に使う言い回しが無い" "$(printf '%s' "$kiku" | cut -c1-120 | tr '\n' ' ')"; fi
 
 # 日本語の資料に、想定外の文字体系が混ざっていないか。
 # 生成の過程でキリル文字やハングルが 1 語だけ紛れ込むことが実際に起きる。
@@ -299,7 +310,7 @@ contains "audit_grep: 予測できる乱数"             "Math.random"       "$A
 contains "audit_grep: 弱いハッシュ"               "createHash('md5')" "$A"
 contains "audit_grep: 証明書の検証を切っている"    "rejectUnauthorized" "$A"
 contains "audit_grep: XML の解析"                 "xml2js"            "$A"
-# 鍵の値がそのまま出ていないこと（伏字が効いているか）
+# 鍵の値がそのまま出ていないこと（伏字が働いているか）
 if printf '%s' "$A" | grep -F 'sk_live_00000000000000000000TESTDUMMY' >/dev/null; then
   ng "audit_grep: 鍵の値を伏字にする" "値がそのまま出力されている"
 else ok "audit_grep: 鍵の値を伏字にする"; fi
@@ -310,7 +321,7 @@ else ng "audit_grep: 同じ行を重複して出さない" "$dup 回出ている
 
 # --- audit_grep.sh を各枠組みに当てる ---
 # 題材が 1 つの枠組みだけだと、他の書き方への検出が壊れても気づけない。
-# 実際、題材を増やすたびに「中核の検出がまるごと効いていない」枠組みが見つかっている。
+# 実際、題材を増やすたびに「中核の検出がまるごと働いていない」枠組みが見つかっている。
 #
 #   枠組み:期待するハンドラのしるし:期待するガード名:期待する危険な書き方
 FRAMEWORKS='
@@ -438,7 +449,7 @@ fi
 # 名前を repo* にしないのは、枠組みごとの題材の数（README）に数えないため。
 if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   fixture_cp "$ROOT/tests/fixtures/supply-baas" "$TMP/supply-baas"
-  # AI エージェントの設定ファイルは、開いた人の環境で実際に効くのでリポジトリに置かない。ここで作る
+  # AI エージェントの設定ファイルは、開いた人の環境で実際に読み込まれるのでリポジトリに置かない。ここで作る
   A="$TMP/supply-baas"
   mkdir -p "$A/.claude" "$A/.vscode"
   printf '{ "permissions": { "defaultMode": "bypassPermissions" } }\n' > "$A/.claude/settings.json"
@@ -479,6 +490,18 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   contains "audit_grep[版]: React2Shell の修正前を判定"              "React2Shell（CVE-2025-55182"      "$S1B"
   contains "audit_grep[版]: adapter-vercel のキャッシュ不具合"       "CVE-2026-27118 の修正前"        "$S1B"
   absent   "audit_grep[版]: 15 系をサポート外と言わない"             "サポート外"                     "$S1B"
+  # 判定表がいつの勧告まで見ているかを、評価者が評価の時点で読めること
+  contains "audit_grep[版]: 判定表の照合日と経過日数を出す"          "判定表を公式の勧告と照合した日"   "$S1B"
+  if printf '%s' "$S1B" | grep -E '照合した日: [0-9-]+（[0-9]+ 日前）' >/dev/null; then
+    ok "audit_grep[版]: 経過日数を計算できる（BSD と GNU の date）"
+  else ng "audit_grep[版]: 経過日数を計算できる（BSD と GNU の date）" "日数が出ていない"; fi
+  absent   "audit_grep[版]: 照合が新しければ古いと言わない"          "照合から半年を超えている"       "$S1B"
+  # 照合日を古くした写しで回し、半年を超えたら ★ に頼らないよう出すこと
+  OLDAG="$(mktemp -d)"
+  sed 's/^ADVISORIES_REVIEWED=.*/ADVISORIES_REVIEWED="2000-01-01"/' "$SKILL/scripts/audit_grep.sh" > "$OLDAG/audit_grep.sh"
+  S1BOLD="$(bash "$OLDAG/audit_grep.sh" "$A" 2>&1 | LC_ALL=C awk 'index($0, "=== 1b.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+  rm -rf "$OLDAG"
+  contains "audit_grep[版]: 照合から半年を超えたら ★ に頼らせない"   "照合から半年を超えている"       "$S1BOLD"
   # 4d. LLM の鍵
   contains "audit_grep[LLM鍵]: ブラウザから直接呼ぶ指定"             "dangerouslyAllowBrowser"        "$S4D"
   contains "audit_grep[LLM鍵]: 公開用の接頭辞が付いた LLM の鍵"      "NEXT_PUBLIC_OPENAI_API_KEY"     "$S4D"
@@ -842,7 +865,7 @@ with zipfile.ZipFile(sys.argv[2], "w", zipfile.ZIP_DEFLATED) as z:
 PYEOF
 printf '%%PDF-1.4 fixture\n' > "$REP/報告書.pdf"
 # LC_ALL=C で走らせる。伏字の前に残す部分はバイト単位で切るため、日本語の途中で切れる。
-# 不完全なバイト列を落とす処理が効いているかは、この条件でないと確かめられない。
+# 不完全なバイト列を落とす処理が働いているかは、この条件でないと確かめられない。
 S="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"
 for pair in "JWT 形式のトークン" "接続文字列" "メールアドレス" "電話番号らしき並び" \
             "クレジットカード番号らしき並び" "住所らしき記述" "select * の使用"; do
@@ -1282,7 +1305,7 @@ NODE
 import { pathToFileURL } from "node:url";
 const { judgeCsp } = await import(pathToFileURL(process.argv[2]).href);
 const cases = [
-  // [CSP, unsafe-inline が効くか, 無視される unsafe-inline があるか, script の制限が無いか]
+  // [CSP, unsafe-inline が通るか, 無視される unsafe-inline があるか, script の制限が無いか]
   ["script-src 'self' 'unsafe-inline'", true, false, false],
   ["default-src 'self' 'unsafe-inline'", true, false, false],                       // script-src が無ければ default-src
   ["default-src 'self'; script-src-elem 'self' 'unsafe-inline'", true, false, false], // 要素側で通る
@@ -1306,8 +1329,8 @@ if (!judgeCsp("frame-ancestors 'none'").frameAncestorsOnly) { console.log("NG fr
 console.log(bad === 0 ? "ALL OK" : `${bad} 件失敗`);
 NODE
 )"
-  if printf '%s' "$CJ" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: CSP を実際に効く指令で判定する（12 例）"
-  else ng "browser_probe: CSP を実際に効く指令で判定する" "$CJ"; fi
+  if printf '%s' "$CJ" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: CSP を実際に適用される指令で判定する（12 例）"
+  else ng "browser_probe: CSP を実際に適用される指令で判定する" "$CJ"; fi
 else
   skip "browser_probe（node が無いため省略）"
 fi
@@ -1426,8 +1449,8 @@ else
     contains "recon[DNS]: sp=none は別に指摘する"                "sp=none。サブドメインは監視のみ" "$R4"
     contains "recon[DNS]: サブドメインから親の CAA を見つける"   "strict.test で発見）"    "$R4"
     absent   "recon[DNS]: 親の DMARC の連絡先も伏せる"           "dmarc@example.invalid"   "$R4"
-    # サブドメインに効くのは sp=（無ければ p=）。p=reject を主に示して、実際に効く sp=none を見落とさせない
-    contains "recon[DNS]: このホストに効くポリシーを示す"         "このホストに効くのは sp=none" "$R4"
+    # サブドメインに適用されるのは sp=（無ければ p=）。p=reject を主に示して、実際に適用される sp=none を見落とさせない
+    contains "recon[DNS]: このホストに適用されるポリシーを示す"   "このホストに適用されるのは sp=none" "$R4"
     # DS は親へ遡らず、SOA で求めたゾーンの頂点で引く（co.uk のような区切りの DS を拾わない）
     contains "recon[DNS]: ゾーンの頂点で DS を引く"               "（ゾーンの頂点 strict.test）" "$R4"
     contains "recon[DNS]: 頂点の DS を見つける"                   "DS     : 12345 13 2"     "$R4"
@@ -1527,7 +1550,7 @@ else
     absent   "browser_probe[CSP]: <meta> があれば「無」と言わない"     "CSP が設定されていない" "$PM"
     # script-src が無く default-src に unsafe-inline がある。default-src へ遡って判定する
     PD="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/default-only" 2>&1 || true)"
-    contains "browser_probe[CSP]: script-src が無ければ default-src で判定" "default-src が効く" "$PD"
+    contains "browser_probe[CSP]: script-src が無ければ default-src で判定" "default-src が適用される" "$PD"
     contains "browser_probe[CSP]: default-src の unsafe-inline を検出"      "unsafe-inline がある" "$PD"
     # nonce・strict-dynamic と並ぶ unsafe-inline はブラウザが無視する。指摘しない
     PS="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/strict-csp" 2>&1 || true)"
@@ -1554,6 +1577,7 @@ else
   kill $SITE_PID 2>/dev/null
   trap - EXIT
 fi
+
 # ==========================================================================
 printf '\n\033[1m結果\033[0m  成功 %d / 失敗 %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIPPED"
 [[ $SKIPPED -gt 0 ]] && printf '  ※ 省略した検査がある。道具（node・playwright・dig・openpyxl）を入れて全件を回す\n'

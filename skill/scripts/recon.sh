@@ -444,13 +444,13 @@ else
         quarantine|reject) printf '        → p=%s\n' "$dp" ;;
         *)                 printf '        → p の値が読めない（%s）\n' "${dp:-なし}" ;;
       esac
-      # 親で見つけたとき、このホストに効くのは sp=（無ければ p=）
+      # 親で見つけたとき、このホストに適用されるのは sp=（無ければ p=）
       if [[ "$DMARC_AT" != "_dmarc.$DOMAIN" ]]; then
         eff="${dsp:-$dp}"
         if [[ "$eff" == "none" ]]; then
-          printf '        → このホストに効くのは %s=none。サブドメインは監視のみ\n' "$([[ -n "$dsp" ]] && echo sp || echo p)"
+          printf '        → このホストに適用されるのは %s=none。サブドメインは監視のみ\n' "$([[ -n "$dsp" ]] && echo sp || echo p)"
         else
-          printf '        → このホストに効くのは %s=%s\n' "$([[ -n "$dsp" ]] && echo sp || echo p)" "${eff:-（読めない）}"
+          printf '        → このホストに適用されるのは %s=%s\n' "$([[ -n "$dsp" ]] && echo sp || echo p)" "${eff:-（読めない）}"
         fi
       elif [[ "$dsp" == "none" ]]; then
         printf '        → sp=none。サブドメインは監視のみ\n'

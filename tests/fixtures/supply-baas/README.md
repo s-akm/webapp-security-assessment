@@ -14,5 +14,5 @@ Next.js + Supabase + Firebase + Clerk + Convex + GitHub Actions + AI エージ�
 
 **AI エージェントの設定ファイル（22 節の題材）はここに置かない。** `AGENTS.md` への見えない文字、
 `.claude/settings.json` の権限の緩和、`.vscode/tasks.json` の `folderOpen` は、このフォルダを開いた人の
-エディタやエージェントで**実際に効いてしまう**。公開リポジトリに置けば、それ自体が攻撃の見本になる。
+エディタやエージェントで**実際に読み込まれてしまう**。公開リポジトリに置けば、それ自体が攻撃の見本になる。
 `tests/run.sh` が一時ディレクトリの中でだけ作る。

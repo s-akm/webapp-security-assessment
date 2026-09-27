@@ -17,7 +17,7 @@
 //   - /.env の中身が外から取れる
 //   - /meta-csp は CSP を <meta> で置き、unsafe-inline を持つ（ヘッダだけを見ると「無い」と誤る）
 //   - /default-only は script-src が無く、default-src に unsafe-inline がある
-//   - /elem-csp は script-src-elem が厳しく、script-src（イベントハンドラ属性に効く）に unsafe-inline がある
+//   - /elem-csp は script-src-elem が厳しく、script-src（イベントハンドラ属性に適用される）に unsafe-inline がある
 //   - /ws は同意前に WebSocket を開き、第三者（127.0.0.1）へメッセージを送る
 //   - /r は 302 で /ja/ へ転送し、転送先の HTML が src='./ja.js'（一重引用符・相対パス）で
 //     LLM の鍵を載せた JS を読み込む
@@ -41,8 +41,8 @@ const PAGES = {
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
-      // unsafe-inline があるため、XSS に対しては実質的に効かない
-      // unsafe-inline があるため XSS には効かない。第三者への送信は通す（実サイトで
+      // unsafe-inline があるため、XSS に対しては実質的に防御にならない
+      // unsafe-inline があるため XSS の防御にならない。第三者への送信は通す（実サイトで
       // タグを使うなら許可されているのが普通で、その状態を模す）。
       "content-security-policy":
         "default-src 'self' http://127.0.0.1:" + port +
@@ -186,7 +186,7 @@ const PAGES = {
 <body><h1>default-src だけのページ</h1></body></html>`,
   }),
 
-  // --- script-src-elem は厳しいが、script-src（属性に効く）に unsafe-inline がある ---
+  // --- script-src-elem は厳しいが、script-src（属性に適用される）に unsafe-inline がある ---
   "/elem-csp": () => ({
     status: 200,
     headers: {

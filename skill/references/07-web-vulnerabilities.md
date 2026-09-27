@@ -39,9 +39,9 @@ grep -rnE '\beval\(|new Function\(|setTimeout\(\s*["'"'"'`]|setInterval\(\s*["'"
 
 **数えたら、1 件ずつ「入力元がどこか」を追う。** 定数やビルド時に確定する値なら問題なし。リクエスト、DB、外部 API から来るなら、**その経路のどこでエスケープされているかを確かめ、無ければ指摘**。
 
-### 1-2. フレームワークの自動エスケープが効かない場所
+### 1-2. フレームワークの自動エスケープが働かない場所
 
-自動エスケープは「HTML の本文」にしか効かない。次の場所は素通りする。**ここが実務での主戦場。**
+自動エスケープは「HTML の本文」でしか働かない。次の場所は素通りする。**ここが実務での主戦場。**
 
 | 場所 | 例 | 何が起きるか |
 |---|---|---|
@@ -91,7 +91,7 @@ CSP は XSS を防ぐものではなく、**成立したときの被害を狭め
 
 | 指令 | 無いとどうなるか |
 |---|---|
-| `script-src` | 外部への任意のスクリプト読み込みを止められない。**`frame-ancestors` だけの CSP は XSS に対して無力**。無ければ `default-src` が使われるので、**実際に効く値で判定する** |
+| `script-src` | 外部への任意のスクリプト読み込みを止められない。**`frame-ancestors` だけの CSP は XSS に対して無力**。無ければ `default-src` が使われるので、**実際に適用される値で判定する** |
 | `connect-src` | 盗んだデータの外部送信を止められない（同じく `default-src` に委ねられる） |
 | `object-src` | 古いプラグイン経由の実行を防げない（同じく `default-src` に委ねられる）。推奨は `'none'` |
 | `base-uri` | `<base>` を差し込まれると相対パスのスクリプトの読み込み先が変わる。**`default-src` に委ねられない**ので、別に要る。推奨は `'none'` か `'self'` |
@@ -317,7 +317,7 @@ done
 
 | 公表 | 識別子 | 条件 | 修正版 |
 |---|---|---|---|
-| 2026-02 | CVE-2026-27118 | `@sveltejs/adapter-vercel` の ISR 用の内部クエリ引数がすべてのルートで効き、認証済みの応答が他人へ配られる | 6.3.2 |
+| 2026-02 | CVE-2026-27118 | `@sveltejs/adapter-vercel` の ISR 用の内部クエリ引数がすべてのルートで受け付けられ、認証済みの応答が他人へ配られる | 6.3.2 |
 | 2025-08 | CVE-2025-57752 | Next.js の画像最適化が、Cookie で内容の変わる API ルートの画像をキャッシュして他人へ配る | 14.2.31 / 15.4.5 |
 
 ```bash
@@ -353,7 +353,7 @@ grep -A1 -E '"node_modules/(@sveltejs/adapter-vercel|next|nuxt|astro)"' package-
 
 ## 9. 業務ロジックの欠陥
 
-自動化された検査では出てこない。**そのサービスの業務を理解しないと見えない。** フェーズ 0 の取材が効いてくるところ。
+自動化された検査では出てこない。**そのサービスの業務を理解しないと見えない。** フェーズ 0 の取材の結果を使うところ。
 
 見るべき問い。
 
@@ -422,7 +422,7 @@ grep -rnE 'where:\s*(body|input|req\.body|params|query|filters?)\b|findMany\(\{\
 **WebSocket のハンドシェイクには CORS が掛からない。** ブラウザは別サイトのページからでも、
 利用者の Cookie を付けて接続する。サーバーが `Origin` ヘッダを許可リストで照合していなければ、
 攻撃者のページが利用者の権限で購読・送信できる（Cross-Site WebSocket Hijacking）。
-Socket.IO の `cors` オプションは long-polling にしか効かず、WebSocket の Origin を絞るには
+Socket.IO の `cors` オプションは long-polling にしか適用されず、WebSocket の Origin を絞るには
 `allowRequest` を使う（公式が明記）。2025 年にも開発サーバー（Vite、webpack-dev-server）や
 IDE の拡張機能で、Origin を検証していなかったことによる CVE が出ている。
 
@@ -476,7 +476,7 @@ grep -rniE 'supabase_realtime|replica identity full|realtime\.(messages|topic|se
 ### 11-4. Firebase
 
 - **Realtime Database の `.read` / `.write` は下の階層へ継承され、子で取り消せない。** 親に
-  `".read": "auth != null"` があれば、子でどれだけ絞っても効かない
+  `".read": "auth != null"` があれば、子でどれだけ絞っても取り消せない
 - **ルールは絞り込みではない。** Firestore の `onSnapshot` にも普通のクエリと同じルールが掛かるが、
   `allow read` を `get`（1 件）と `list`（一覧）に分けていないと、ID を知らなくても一覧で全件を購読できる。
   逆に `get` だけ絞って `list` を開けたままにしている形もある

@@ -1,0 +1,54 @@
+{
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "S-01 のような指摘の ID" },
+          "title": { "type": "string" },
+          "verdict": { "type": "string", "enum": ["問題あり", "問題なし", "判断保留"] },
+          "priority": { "type": "string", "enum": ["P0", "P1", "P2", "P3", "P4", "—"] },
+          "fact": { "type": "string", "description": "事実。確かめたことそのもの" },
+          "assessment": { "type": "string", "description": "所見。事実をどう解釈したか" },
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": { "type": "string", "description": "リポジトリの根からの相対パス" },
+                "line": { "type": "integer" },
+                "end_line": { "type": "integer" }
+              },
+              "required": ["file", "line"]
+            }
+          }
+        },
+        "required": ["id", "title", "verdict", "priority", "fact", "assessment", "locations"]
+      }
+    },
+    "unconfirmed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "description": "U-1 のような未確認事項の ID" },
+          "text": { "type": "string" },
+          "blocks": { "type": "array", "items": { "type": "string" }, "description": "判定を止めている指摘の ID" }
+        },
+        "required": ["id", "text", "blocks"]
+      }
+    },
+    "maintain": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": { "text": { "type": "string" } },
+        "required": ["text"]
+      },
+      "description": "維持すべき実装"
+    }
+  },
+  "required": ["findings", "unconfirmed", "maintain"]
+}

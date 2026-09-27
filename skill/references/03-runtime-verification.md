@@ -202,7 +202,7 @@ order by table_name, column_name;
 
 ### ポリシーを迂回する経路
 
-行レベルのポリシーは、**テーブルを直接読むときにしか効かない**。次の 3 つは迂回する（Supabase 固有の追加の経路は後述）。
+行レベルのポリシーは、**テーブルを直接読むときにしか適用されない**。次の 3 つは迂回する（Supabase 固有の追加の経路は後述）。
 
 ```sql
 -- 1. 定義者権限で動く関数（呼び出した人ではなく、作った人の権限で動く）
@@ -222,7 +222,7 @@ where p.prosecdef and n.nspname not in ('pg_catalog', 'information_schema');
 
 -- 2. ビューとマテリアライズドビュー。information_schema.views では security_invoker の有無が分からない
 --    reloptions の security_invoker が true / on / 1 / yes のどれでもないビューと、
---    マテリアライズドビュー（relkind = 'm'。行レベルの権限が効かない）は、すべて中身を読む対象にする
+--    マテリアライズドビュー（relkind = 'm'。行レベルの権限が適用されない）は、すべて中身を読む対象にする
 select n.nspname, c.relname, c.relkind, c.reloptions
 from pg_class c join pg_namespace n on n.oid = c.relnamespace
 where c.relkind in ('v', 'm') and n.nspname not in ('pg_catalog', 'information_schema');
@@ -247,10 +247,10 @@ where c.relkind in ('v', 'm') and n.nspname not in ('pg_catalog', 'information_s
 
 | 経路 | 何が起きるか |
 |---|---|
-| マテリアライズドビュー・外部テーブル | RLS が効かない |
+| マテリアライズドビュー・外部テーブル | RLS が適用されない |
 | ポリシーが `user_metadata`（`raw_user_meta_data`）を参照 | 利用者が自分で書き換えられる値で認可している（02 の A-2） |
 | 匿名サインインが有効 | **匿名の利用者も `authenticated` ロールになる。** 「ログイン済みなら読める」ポリシーが匿名にも開く |
-| Storage のバケットが `public` | **URL を知っていれば誰でもダウンロードできる**（ポリシーは効かない） |
+| Storage のバケットが `public` | **URL を知っていれば誰でもダウンロードできる**（ポリシーは適用されない） |
 | 公開スキーマ（Exposed schemas）の設定 | ここに入ったスキーマのテーブル・関数・ビューが API に出る |
 | Realtime の「Allow public access to channels」 | **既定で有効。** 有効な間は、`private: true` を付けない Broadcast / Presence の購読にポリシーの確認が走らず、公開鍵を持つ誰でも購読・送信できる。private を強制するには無効にする（`references/07-web-vulnerabilities.md` の 11-3）。テーブルの変更の購読（Postgres Changes）はこの設定と別に、テーブルの RLS で判定される |
 | `supabase_realtime` の publication に入れたテーブル | 各テーブルの RLS と replica identity を突き合わせる。**RLS が無効なテーブルは全行の変更が、`replica identity full` なら削除された行の全列が、公開鍵の購読者に流れる** |
@@ -464,7 +464,7 @@ Vercel 自身への不正アクセスで読まれた。**特権の鍵が秘匿�
 - 攻撃時に切り替えるモードが用意されているか、その現在の状態
 
 **エッジを迂回してオリジンへ直接届かないか。** CDN や WAF を前に置いていても、オリジンの IP やホスト名に
-直接アクセスできれば、WAF もレート制限も効かない。Cloudflare なら、SSL/TLS のモードが Flexible
+直接アクセスできれば、WAF もレート制限も迂回される。Cloudflare なら、SSL/TLS のモードが Flexible
 （オリジンまで平文）になっていないか、オリジン側で Cloudflare 以外からの接続を拒否しているか
 （Authenticated Origin Pulls、Tunnel、IP の許可リスト）を見る。
 
@@ -564,7 +564,7 @@ echo | openssl s_client -connect <domain>:443 -servername <domain> 2>/dev/null \
 
 ## 10. 本番エンドポイントの外形テスト
 
-コードで確認したガードが、本番で実際に効いているかを確かめる。
+コードで確認したガードが、本番で実際に機能しているかを確かめる。
 
 ```bash
 # 開発用の抜け道が塞がっているか（期待値: 404 か 403）
@@ -659,7 +659,7 @@ curl -s -r 0-200 "https://<domain>/.env" | grep -E '^[A-Z_]+=' >/dev/null && ech
 
 - **同意前に第三者への送信が実際に飛ぶか**（HTML にタグがあることと、いつ発火するかは別）
 - **JS が書く Cookie と、localStorage に置かれているもの**
-- **CSP が実際に何をブロックしているか**（nonce・hash・`strict-dynamic` の無いまま `unsafe-inline` があれば XSS には効かない）
+- **CSP が実際に何をブロックしているか**（nonce・hash・`strict-dynamic` の無いまま `unsafe-inline` があれば XSS の防御にならない）
 - **認証後の画面が戻るボタンで再表示されるか**
 
 該当するなら `references/09-browser-verification.md` を読む。`scripts/browser_probe.mjs` が、

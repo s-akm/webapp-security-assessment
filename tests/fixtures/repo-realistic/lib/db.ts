@@ -4,5 +4,5 @@ export async function search(term: string) {
 }
 
 // 収集パターンに当たる名前の export。lib/ 配下なので、これがあってもハンドラには数えない。
-// （除外の仕組みが効いているかを確かめるための題材）
+// （除外の仕組みが働いているかを確かめるための題材）
 export const handler = async () => search("");

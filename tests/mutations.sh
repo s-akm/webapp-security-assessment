@@ -109,10 +109,18 @@ mutate "案件固有語を混入させる" "SKILL.md" "案件固有語が含ま�
 # 入れるドメインは .test（予約済みで誰も登録できない）。許可リストに無いので検査が捕まえる
 mutate "実在しうるドメインを書く" "references/01-scoping.md" "実在しうるドメインが書かれていない" \
   's = s + "\n参考: https://client-site.example.test/\n"'
+mutate "「効」を動詞に使う" "references/05-remediation-plan.md" "「効」を動詞に使う言い回しが無い" \
+  's = s + "\nこの対策は効かない。\n"'
 mutate "想定外の文字体系を混入させる" "references/02-code-audit.md" "想定外の文字体系" \
   's = s + "\nテスト用の混入 материал\n"'
 mutate "基準の最終確認日を消す" "references/06-frameworks.md" "基準の版に最終確認日" \
   's = s.replace("standards-reviewed:", "standards-checked:")'
+mutate "勧告の判定表の照合日を消す" "scripts/audit_grep.sh" "既知の勧告の判定表に照合日" \
+  's = s.replace("\nADVISORIES_REVIEWED=", "\nADVISORIES_CHECKED=").replace("\"$ADVISORIES_REVIEWED\"", "\"${ADVISORIES_CHECKED:-}\"").replace("${ADVISORIES_REVIEWED}", "${ADVISORIES_CHECKED:-}")'
+mutate "audit_grep: 照合日を出さない" "scripts/audit_grep.sh" "判定表の照合日と経過日数を出す" \
+  's = s.replace("  echo \"  ※ ★ の判定表を公式の勧告と照合した日: ${ADVISORIES_REVIEWED}（${adv_days} 日前）\"\n", "")'
+mutate "audit_grep: 半年を超えても知らせない" "scripts/audit_grep.sh" "照合から半年を超えたら" \
+  's = s.replace("[[ \"$adv_days\" -ge 180 ]]", "[[ \"$adv_days\" -ge 999999 ]]")'
 
 # ---- scan_secrets ----
 mutate "scan_secrets: 絶対パスのまま検索する（旧不具合）" "scripts/scan_secrets.sh" "検出行の中身が表示される" \
@@ -251,6 +259,8 @@ mutate "資料: コマンド例でスクリプトの中の変数を使う" "refe
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("evaluateJavascript\x27 \\\n  -e \x27javaScriptEnabled", "evaluateJavascript|\njavaScriptEnabled", 1)'
 
+# ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
+
 # ---- recon ----
 # 旧不具合は「自サイトの判定がポートを考えない」。ホスト名にポートを残すだけでは、最終的なホスト名も
 # 同じ関数を通るので打ち消し合う。旧実装と同じく、渡されたドメインとだけ比べる形に戻す
@@ -299,7 +309,7 @@ mutate "recon: 親ドメインへ遡らない（旧不具合）" "scripts/recon.
 if command -v node >/dev/null 2>&1; then
   mutate "browser_probe: 送信先を末尾で照合しない（旧不具合）" "scripts/browser_probe.mjs" "既知タグのラベル付け" \
     's = s.replace("[\"Hotjar\", \"(^|\\\\.)hotjar\\\\.(com|io)$\"]", "[\"Hotjar\", \"hotjar\\\\.(com|io)\"]")'
-  mutate "browser_probe: script-src-elem を script-src と取り違える（旧不具合）" "scripts/browser_probe.mjs" "CSP を実際に効く指令で判定する" \
+  mutate "browser_probe: script-src-elem を script-src と取り違える（旧不具合）" "scripts/browser_probe.mjs" "CSP を実際に適用される指令で判定する" \
     's = s.replace("const name = tokens[0].toLowerCase();", "const name = tokens[0].toLowerCase().replace(/^script-src-(elem|attr)$/, \"script-src\");")'
   mutate "browser_probe: 評価対象に npm i -D させる（旧不具合）" "scripts/browser_probe.mjs" "評価対象の package.json を書き換える案内をしない" \
     's = s.replace("npm i --prefix \"$HOME/.cache/wsa-playwright\" playwright@${PW_VERSION}", "npm i -D playwright")'

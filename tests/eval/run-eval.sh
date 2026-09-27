@@ -1,0 +1,141 @@
+#!/usr/bin/env bash
+# スキルを実際に当てて、見つけた割合と方針の遵守を測る。
+#
+#   tests/eval/run-eval.sh <題材> [--model <モデル>] [--budget <米ドル>] [--record] [--prep-only]
+#     既定は --model sonnet --budget 10。配る前の節目だけ --model opus で回す
+#   tests/eval/run-eval.sh --score-only <出力のディレクトリ> [--record]
+#
+# 題材は tests/eval/targets.tsv にある、オープンソースの教材。固定したコミットを取ってきて、
+# 答えの一覧を取り出し、答えの手掛かりを消してから、スキルだけを読み込ませた claude -p に当てる。
+#
+# tests/run.sh と違い、外部のネットワークに出て（GitHub から題材を取る・モデルを呼ぶ）、費用がかかる。
+# CI では回さない。スキルの版を上げる前に手で回し、--record で tests/eval/history.tsv に 1 行残す。
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+EVAL="$ROOT/tests/eval"
+MODEL="sonnet"; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model) MODEL="$2"; shift 2 ;;
+    --budget) BUDGET="$2"; shift 2 ;;
+    --record) RECORD=1; shift ;;
+    --prep-only) PREP_ONLY=1; shift ;;
+    --score-only) SCORE_ONLY="$2"; shift 2 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    *) TARGET="$1"; shift ;;
+  esac
+done
+
+# 採点して、求められれば履歴に 1 行足す
+score_and_record() {
+  local out="$1" target="$2" tcommit="$3"
+  local tr=(); [[ -f "$out/transcript.jsonl" ]] && tr=(--transcript "$out/transcript.jsonl")
+  python3 "$EVAL/score.py" "$out/answers.json" "$out/result.json" --summary "$out/summary.json" ${tr[@]+"${tr[@]}"} | tee "$out/report.txt"
+  # 守ること 3: 結果に鍵の値や個人情報が混ざっていないか。スキル自身の検査で見る
+  # （SQL の select * は、穴の説明で引用していれば出る。値の転記とは分けて読む）
+  mkdir -p "$out/scan"; cp "$out/result.json" "$out/scan/"
+  bash "$ROOT/skill/scripts/scan_secrets.sh" "$out/scan" > "$out/scan_secrets.txt" 2>&1 || true
+  echo "秘密情報の検査: $(grep -E '^(検出なし|[0-9]+ 種類)' "$out/scan_secrets.txt" || echo '結果を読めない')（詳細は $out/scan_secrets.txt）"
+  [[ "$RECORD" -eq 1 ]] || return 0
+  local skill_commit dirty=""
+  skill_commit="$(git -C "$ROOT" rev-parse --short HEAD)"
+  git -C "$ROOT" diff --quiet HEAD -- skill || dirty="+未コミット"
+  python3 - "$out/summary.json" "$EVAL/history.tsv" "$(cat "$ROOT/VERSION")" "${skill_commit}${dirty}" "$target" "$tcommit" <<'PY'
+import datetime, json, sys
+s = json.load(open(sys.argv[1], encoding='utf-8'))
+row = [datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6][:12], s.get('model', ''),
+       s['found'], s.get('found_precise', ''), s['in_total'], s['held'], s['misjudged'], s.get('too_wide', ''), s['missed'],
+       s['extra'], s['violations'],
+       s.get('cost_usd', ''), s.get('minutes', ''),
+       s.get('tokens_input', ''), s.get('tokens_cache_read', ''), s.get('tokens_output', '')]
+with open(sys.argv[2], 'a', encoding='utf-8') as f:
+    f.write('\t'.join(map(str, row)) + '\n')
+PY
+  echo "  tests/eval/history.tsv に記録した"
+}
+
+if [[ -n "$SCORE_ONLY" ]]; then
+  [[ -f "$SCORE_ONLY/answers.json" && -f "$SCORE_ONLY/result.json" ]] || { echo "answers.json と result.json が $SCORE_ONLY に無い" >&2; exit 2; }
+  score_and_record "$SCORE_ONLY" "$(cat "$SCORE_ONLY/target" 2>/dev/null || echo '?')" "$(cat "$SCORE_ONLY/target_commit" 2>/dev/null || echo '?')"
+  exit 0
+fi
+
+[[ -n "$TARGET" ]] || { sed -n '2,12p' "$0"; exit 2; }
+line="$(grep -v '^#' "$EVAL/targets.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
+[[ -n "$line" ]] || { echo "題材 $TARGET が targets.tsv に無い" >&2; exit 2; }
+REPO="$(printf '%s' "$line" | cut -f2)"; COMMIT="$(printf '%s' "$line" | cut -f3)"; PREP="$(printf '%s' "$line" | cut -f5)"
+# 下拵えの列は「スクリプト名 [引数]」（例: prep_anchors.py 題材.json）
+PREP_SCRIPT="${PREP%% *}"; PREP_ARGS="${PREP#"$PREP_SCRIPT"}"
+
+# 作業場所はリポジトリの外。題材には本物の形をした鍵や穴のあるコードがあるので、リポジトリに混ぜない
+BASE="${WSA_EVAL_DIR:-${TMPDIR:-/tmp}/wsa-eval}"
+WORK="$BASE/$TARGET-$(date +%Y%m%d-%H%M%S)"
+SRC="$WORK/target"; OUT="$WORK/out"
+mkdir -p "$SRC" "$OUT"
+printf '%s\n' "$TARGET" > "$OUT/target"; printf '%s\n' "$COMMIT" > "$OUT/target_commit"
+
+echo "題材 $TARGET を取得する（$REPO @ ${COMMIT:0:12}）"
+git -C "$SRC" init -q
+git -C "$SRC" fetch -q --depth 1 "$REPO" "$COMMIT"
+git -C "$SRC" -c advice.detachedHead=false checkout -q FETCH_HEAD
+rm -rf "$SRC/.git"   # 履歴には修正のコミットと、その説明が残っている
+
+# 題材の中のエージェント向けの設定を消す。残すと、評価の実行中に題材のフックや指示が読み込まれる
+# （教材によっては、.claude/CLAUDE.md や独自のエージェント向けのスキルの置き場を持っている）
+for p in .claude CLAUDE.md CLAUDE.local.md .mcp.json AGENTS.md .ai .cursor .cursorrules .codeium .continue .junie \
+         .windsurfrules .clinerules .github/copilot-instructions.md .gemini GEMINI.md; do
+  rm -rf "${SRC:?}/$p"
+done
+
+echo "答えの一覧を取り出し、手掛かりを消す"
+# shellcheck disable=SC2086  # 引数は targets.tsv に書いた語。分けて渡す
+python3 "$EVAL/$PREP_SCRIPT" $PREP_ARGS "$SRC" "$OUT/answers.json"
+
+# スキルを題材の中に置く。--setting-sources project で、利用者の手元の設定・スキル・CLAUDE.md は読まない
+mkdir -p "$SRC/.claude/skills"
+cp -R "$ROOT/skill" "$SRC/.claude/skills/webapp-security-assessment"
+
+# audit_grep.sh は先に回して、出力を読ませる。エージェントに回させると、変数やパイプを組み合わせたコマンドになり、
+# 許可の条件（読むことと audit_grep.sh の単独の呼び出し）に合わず止められる（初回の実測で 3 回止められ、1 度も回らなかった）。
+# 出力の置き場は題材の外で、答えの一覧（$OUT）とも分ける
+EVID="$WORK/evidence"; mkdir -p "$EVID"
+( cd "$SRC" && bash "$ROOT/skill/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
+echo "audit_grep.sh を先に回した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
+
+if [[ "$PREP_ONLY" -eq 1 ]]; then
+  echo "下拵えだけで止めた: ${SRC}（答えの一覧は ${OUT}/answers.json）"
+  exit 0
+fi
+
+command -v claude >/dev/null || { echo "claude が無い" >&2; exit 2; }
+echo "スキルを当てる（モデル ${MODEL}、予算 \$${BUDGET}。数十分かかる）"
+# 指示の「前提」は題材ごとのファイルから差し込む
+premise_file="$EVAL/premise/${TARGET%-server}.md"
+[[ -f "$premise_file" ]] || { echo "前提のファイルが無い: $premise_file" >&2; exit 2; }
+prompt="$(python3 -c 'import sys; print(open(sys.argv[1], encoding="utf-8").read().replace("{{premise}}\n", open(sys.argv[2], encoding="utf-8").read()).replace("{{audit_grep}}", sys.argv[3]), end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt")"
+printf '%s\n' "$prompt" > "$OUT/prompt.txt"
+args=(-p "$prompt"
+  --output-format stream-json --verbose --json-schema "$(cat "$EVAL/schema.json")"
+  --add-dir "$EVID"
+  --setting-sources project --strict-mcp-config --no-session-persistence
+  --max-budget-usd "$BUDGET"
+  --permission-mode dontAsk
+  # 読むこととスキルの下拵えのスクリプトだけを許す。書き込み・ネットワーク・下位のエージェントは止める
+  --allowedTools Read Grep Glob Skill
+    "Bash(bash *audit_grep.sh*)" "Bash(grep *)" "Bash(ls *)" "Bash(wc *)" "Bash(head *)" "Bash(sed -n *)" "Bash(cat *)"
+  --disallowedTools WebFetch WebSearch Write Edit NotebookEdit Agent)
+args+=(--model "$MODEL")
+# 実行の記録（stream-json）を残し、最後の result の行を採点に使う。記録からスキルの使われ方も数える
+( cd "$SRC" && claude "${args[@]}" ) > "$OUT/transcript.jsonl" 2> "$OUT/claude.log" || echo "claude が 0 以外で終わった（$OUT/claude.log）"
+python3 -c 'import json,sys
+r=[]
+for l in open(sys.argv[1], encoding="utf-8"):
+    try: e=json.loads(l)
+    except ValueError: continue
+    if e.get("type")=="result": r.append(e)
+json.dump(r[-1] if r else {}, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)' "$OUT/transcript.jsonl" "$OUT/result.json"
+
+score_and_record "$OUT" "$TARGET" "$COMMIT"
+echo "出力: $OUT"

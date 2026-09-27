@@ -56,7 +56,7 @@ grep -rl "'use server'" src/ app/ 2>/dev/null   # scripts/audit_grep.sh の 2c �
   「画面で選べる商品しか来ない」は成り立たない
 - **戻り値はクライアントへ渡る。** 内部の ID や他人の情報を返していないか
 - **ガードの戻り値を使っているか。** `requireUser()` を呼んでいても、その結果を使わずに
-  次の行で処理を続ける実装がある。呼んでいることと、効いていることは別
+  次の行で処理を続ける実装がある。呼んでいることと、それで実際に止まることは別
 
 **関数の ID は秘密ではない。** Server Action の ID が外部から広く読み取れる不具合が公表されている
 （2026-07、CVE-2026-64643）。「ID を知らなければ呼べない」を認可の代わりに数えない。
@@ -510,10 +510,10 @@ grep -rnoE 'dangerouslyAllowBrowser:\s*true|NEXT_PUBLIC_[A-Z_]*(OPENAI|ANTHROPIC
 まずシンク（危険な出力先）を数える。
 
 - HTML を直接挿入する箇所（`dangerouslySetInnerHTML` / `v-html` / `innerHTML`）と、その入力元
-- **フレームワークの自動エスケープが効かない場所**。URL を取る属性、`<script>` に埋める JSON、JSON-LD の構造化データ
+- **フレームワークの自動エスケープが働かない場所**。URL を取る属性、`<script>` に埋める JSON、JSON-LD の構造化データ
 - **メール本文の組み立て**。HTML メールを文字列連結で作っていて、エスケープを通していない関数が 1 つだけある、という形が多い。通知関数が複数あるときは全部を突き合わせる
 - **格納型の経路**。攻撃者が入力し、別の権限の人が見る画面（問い合わせ内容 → 管理画面の詳細）
-- CSP が設定されているか（実機確認で実際の応答ヘッダを見る）。`frame-ancestors` だけの CSP は XSS に対して効かない
+- CSP が設定されているか（実機確認で実際の応答ヘッダを見る）。`frame-ancestors` だけの CSP は XSS を防がない
 
 **該当する箇所が見つかったら `references/07-web-vulnerabilities.md` の 1 節を読む。** シンクの網羅リスト、自動エスケープが外れる条件、サニタイズの位置、検証のしかたが書いてある。
 
@@ -539,7 +539,7 @@ grep -rnoE 'dangerouslyAllowBrowser:\s*true|NEXT_PUBLIC_[A-Z_]*(OPENAI|ANTHROPIC
 
 | 方針 | 守るべき前提 |
 |---|---|
-| DB 側で行レベルの権限を効かせる | ポリシーの網羅性が全て。1 テーブルの設定漏れが直結する |
+| DB 側で行レベルの権限を強制する | ポリシーの網羅性が全て。1 テーブルの設定漏れが直結する |
 | アプリが特権資格で接続し、アプリ側のガードで守る | **アプリのガードが唯一の防御線**。A 群の監査が二重に重要になる |
 
 読み取った方針を報告書に明記する。実機確認でこの前提が実際に成立しているかを確かめる（`references/03-runtime-verification.md`）。
@@ -618,7 +618,7 @@ grep -rhoE 'from\(["'"'"']([a-z_]+)["'"'"']\)' --include=*.ts . | sort -u
 - **上限が三層あるか。** 番号ごと（再送の間隔と日次の上限）、IP ごと、全体（時間・日の予算と、超えたら止めて通知）。
   **攻撃は別々の番号へ 1 通ずつ送るので、番号ごとの上限だけでは止まらない**
 - SMS を送るすべての経路の手前に CAPTCHA があるか（F-3）
-- **SMS の API を直接呼んで自前で OTP を組んでいないか。** 確認用のサービス（Twilio Verify など）の組み込みの防御が効かない
+- **SMS の API を直接呼んで自前で OTP を組んでいないか。** 確認用のサービス（Twilio Verify など）の組み込みの防御を使えない
 
 ```bash
 grep -rnE 'messages\.create\(|verifications\.create|PublishCommand|SendTextMessageCommand|signInWithPhoneNumber|verifyPhoneNumber|signInWithOtp|SignUpCommand|ResendConfirmationCodeCommand|sendSms|send_sms' \

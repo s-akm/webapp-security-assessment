@@ -177,11 +177,20 @@ else
   warn "cases/ が無いので、事例との一致は見ていない" "事例を置いている手元の環境で回す"
 fi
 
-# 基準の最終確認日
-std="$(grep -oE 'standards-reviewed:[[:space:]]*[0-9-]+' "$SKILL/references/06-frameworks.md" | grep -oE '[0-9-]+$')"
-days="$(python3 -c "import datetime,sys; print((datetime.date.today()-datetime.date.fromisoformat(sys.argv[1])).days)" "$std" 2>/dev/null || echo 0)"
-if [[ "$days" -lt 180 ]]; then ok "基準の版の確認から $days 日（${std}）"
-else warn "基準の版の確認から $days 日（${std}）" "半年を超えている。references/06 の表を一次情報で確かめる"; fi
+# 基準の版と既知の勧告の判定表の最終確認日。期限は tests/run.sh の STALE_DAYS と揃える（半年）
+STALE_DAYS=180
+reviewed_age() {
+  local what="$1" d="$2" hint="$3" days
+  days="$(python3 -c "import datetime,sys; print((datetime.date.today()-datetime.date.fromisoformat(sys.argv[1])).days)" "$d" 2>/dev/null || echo 0)"
+  if [[ "$days" -lt "$STALE_DAYS" ]]; then ok "${what}の確認から $days 日（${d}）"
+  else warn "${what}の確認から $days 日（${d}）" "半年を超えている。${hint}"; fi
+}
+reviewed_age "基準の版" \
+  "$(grep -oE 'standards-reviewed:[[:space:]]*[0-9-]+' "$SKILL/references/06-frameworks.md" | grep -oE '[0-9-]+$')" \
+  "references/06 の表を一次情報で確かめる"
+reviewed_age "既知の勧告の判定表" \
+  "$(grep -oE '^ADVISORIES_REVIEWED="[0-9-]+"' "$SKILL/scripts/audit_grep.sh" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}')" \
+  "audit_grep.sh 1b 節の表を各枠組みの公式の勧告と照合する"
 
 # ==========================================================================
 printf '\n\033[1m自己監査の結果\033[0m  '

@@ -140,7 +140,7 @@ ROUTE_REG="$ROUTE_REG"'|^(GET|POST|PUT|PATCH|DELETE)[[:space:]]+/'
 handler_files() {
   {
     # (1) ファイル名で決まるもの。依存と生成物のディレクトリは -prune で辿らない
-    #     （以前は行末の \ が抜けて除外が 1 つも効かず、node_modules が一覧に並んでいた）
+    #     （以前は行末の \ が抜けて除外が 1 つも働かず、node_modules が一覧に並んでいた）
     # shellcheck disable=SC2046
     find . $(prune_expr) -o -type f \( -name "route.ts" -o -name "route.js" -o -name "route.mjs" \
               -o -name "+server.ts" -o -name "+server.js" \
@@ -416,6 +416,8 @@ hr "1b. 枠組みの版（ロックファイルの解決結果。公式アドバ
 # 枠組み本体の脆弱性は「呼んでいるか」ではなく「版が該当するか」で決まる（10 の 1 節）。
 # ここでは、公式の勧告で修正版まで一次情報で確かめたものだけを機械的に判定する。
 # それ以外は版を並べるだけにする。表は評価の時点で古くなっている前提で、公式の一覧を必ず見る。
+# 下の判定表を公式の勧告と照合した日。表を直したら更新する（tests/run.sh が半年を超えたら知らせる）
+ADVISORIES_REVIEWED="2026-09-25"
 pkgver() {
   local name="$1" v=""
   if [[ -f package-lock.json ]]; then
@@ -482,6 +484,18 @@ done
 [[ -z "$fw_found" ]] && echo "  （判定対象の枠組みは無い）"
 echo "  ※ ★ が無くても安全とは限らない。2026 年だけで同種の勧告が多数出ている。"
 echo "    github.com の各リポジトリの security/advisories で、この版に当たるものを見る"
+# 表が古いまま使われると、照合日より後に出た勧告の対象でも ★ が付かない。照合日と経過日数を出す。
+# date の書式の指定は BSD（-j -f）と GNU（-d）で違うので両方試す。どちらも無ければ日付だけ出す
+adv_epoch="$(date -j -f %Y-%m-%d "$ADVISORIES_REVIEWED" +%s 2>/dev/null || date -d "$ADVISORIES_REVIEWED" +%s 2>/dev/null || true)"
+if [[ "$adv_epoch" =~ ^[0-9]+$ ]]; then
+  adv_days=$(( ( $(date +%s) - adv_epoch ) / 86400 ))
+  echo "  ※ ★ の判定表を公式の勧告と照合した日: ${ADVISORIES_REVIEWED}（${adv_days} 日前）"
+  if [[ "$adv_days" -ge 180 ]]; then
+    echo "    ★ 照合から半年を超えている。★ の有無は判断に使わず、公式の勧告だけで判定する"
+  fi
+else
+  echo "  ※ ★ の判定表を公式の勧告と照合した日: ${ADVISORIES_REVIEWED}（経過日数は計算できなかった）"
+fi
 
 # --------------------------------------------------------------------------
 hr "2. ハンドラ × 認可ガード（空欄は「本当に公開してよいか」を 1 本ずつ確認する）"
@@ -592,7 +606,7 @@ hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）
 } | show
 echo "  ※ 「ガード検出なし」の関数は、本当に公開してよいものか 1 つずつ確かめる。"
 echo "    ログイン・ログアウト・公開データの取得のように意図して公開するもの以外は指摘"
-echo "  ※ 関数の先頭でガードを呼んでいても、その戻り値を使わずに先へ進んでいれば効いていない"
+echo "  ※ 関数の先頭でガードを呼んでいても、その戻り値を使わずに先へ進んでいれば、ガードになっていない"
 
 hr "2d. ミドルウェアの対象範囲（ここから外れたルートは素通しになる）"
 {
@@ -1090,7 +1104,7 @@ if [[ -n "$baas" ]]; then
           | sed -E 's/.*[Vv][Ii][Ee][Ww][[:space:]]+([^([:space:]]+).*/\1/' | tr -d '"' \
           | grep -viE '^(auth|storage|extensions|realtime|private|internal)\.' | sed "s|^|  ★ security_invoker なし: $f: |"
       done
-      grep -nHiE 'create[[:space:]]+materialized[[:space:]]+view' $sqlfiles 2>/dev/null | sed 's/^/  ★ RLS が効かない: /'
+      grep -nHiE 'create[[:space:]]+materialized[[:space:]]+view' $sqlfiles 2>/dev/null | sed 's/^/  ★ RLS が適用されない: /'
     } | show
 
     echo "  --- Supabase: 利用者が書き換えられる値で認可していないか・公開バケット ---"
@@ -1217,11 +1231,11 @@ if [[ -f package.json ]]; then
   # 依存の欄だけを見る（repository / homepage / $schema の URL は依存ではない）
   gitdeps="$(awk '/"(dev|optional|peer)?[Dd]ependencies"[[:space:]]*:/{f=1;next} f&&/}/{f=0} f&&/:[[:space:]]*"(git\+|git:|github:|https?:\/\/|file:)/{print}' package.json 2>/dev/null | mask)"
   [[ -n "$gitdeps" ]] && { echo "  ★ package.json に git や URL から取る依存がある:"; printf '%s\n' "$gitdeps" | sed 's/^[[:space:]]*/    /'; }
-  echo "  ※ 手元の設定より、本番のビルドで動く npm / pnpm の版が効く（Vercel の既定は npm install。npm は Node 24 なら 11、Node 20 / 22 なら 10 で、どちらも依存のスクリプトを止めない）"
+  echo "  ※ 手元の設定より、本番のビルドで動く npm / pnpm の版で決まる（Vercel の既定は npm install。npm は Node 24 なら 11、Node 20 / 22 なら 10 で、どちらも依存のスクリプトを止めない）"
 fi
 
 if [[ -n "$agent_files" ]]; then
-  hr "22. AI エージェントの設定ファイル（開発者の端末で自動的に効く。10 の 3-5）"
+  hr "22. AI エージェントの設定ファイル（開発者の端末で自動的に読み込まれる。10 の 3-5）"
   echo "  存在:$agent_files"
   echo "  --- 自動承認・権限の緩和・フック・フォルダを開くだけで走るもの ---"
   {
@@ -1274,7 +1288,7 @@ if [[ -n "$rt" ]]; then
       grep -rniE "${EXA[@]}" 'supabase_realtime|replica identity full|on realtime\.messages|realtime\.topic\(' --include='*.sql' . 2>/dev/null | lim 10
     } | show
     echo "  ※ 管理画面の「Allow public access」が有効なら、private: true を付けていても外して入り直せる（03 の 1 節）"
-    echo "  ※ publication に入れたテーブルの RLS が無効なら、全行の変更が流れる。DELETE には RLS が効かない"
+    echo "  ※ publication に入れたテーブルの RLS が無効なら、全行の変更が流れる。DELETE には RLS が適用されない"
   fi
 
   if [[ "$rt" == *WebSocket* || "$rt" == *Socket.IO* ]]; then
@@ -1339,7 +1353,7 @@ if [[ -n "$sms_hit$sms_cfg" ]]; then
     grep -rnE "${EXA[@]}" '@upstash/ratelimit|Ratelimit|rateLimit|rate-limit|turnstile|hcaptcha|recaptcha|RecaptchaVerifier|captchaToken' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null | lim 5
   } | show
   if [[ -n "$twilio_direct" ]]; then
-    echo "  ★ SMS の API を直接呼んでいる（messages.create）。確認用サービスの組み込みの防御（国の制限・送信回数の制限）が効かない"
+    echo "  ★ SMS の API を直接呼んでいる（messages.create）。確認用サービスの組み込みの防御（国の制限・送信回数の制限）を使えない"
   fi
   echo "  ※ 認証なしで届く経路を全部挙げる（サインアップ・再送・再設定・番号の変更・招待）。国の制限と上限は 03 の 3 節で基盤側も見る"
 fi
