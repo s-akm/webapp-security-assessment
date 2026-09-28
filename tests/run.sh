@@ -293,7 +293,7 @@ hkpush() { printf 'refs/heads/%s %s %s 0000000000000000000000000000000000000000\
            | ( cd "$HK" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE bash "$ROOT/build/hooks/pre-push" ) >/dev/null 2>&1; }
 hkgit init -q . >/dev/null 2>&1
 NRM='1+t@users.noreply.github.com'
-# LICENSE の作者名は、大小を区別しない照合で案件語に当たっても止めない
+# LICENSE の作者名は、大小を区別しない照合で案件語に一致しても止めない
 printf 'Copyright (c) client-ngword-canary\n' > "$HK/LICENSE"; hkgit add LICENSE; hkcommit "$NRM" init
 if hkpush main refs/heads/main; then ok "pre-push: 問題の無い main の push は通す（LICENSE の作者名は照合しない）"
 else ng "pre-push: 問題の無い main の push は通す（LICENSE の作者名は照合しない）"; fi
@@ -551,7 +551,7 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
     ok "audit_grep[版]: 経過日数を計算できる（BSD と GNU の date）"
   else ng "audit_grep[版]: 経過日数を計算できる（BSD と GNU の date）" "日数が出ていない"; fi
   absent   "audit_grep[版]: 照合が新しければ古いと言わない"          "照合から半年を超えている"       "$S1B"
-  # 照合日を古くした写しで回し、半年を超えたら ★ に頼らないよう出すこと
+  # 照合日を古くした写しで実行し、半年を超えたら ★ に頼らないよう出すこと
   OLDAG="$(mktemp -d)"
   sed 's/^ADVISORIES_REVIEWED=.*/ADVISORIES_REVIEWED="2000-01-01"/' "$SKILL/scripts/audit_grep.sh" > "$OLDAG/audit_grep.sh"
   S1BOLD="$(bash "$OLDAG/audit_grep.sh" "$A" 2>&1 | LC_ALL=C awk 'index($0, "=== 1b.") == 1 { f = 1; next } f && /^=== / { exit } f')"
@@ -2050,8 +2050,8 @@ contains "eval: 当てるモデルを完全な ID で固定する"              
 contains "eval: 前の版の skill/ を当てられる"                     'git -C "$ROOT" archive "$SKILL_REF" skill VERSION' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # audit_grep は、スキルを題材の中に置く前に回す（後だと、スキル自身のファイルが監査の対象に混ざる）
 if awk '/bash "\$SKILL_SRC\/scripts\/audit_grep.sh"/ && !a { a = NR } /cp -R "\$SKILL_SRC"/ && !c { c = NR } END { exit !(a && c && a < c) }' "$ROOT/tests/eval/run-eval.sh"; then
-  ok "eval: audit_grep をスキルを置く前に回す"
-else ng "eval: audit_grep をスキルを置く前に回す" "スキルを置いた後に回している"; fi
+  ok "eval: audit_grep をスキルを置く前に実行する"
+else ng "eval: audit_grep をスキルを置く前に実行する" "スキルを置いた後に実行している"; fi
 # 評価は 10 分を超えて動く。その間にこのファイルを直しても壊れないよう、全体を { } に入れて先に読み切らせる
 if awk 'NF { last2 = last1; last1 = $0 } /^set -euo pipefail$/ { s = NR } /^\{$/ && s && !b { b = NR } END { exit !(b && last2 == "exit" && last1 == "}") }' "$ROOT/tests/eval/run-eval.sh"; then
   ok "eval: run-eval.sh を実行の前に最後まで読み切る"

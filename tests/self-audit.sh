@@ -48,8 +48,8 @@ if [[ $FULL -eq 1 ]]; then
   if printf '%s' "$mres" | grep -E '生きていない 0' >/dev/null; then ok "tests/mutations.sh: $mres"
   else ng "tests/mutations.sh: $mres" "$(printf '%s' "$mout" | grep -E '✗|\?' | head -5 | tr '\n' ' ')"; fi
 else
-  warn "tests/mutations.sh は省略（--full で実行。変異ごとに検査を回すので 2〜3 時間かかる）" \
-       "検査が「通る」ことと「壊れたときに落ちる」ことは別。配布前には一度は回す"
+  warn "tests/mutations.sh は省略（--full で実行。変異ごとに検査を実行するので 2〜3 時間かかる）" \
+       "検査が「通る」ことと「壊れたときに失敗する」ことは別。配布前には一度は実行する"
 fi
 
 # ==========================================================================
@@ -111,7 +111,7 @@ mism=""
 grep -qE "スクリプト ${n_scr} 本" "$ROOT/README.md" || mism="$mism スクリプト(実態${n_scr})"
 grep -qE "${n_fix} の枠組みのダミー" "$ROOT/README.md" || mism="$mism 枠組み(実態${n_fix})"
 grep -qE "検査本体（${n_run} 件）" "$ROOT/README.md" || mism="$mism 検査件数(実態${n_run})"
-grep -qE "落ちるかを見る（${n_mut} 件）" "$ROOT/README.md" || mism="$mism ミューテーション(実態${n_mut})"
+grep -qE "対応する検査が失敗するかを確かめる（${n_mut} 件）" "$ROOT/README.md" || mism="$mism ミューテーション(実態${n_mut})"
 # 枠組みの内訳（「JS / TS 22、Python 5、…」）の合計が、総数と合うか。内訳の数え違いがあった
 breakdown="$(grep -A2 'の枠組みのダミーリポジトリ' "$ROOT/README.md" | grep -oE '[A-Za-z/# .+-]+ [0-9]+' | grep -oE '[0-9]+$' | awk '{ t += $1 } END { print t + 0 }')"
 n_fw="$(grep -oE '[0-9]+ の枠組みのダミー' "$ROOT/README.md" | grep -oE '^[0-9]+')"
@@ -136,9 +136,9 @@ if [[ -f "$ROOT/dist/webapp-security-assessment-v$ver.skill" ]]; then
   want="$( { git -C "$ROOT" ls-files -- skill | sed 's#^skill/##'; echo LICENSE; echo VERSION; } | LC_ALL=C sort)"
   have="$(printf '%s\n' "$zl" | LC_ALL=C sort)"
   if [[ "$want" == "$have" ]]; then ok "配布物の中身が、追跡している skill/ と LICENSE・VERSION に一致"
-  else ng "配布物の中身が、追跡している skill/ と一致しない" "build/build.sh を回し直す（未コミットのファイルの追加・削除が反映されていない）"; fi
+  else ng "配布物の中身が、追跡している skill/ と一致しない" "build/build.sh を実行し直す（未コミットのファイルの追加・削除が反映されていない）"; fi
 else
-  warn "配布物 dist/webapp-security-assessment-v$ver.skill が無い" "build/build.sh を回す"
+  warn "配布物 dist/webapp-security-assessment-v$ver.skill が無い" "build/build.sh を実行する"
 fi
 
 if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
@@ -157,7 +157,7 @@ else ok "版は VERSION だけに持っている（package.json に version が�
 # 見ないので、事例から写したファイルパスと行番号・API のパス・評価の例文のような値をすり抜けさせた（実際に公開されていた）。
 # 事例に出てくる「ファイルのパス:行」と「/api/ のパス」を集め、公開するファイルに現れないかを見る
 # （日本語の文は、事例がスキルの文面を引用しているので、行の一致では誤検出が多すぎる。語の一致は ngwords.local が見る）。
-# 値は出さない。当たったファイルと件数だけを出す。
+# 値は出さない。一致したファイルと件数だけを出す。
 if [[ -d "$ROOT/cases" ]]; then
   tok="$(mktemp)"; trap 'rm -f "$tok"' EXIT
   find "$ROOT/cases" -type f \( -name '*.md' -o -name '*.txt' \) -print0 2>/dev/null | xargs -0 cat 2>/dev/null \
@@ -174,14 +174,14 @@ if [[ -d "$ROOT/cases" ]]; then
   elif [[ -z "$hits" ]]; then ok "公開するファイルに、事例のファイルパスと行番号・API のパスが現れない（$(wc -l < "$tok" | tr -d ' ') 語を照合）"
   else ng "公開するファイルに、事例と同じファイルパス・API のパスがある" "$(printf '%s' "$hits" | tr '\n' ' ')（値は出さない。手元で grep -F -f で確かめる）"; fi
 else
-  warn "cases/ が無いので、事例との一致は見ていない" "事例を置いている手元の環境で回す"
+  warn "cases/ が無いので、事例との一致は見ていない" "事例を置いている手元の環境で実行する"
 fi
 
 # 案件と、実地の評価の題材を特定できる語。公開するファイルと、すべてのコミットの文言を見る（文言も公開される）。
 # 語は build/identifying-words.sh が手元の非公開のファイルから作る（語そのものはここに出さない）
 IDW="$(bash "$ROOT/build/identifying-words.sh" "$ROOT" 2>/dev/null | paste -sd '|' -)"
 if [[ -z "$IDW" ]]; then
-  warn "題材を特定できる語の一覧が作れない" "tests/ngwords.local か tests/eval/local/ を置いた手元の環境で回す"
+  warn "題材を特定できる語の一覧が作れない" "tests/ngwords.local か tests/eval/local/ を置いた手元の環境で実行する"
 else
   f_hit="$(cd "$ROOT" && git ls-files -z | grep -zvE '^LICENSE$' | xargs -0 grep -liE "$IDW" 2>/dev/null || true)"
   if [[ -z "$f_hit" ]]; then ok "公開するファイルに、案件や評価の題材を特定できる語が無い"
@@ -212,5 +212,5 @@ reviewed_age "既知の勧告の判定表" \
 
 # ==========================================================================
 printf '\n\033[1m自己監査の結果\033[0m  '
-if [[ $RED -eq 0 ]]; then printf '\033[32m赤なし。配布できる\033[0m'; [[ $FULL -eq 0 ]] && printf '（--full で検査の検査も回してから）'; printf '\n'
+if [[ $RED -eq 0 ]]; then printf '\033[32m赤なし。配布できる\033[0m'; [[ $FULL -eq 0 ]] && printf '（--full で検査の検査も実行してから）'; printf '\n'
 else printf '\033[31m赤 %d 件。配らない\033[0m\n' "$RED"; exit 1; fi

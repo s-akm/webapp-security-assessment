@@ -3,10 +3,10 @@
 #
 #   使い方: tests/mutations.sh [--only <名前の一部>]
 #
-# tests/run.sh は「通ること」しか示さない。通る検査が、壊れたときに落ちるかどうかは別の話で、
+# tests/run.sh は「通ること」しか示さない。通る検査が、壊れたときに失敗するかどうかは別の話で、
 # 実際にこのリポジトリでは「浅い場所に題材を置いたため不具合を再現できず素通りしていた」
-# 検査があった。ここでは、スキルにわざと欠陥を入れて run.sh を回し、対応する検査が
-# 落ちることを 1 つずつ確かめる。落ちない検査は「生きていない」と判定する。
+# 検査があった。ここでは、スキルにわざと欠陥を入れて run.sh を実行し、対応する検査が
+# 失敗することを 1 つずつ確かめる。失敗しない検査は「生きていない」と判定する。
 #
 # 各ミューテーションは、対象ファイルの一部を置き換え → run.sh → 復元、の順で行う。
 # 復元は trap で保証する。途中で止めても元に戻る。
@@ -49,7 +49,7 @@ if printf '%s' "$base" | grep '✗' >/dev/null; then
 fi
 
 # 1 つのミューテーションを実行する。
-#   mutate <名前> <対象ファイル（skill からの相対）> <落ちるべき検査名の一部> <Python の置換コード>
+#   mutate <名前> <対象ファイル（skill からの相対）> <失敗するべき検査名の一部> <Python の置換コード>
 # Python コードは、変数 s（ファイル内容）を書き換えて返す形で書く。
 # 置換が 1 か所も当たらなければ、そのミューテーションは「対象が見つからない」で失敗にする。
 # （対象が変わって置換が空振りすると、検査の生死を確かめていないのに通ってしまうため）
@@ -73,20 +73,20 @@ PY
     FAIL=$((FAIL+1)); return
   fi
 
-  # 検査を回し、期待した検査が落ちたかを見る
+  # 検査を実行し、期待した検査が失敗したかを確かめる
   local out; out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   cp -p "$bak" "$target"; rm -f "$bak"; BACKUPS=("${BACKUPS[@]/$bak::$target/}")
 
   if printf '%s' "$out" | grep -E "✗ .*${expect}" >/dev/null; then
-    printf '  \033[32m✓\033[0m %-52s → 「%s」が落ちた\n' "$name" "$expect"
+    printf '  \033[32m✓\033[0m %-52s → 「%s」が失敗した（欠陥を見つけた）\n' "$name" "$expect"
     PASS=$((PASS+1))
   else
-    printf '  \033[31m✗\033[0m %-52s → 「%s」が落ちなかった。この検査は生きていない\n' "$name" "$expect"
+    printf '  \033[31m✗\033[0m %-52s → 「%s」が失敗しなかった。この検査は生きていない\n' "$name" "$expect"
     FAIL=$((FAIL+1))
   fi
 }
 
-printf '\n\033[1m検査の検査 — スキルに欠陥を入れて、対応する検査が落ちるか\033[0m\n\n'
+printf '\n\033[1m検査の検査 — スキルに欠陥を入れて、対応する検査が失敗するか\033[0m\n\n'
 
 # ---- 構造 ----
 mutate "存在しない参照先を書く" "SKILL.md" "参照先が実在する" \
@@ -97,9 +97,9 @@ if [[ -z "$ONLY" || "実行権限" == *"$ONLY"* ]]; then
   out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   chmod 755 "$SKILL/scripts/scan_secrets.sh"
   if printf '%s' "$out" | grep -E "✗ .*実行権限: scan_secrets.sh" >/dev/null; then
-    printf '  \033[32m✓\033[0m %-52s → 「%s」が落ちた\n' "スクリプトの実行権限を外す" "実行権限"; PASS=$((PASS+1))
+    printf '  \033[32m✓\033[0m %-52s → 「%s」が失敗した（欠陥を見つけた）\n' "スクリプトの実行権限を外す" "実行権限"; PASS=$((PASS+1))
   else
-    printf '  \033[31m✗\033[0m %-52s → 落ちなかった\n' "スクリプトの実行権限を外す"; FAIL=$((FAIL+1))
+    printf '  \033[31m✗\033[0m %-52s → 失敗しなかった\n' "スクリプトの実行権限を外す"; FAIL=$((FAIL+1))
   fi
 fi
 
@@ -362,7 +362,7 @@ mutate "eval: 範囲にも前後の許容を付ける" "../tests/eval/score.py" 
   's = s.replace("        return lo <= line <= hi\n", "        return lo - tol <= line <= hi + tol\n")'
 mutate "eval: 1 行をいちばん近い答え以外にも一致させる" "../tests/eval/score.py" "範囲は含む答えにだけ一致" \
   's = s.replace("    return abs(line - lo) <= min(abs(x - lo) for x in others)\n", "    return True\n")'
-mutate "eval: スキルを置いてから audit_grep を回す" "../tests/eval/run-eval.sh" "audit_grep をスキルを置く前に回す" \
+mutate "eval: スキルを置いてから audit_grep を実行する" "../tests/eval/run-eval.sh" "audit_grep をスキルを置く前に実行する" \
   's = s.replace("# スキルを題材の中に置く。", "mkdir -p \"$SRC/.claude/skills\"; cp -R \"$ROOT/skill\" \"$SRC/.claude/skills/x\"\n# スキルを題材の中に置く。", 1).replace("EVID=\"$WORK/evidence\"; mkdir -p \"$EVID\"", "mkdir -p \"$SRC/.claude/skills\"; cp -R \"$ROOT/skill\" \"$SRC/.claude/skills/y\"\nEVID=\"$WORK/evidence\"; mkdir -p \"$EVID\"", 1)'
 mutate "eval: 未確認事項どうしの依存を咎める" "../tests/eval/score.py" "未確認事項どうしの依存は咎めない" \
   's = s.replace("    ids |= {u.get(\x27id\x27) for u in unconfirmed}\n", "")'
@@ -406,7 +406,7 @@ mutate "audit_grep: 2g で注釈の読み方を拾わない" "scripts/audit_grep
 mutate "audit_grep: 2g で項目を選んで読む書き方も並べる" "scripts/audit_grep.sh" "項目を選んで読む書き方は" \
   's = s.replace("request\\.data|request\\.json)([^.A-Za-z_[]|$)\x27", "request\\.data|request\\.json)\x27")'
 
-# 手元の題材の変異（tests/eval/local/mutations.sh）。題材を特定できる情報を含むので公開しない。あるときだけ回す
+# 手元の題材の変異（tests/eval/local/mutations.sh）。題材を特定できる情報を含むので公開しない。あるときだけ実行する
 # shellcheck disable=SC1091
 [[ -f "$ROOT/tests/eval/local/mutations.sh" ]] && source "$ROOT/tests/eval/local/mutations.sh"
 

@@ -1,4 +1,4 @@
-# 検査を push と pull request のたびに回す。
+# 検査を push と pull request のたびに実行する。
 # このスキルが評価対象に求める基準（references/10-dependencies.md の 3-3）を、自分にも当てる:
 #   - Action はコミットハッシュで固定する（タグは差し替えられる）
 #   - 権限は読み取りだけ。pull_request_target は使わない（他人のコードが秘密情報と同居する）
@@ -11,7 +11,7 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * 0'   # 週 1 回、検査の検査（mutations.sh）まで回す
+    - cron: '0 18 * * 0'   # 週 1 回、検査の検査（mutations.sh）まで実行する
 
 permissions:
   contents: read
@@ -29,7 +29,7 @@ jobs:
         # macOS は評価者の標準の環境（bash 3.2、BSD の grep / sed）。Linux は GNU の道具と mawk
         os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
-    # 週 1 回の検査の検査は変異ごとに検査を回すので数時間かかる（ホスト型のランナーの上限は 6 時間）
+    # 週 1 回の検査の検査は変異ごとに検査を実行するので数時間かかる（ホスト型のランナーの上限は 6 時間）
     timeout-minutes: ${{ github.event_name == 'schedule' && 330 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -52,10 +52,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends dnsutils mawk zip unzip
           sudo update-alternatives --set awk /usr/bin/mawk
-          # mawk で回っていなければ止める（失敗を黙って続けると、gawk で通ったのを mawk で通ったと誤る）
+          # mawk で実行されていなければ止める（失敗を黙って続けると、gawk で通ったのを mawk で通ったと誤る）
           test "$(readlink -f "$(command -v awk)")" = /usr/bin/mawk
 
-      - name: macOS では bash 3.2 と BSD の grep / sed / awk で回す
+      - name: macOS では bash 3.2 と BSD の grep / sed / awk で実行する
         if: runner.os == 'macOS'
         run: |
           # ランナーには Homebrew の GNU の道具が入っていることがある。PATH の先頭に標準の道具を置く
