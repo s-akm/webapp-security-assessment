@@ -86,7 +86,14 @@ cd "$REPO" || { echo "パスが開けない: $REPO" >&2; exit 1; }
 # AUDIT_GREP_NO_RG=1 で grep に戻せる（結果を比べるときに使う）
 if [[ -z "${AUDIT_GREP_NO_RG:-}" ]] && command -v rg >/dev/null 2>&1; then AUDIT_GREP_RG=1; else AUDIT_GREP_RG=0; fi
 grep() {
-  local fl="${1:-}" orig=("$@")
+  local fl="${1:-}" orig=("$@") x incs=() rest=()
+  # grep も rg も、後に書いた --include / --exclude が優先される。呼び出しは除外（EXA）を先、対象（--include）を後に
+  # 書いているので、そのままだと対象の指定が除外を上書きし、*.min.js などが対象に戻る。再帰の検索では対象を先頭へ移す
+  if [[ "$fl" =~ ^-[a-zA-Z]+$ && "$fl" == *r* ]]; then
+    for x in "${@:2}"; do if [[ "$x" == --include=* ]]; then incs+=("$x"); else rest+=("$x"); fi; done
+    orig=("$fl" ${incs[@]+"${incs[@]}"} ${rest[@]+"${rest[@]}"})
+    set -- "${orig[@]}"
+  fi
   if [[ "$AUDIT_GREP_RG" -ne 1 || ! "$fl" =~ ^-[a-zA-Z]+$ || "$fl" != *r* || ( "$fl" != *E* && "$fl" != *F* ) ]]; then
     command grep "$@"; return
   fi
@@ -102,13 +109,14 @@ grep() {
     esac
   done
   shift
-  local pat="" have_pat=0 paths=()
+  # rg は後に書いた -g が優先される。対象（--include）を先に、除外を後に渡す（逆にすると、除外したファイルが対象に戻る）
+  local pat="" have_pat=0 paths=() inc=() exc=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -I) ;;
-      --exclude-dir=*) a+=(-g "!${1#--exclude-dir=}") ;;
-      --exclude=*) a+=(-g "!${1#--exclude=}") ;;
-      --include=*) a+=(-g "${1#--include=}") ;;
+      --exclude-dir=*) exc+=(-g "!${1#--exclude-dir=}") ;;
+      --exclude=*) exc+=(-g "!${1#--exclude=}") ;;
+      --include=*) inc+=(-g "${1#--include=}") ;;
       -e) pat="$2"; have_pat=1; shift ;;
       --) shift; break ;;
       -*) command grep "${orig[@]}"; return ;;
@@ -118,6 +126,7 @@ grep() {
   done
   while [[ $# -gt 0 ]]; do if [[ $have_pat -eq 0 ]]; then pat="$1"; have_pat=1; else paths+=("$1"); fi; shift; done
   [[ ${#paths[@]} -gt 0 ]] || paths=(.)
+  a+=(${inc[@]+"${inc[@]}"} ${exc[@]+"${exc[@]}"})
   # 正規表現の方言が違う（POSIX では角括弧の中の [ はただの文字だが、rg では構文の誤りになる）。rg が誤りで何も出さずに
   # 終わったら、同じ呼び出しを grep でやり直す。黙って「検出なし」にしない
   local out st
@@ -134,14 +143,23 @@ EX='-I --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclud
     --exclude-dir=__pycache__ --exclude-dir=coverage --exclude-dir=.turbo
     --exclude-dir=.nuxt --exclude-dir=.output --exclude-dir=.svelte-kit --exclude-dir=.vercel
     --exclude-dir=.build --exclude-dir=DerivedData --exclude-dir=Pods --exclude-dir=.gradle
-    --exclude-dir=target --exclude=*.min.js --exclude=*.map'
+    --exclude-dir=target --exclude-dir=.temp --exclude=*.min.js --exclude=*.map --exclude=*.tsbuildinfo'
 # 単語に分けるだけで、*.min.js をファイル名に展開させない
 set -f
 # shellcheck disable=SC2206
 EXA=($EX)
 set +f
+# 同梱の WebAssembly の読み込み用のスクリプト（同じ名前の .wasm が隣にある .js）は、他社のライブラリが生成したもの。
+# 数千行あり、ファイルや乱数や例外の処理の語が並ぶので、各節の候補を埋めてしまう（実在の案件で、3b・9b・12・13 節が埋まった）
+while IFS= read -r w; do
+  if [[ -f "${w%.wasm}.js" ]]; then
+    EXA+=("--exclude=$(basename "${w%.wasm}").js"); w="${w#./}"; WASM_GLUE="${WASM_GLUE:-}${w%.wasm}.js"$'\n'
+  fi
+done < <(find . \( -name node_modules -o -name .git \) -prune -o -name '*.wasm' -type f -print 2>/dev/null | head -50)
+# find で作るファイルの一覧からも外す
+drop_glue() { if [[ -n "${WASM_GLUE:-}" ]]; then grep -vxF -f <(printf '%s' "$WASM_GLUE") || true; else cat; fi; }
 # find で辿らないディレクトリ（EX と同じもの）
-PRUNE_DIRS='node_modules .git dist build .next vendor venv .venv __pycache__ coverage .turbo .nuxt .output .svelte-kit .vercel .build DerivedData Pods .gradle target'
+PRUNE_DIRS='node_modules .git dist build .next vendor venv .venv __pycache__ coverage .turbo .nuxt .output .svelte-kit .vercel .build DerivedData Pods .gradle target .temp'
 prune_expr() { local d first=1; printf '( -type d ( '; for d in $PRUNE_DIRS; do
   if [[ $first -eq 1 ]]; then first=0; else printf -- '-o '; fi; printf -- '-name %s ' "$d"; done; printf ') -prune )'; }
 
@@ -460,7 +478,7 @@ echo "  ※ 判定はファイルの有無による。手作業で作った資�
 HF_LIST="$(mktemp "${TMPDIR:-/tmp}/audit_grep.XXXXXX")"
 HF_DEF="$HF_LIST.def"; HF_GRD="$HF_LIST.grd"
 trap 'rm -f "$HF_LIST" "$HF_LIST".*' EXIT
-handler_files > "$HF_LIST"
+handler_files | drop_glue > "$HF_LIST"
 # ファイルごとの数は、全ファイルをまとめて grep に渡して 1 回で数える。ファイルごとに grep を起動すると、
 # ハンドラの多い大きなリポジトリで、1 節と 2 節だけで数分かかっていた。
 # /dev/null を足すのは、xargs が分けて起動したどの回も「ファイル名:数」の形で出させるため（1 本だけだと名前が付かない）。
@@ -486,7 +504,7 @@ hr "1b. 枠組みの版（ロックファイルの解決結果。公式アドバ
 # ここでは、公式の勧告で修正版まで一次情報で確かめたものだけを機械的に判定する。
 # それ以外は版を並べるだけにする。表は評価の時点で古くなっている前提で、公式の一覧を必ず見る。
 # 下の判定表を公式の勧告と照合した日。表を直したら更新する（tests/run.sh が半年を超えたら知らせる）
-ADVISORIES_REVIEWED="2026-09-25"
+ADVISORIES_REVIEWED="2026-09-28"
 pkgver() {
   local name="$1" v=""
   if [[ -f package-lock.json ]]; then
@@ -537,6 +555,16 @@ for name in next react-server-dom-webpack react-server-dom-turbopack react-serve
         approuter="$(find . -maxdepth 4 -type d \( -path '*/app' -o -path '*/src/app' \) -not -path '*/node_modules/*' -not -path '*/.next/*' 2>/dev/null | head -1)"
         if [[ -n "$fix" ]] && verlt "$pure" "$fix" && [[ -n "$approuter" ]]; then
           note="$note ★ React2Shell（CVE-2025-55182。Next.js の案内では取り下げ済みの 66478）の修正前。版上げと秘密情報の入れ替えの二段（02 の H）"
+        fi
+        # 2026-09-08 の critical 2 件（修正は 15.5.24 / 16.3.3）と、2026-07-22 の勧告群（high を含む。修正は 15.5.21 / 16.2.11）。
+        # 14 以前はサポート外として上で知らせている
+        if [[ "$major" -ge 15 ]]; then
+          if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.24; } || inrange "$pure" 16.0.0 16.3.3; then
+            note="$note ★ 認証なしでコードを実行される critical の勧告（GHSA-2xp9-vwfh-vxw4・GHSA-p293-qw3h-jr36。2026-09-08）の修正前。15.5.24 / 16.3.3 以上へ（02 の H）"
+          fi
+          if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.21; } || inrange "$pure" 16.0.0 16.2.11; then
+            note="$note ★ 2026-07-22 の勧告群（SSRF・Proxy の迂回・DoS。high を含む）の修正前。15.5.21 / 16.2.11 以上へ"
+          fi
         fi ;;
       react-server-dom-*)
         case "$pure" in

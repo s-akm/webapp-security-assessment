@@ -1,0 +1,1 @@
+{"x": "function f(el, v) { el.innerHTML = v; }"}

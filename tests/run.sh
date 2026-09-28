@@ -533,6 +533,18 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   contains "audit_grep[版]: React2Shell の修正前を判定"              "React2Shell（CVE-2025-55182"      "$S1B"
   contains "audit_grep[版]: adapter-vercel のキャッシュ不具合"       "CVE-2026-27118 の修正前"        "$S1B"
   absent   "audit_grep[版]: 15 系をサポート外と言わない"             "サポート外"                     "$S1B"
+  # 2026 年 7 月・9 月の勧告。修正前の版に ★ を付け、修正版には付けない（ロックファイルの解決結果で判定する）
+  NV="$(mktemp -d)"
+  for v in 16.3.0 16.3.3 15.5.22 15.5.24; do
+    mkdir -p "$NV/$v"; printf '{"packages": {"node_modules/next": {\n      "version": "%s"\n    }}}\n' "$v" > "$NV/$v/package-lock.json"
+    eval "S1B_${v//./_}=\"\$(bash \"\$SKILL/scripts/audit_grep.sh\" \"\$NV/\$v\" 2>&1 | LC_ALL=C awk 'index(\$0, \"=== 1b.\") == 1 { f = 1; next } f && /^=== / { exit } f')\""
+  done
+  rm -rf "$NV"
+  contains "audit_grep[版]: 16.3.0 に 2026-09-08 の critical の勧告"      "GHSA-2xp9-vwfh-vxw4"            "$S1B_16_3_0"
+  absent   "audit_grep[版]: 16.3.0 は 2026-07-22 の勧告群の修正後"        "2026-07-22 の勧告群"            "$S1B_16_3_0"
+  absent   "audit_grep[版]: 16.3.3 には 2026-09-08 の勧告の ★ を付けない" "GHSA-2xp9-vwfh-vxw4"            "$S1B_16_3_3"
+  contains "audit_grep[版]: 15.5.22 に 2026-09-08 の critical の勧告"     "GHSA-2xp9-vwfh-vxw4"            "$S1B_15_5_22"
+  absent   "audit_grep[版]: 15.5.24 には ★ を付けない"                   "★"                              "$(printf '%s\n' "$S1B_15_5_24" | grep -E '^  next ')"
   # 判定表がいつの勧告まで見ているかを、評価者が評価の時点で読めること
   contains "audit_grep[版]: 判定表の照合日と経過日数を出す"          "判定表を公式の勧告と照合した日"   "$S1B"
   if printf '%s' "$S1B" | grep -E '照合した日: [0-9-]+（[0-9]+ 日前）' >/dev/null; then
@@ -1784,6 +1796,18 @@ if command -v rg >/dev/null 2>&1; then
 else
   skip "audit_grep[rg]: rg が無いので、rg で検索したときの結果は確かめていない"
 fi
+
+# 開発の道具の一時ファイル・同梱の WebAssembly の読み込み用スクリプト・*.min.js を並べない（実在の案件で各節の候補が埋まった）。
+# rg の場合も grep の場合も同じ（rg は後の指定が優先されるので、対象の指定が除外を上書きしないこと）
+NZ="$TMP/noise-files"; cp -R "$ROOT/tests/fixtures/noise-files" "$NZ"
+for mode in rg grep; do
+  if [[ "$mode" == rg ]]; then NZO="$(bash "$SKILL/scripts/audit_grep.sh" "$NZ" 2>&1)"; else NZO="$(AUDIT_GREP_NO_RG=1 bash "$SKILL/scripts/audit_grep.sh" "$NZ" 2>&1)"; fi
+  contains "audit_grep[除外・${mode}]: アプリのコードは並べる"                 "src/app.js"          "$NZO"
+  absent   "audit_grep[除外・${mode}]: 開発の道具の一時ファイル（.temp）を並べない" ".temp/cache.json"    "$NZO"
+  absent   "audit_grep[除外・${mode}]: *.tsbuildinfo を並べない"                 "tsconfig.tsbuildinfo" "$NZO"
+  absent   "audit_grep[除外・${mode}]: .wasm と対の読み込み用スクリプトを並べない" "public/lib/engine.js" "$NZO"
+  absent   "audit_grep[除外・${mode}]: *.min.js を並べない"                      "other.min.js"        "$NZO"
+done
 
 # ★ の一覧。節に散らばった ★ を最後に集め、節の番号を付ける。説明文の ★ は数えない
 contains "audit_grep[★一覧]: 最後に ★ を集めて出す"                "=== ★ の一覧"                   "$SSTAR"

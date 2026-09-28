@@ -1,0 +1,2 @@
+{"source_code": "select * from t where id = ${x}"}
+function f(el, v) { el.innerHTML = v; }

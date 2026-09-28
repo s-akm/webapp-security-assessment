@@ -315,6 +315,12 @@ mutate "資料: 攻撃の手順を書かない決まりを消す" "SKILL.md" "�
   's = s.replace("攻撃の手順と、そのまま動く攻撃の文字列（ペイロード）も書かない", "書き方に気をつける", 1)'
 mutate "audit_grep: rg の誤りを grep でやり直さない" "scripts/audit_grep.sh" "rg で検索しても grep と同じ結果になる（client-authz）" \
   's = s.replace("  if [[ $st -eq 2 && -z \"$out\" ]]; then command grep \"${orig[@]}\"; return; fi\n", "", 1)'
+mutate "audit_grep: rg に除外を先に渡す" "scripts/audit_grep.sh" "除外・rg\]: \*\.min\.js を並べない" \
+  's = s.replace("  a+=(${inc[@]+\"${inc[@]}\"} ${exc[@]+\"${exc[@]}\"})", "  a+=(${exc[@]+\"${exc[@]}\"} ${inc[@]+\"${inc[@]}\"})", 1)'
+mutate "audit_grep: grep に対象の指定を後で渡す" "scripts/audit_grep.sh" "除外・grep\]: \*\.min\.js を並べない" \
+  's = s.replace("    orig=(\"$fl\" ${incs[@]+\"${incs[@]}\"} ${rest[@]+\"${rest[@]}\"})", "    orig=(\"$fl\" ${rest[@]+\"${rest[@]}\"} ${incs[@]+\"${incs[@]}\"})", 1)'
+mutate "audit_grep: 勧告の表に 2026-09-08 の行が無い" "scripts/audit_grep.sh" "16.3.0 に 2026-09-08 の critical の勧告" \
+  's = s.replace("if { [[ \"$major\" -eq 15 ]] && verlt \"$pure\" 15.5.24; } || inrange \"$pure\" 16.0.0 16.3.3; then", "if false; then", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 mutate "eval: 補助のモデルもモデルの欄に並べる" "../tests/eval/score.py" "モデルの欄は主のモデルだけにする" \
   's = s.replace("\x27model\x27: max((d.get(\x27modelUsage\x27) or {}).items(), key=lambda kv: kv[1].get(\x27costUSD\x27) or 0, default=(\x27\x27, {}))[0],", "\x27model\x27: \x27,\x27.join(sorted((d.get(\x27modelUsage\x27) or {}).keys())),", 1)'
