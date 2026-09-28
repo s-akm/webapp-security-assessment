@@ -84,7 +84,7 @@ Lambda のハンドラ 1 本）は、**ハンドラの数を機械的に数え�
 
 ### 機械的な下拵えを先にやる
 
-`scripts/audit_grep.sh <repo>` が、以下を一括で出す。目で読む前にこれを回すと、どこを重点的に見るかの当たりが付く。
+`scripts/audit_grep.sh <repo>` が、以下を一括で出す。目で読む前にこれを実行すると、どこを重点的に読むかの見当が付く。
 
 - 危険な関数の使用箇所（`eval` / `dangerouslySetInnerHTML` / 生 SQL の組み立て / `child_process`）
 - 秘密情報らしき文字列のハードコード
@@ -316,6 +316,10 @@ grep -rnE 'url\.pathname|context\.url' src/middleware.* 2>/dev/null   # Astro �
 | 漏えい済み・頻出パスワードとの照合 | **必須**。登録と変更の時点で照合しているか |
 | 多要素 | AAL2 では**フィッシング耐性のある手段（パスキー等）を少なくとも 1 つ提供**する |
 
+**長さの下限は `scripts/audit_grep.sh` の 13b 節が並べる。** 検証の規則（Rails の `length`・zod や yup の `min`・Django の
+`MinimumLengthValidator`・Supabase の `minimum_password_length` など）から、パスワードの規則の下限を拾い、8 文字未満に ★ を付ける。
+下限が見つからなければ、枠組みや認証基盤の既定の下限を確かめる。画面側の規則だけでサーバー側に無ければ、サーバー側の下限は無いのと同じ。
+
 ```bash
 # パスワードの検証規則（長さ・文字種の強制を探す）
 grep -rnE 'minLength|min\(\s*[0-9]+|password.*(length|regex|pattern)|\[A-Z\]' \
@@ -479,7 +483,7 @@ grep -rnE 'response_type=token|grant_type=password|code_challenge_method=plain' 
 それを使うと鍵がそのまま配信される。従量課金なので、漏れればそのまま費用になる。
 
 ```bash
-# -o で名前だけ出す。.env に当たったときに値まで出さないため
+# -o で名前だけ出す。.env に一致したときに値まで出さないため
 grep -rnoE 'dangerouslyAllowBrowser:\s*true|NEXT_PUBLIC_[A-Z_]*(OPENAI|ANTHROPIC|GEMINI|GROQ|MISTRAL)[A-Z_]*|VITE_[A-Z_]*(OPENAI|ANTHROPIC|GEMINI)[A-Z_]*' . 2>/dev/null | grep -v node_modules | sort -u | head
 ```
 

@@ -199,6 +199,11 @@ curl -sI -H 'Origin: https://example.invalid' https://<domain>/api/<endpoint> | 
 
 **判定の細かい点**: ホスト名の検証をしていても、**サブドメインのワイルドカード許可**は穴になりうる。`*.example.com` を許すと、外部サービスに委譲しているサブドメインや、乗っ取られたサブドメインが踏み台になる。許可は完全一致のリストにするのが安全。
 
+**`scripts/audit_grep.sh` の 2j 節が、転送先らしい名前の値をリクエストから読み、その値で転送している行を枠組みごとの表で並べる。**
+変数に受けてから離れた行で転送する書き方も追う。★ は、読んだ行から転送の行までに確かめが見当たらないもの。
+**`/` で始まるかだけを確かめる形も ★ にする。** `//attacker.example` や `/\attacker.example` は `/` で始まるが、
+ブラウザは別のホストとして扱う。自サイトの中に限るなら、`//` と `/\` で始まるものも弾くか、URL として解釈してオリジンを比べる。
+
 ```bash
 grep -rnE 'redirect|redirectTo|returnTo|next=|callbackUrl' --include='*.ts' . | head -20
 ```

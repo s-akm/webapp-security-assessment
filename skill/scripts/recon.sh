@@ -99,7 +99,7 @@ zone_apex() {
   printf '%s\n' "$out" | grep -v '^;' | awk '$4=="SOA"{print $1; exit}' | sed 's/\.$//'
 }
 
-# DMARC のタグの値を取る。p= を部分一致で見ると sp=none / np=none にも当たる（実際に誤っていた）。
+# DMARC のタグの値を取る。p= を部分一致で見ると sp=none / np=none にも一致する（実際に誤っていた）。
 # = の前後の空白を許し（RFC 9989 4.8）、タグ名と p / sp / np の値は大文字小文字を区別せずに読む。
 # v の値（DMARC1）だけは大小を区別するので、レコードを探す側（up_find）で区別して照合する
 dmarc_tag() { printf '%s' "$2" | tr ';' '\n' | tr -d ' \t' | tr 'A-Z' 'a-z' | grep -E "^$1=" | head -1 | cut -d= -f2-; }
@@ -696,7 +696,7 @@ if grep -iF '__tcfapi' all.js >/dev/null 2>&1 && [[ $found_cmp -eq 0 ]]; then
 fi
 
 echo "  --- 管理画面・ログイン画面にもタグが入っているか ---"
-# 両方の形に一致するファイル（page_admin_login.html）を 2 回出さないよう、重複を除いてから回す
+# 両方の形に一致するファイル（page_admin_login.html）を 2 回出さないよう、重複を除いてから 1 件ずつ処理する
 for f in ./*login*.html ./*admin*.html; do [[ -f "$f" ]] && printf '%s\n' "$f"; done | sort -u | while IFS= read -r f; do
   base="$(awk -F'\t' -v f="$(basename "$f")" '$1==f{print $2; exit}' pages.tsv)"
   { src_attrs "$f" | while IFS= read -r ref; do resolve "${base:-$ORIGIN/}" "$ref"; done | tag_hosts_of

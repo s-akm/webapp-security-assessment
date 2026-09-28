@@ -1,0 +1,4 @@
+# 架空の題材: Supabase の認証の設定
+[auth]
+enable_signup = true
+minimum_password_length = 6

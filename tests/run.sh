@@ -1765,6 +1765,34 @@ absent   "audit_grep[2h]: 大きすぎる値を弾く行には ★ を付けな�
 contains "audit_grep[2h]: 大きすぎる値を弾く行も並べる（Go）"                  "    events.go:4:"                "$S2H"
 absent   "audit_grep[2h]: 経路の無いファイルの引数の既定値を拾わない"          "repository.py"                  "$S2H"
 
+# 2j 節（転送先を利用者の値で決めていないか）と 13b 節（パスワードの長さの下限）。架空の題材 redirect-and-password。
+# 受けた変数を転送の行まで追い、確かめはその間でだけ探す。/ で始まるかだけの確かめは別に示す
+RP="$TMP/redirect-and-password"
+fixture_cp "$ROOT/tests/fixtures/redirect-and-password" "$RP"
+RPALL="$(bash "$SKILL/scripts/audit_grep.sh" "$RP" 2>&1)"
+S2J="$(printf '%s\n' "$RPALL" | LC_ALL=C awk 'index($0, "=== 2j.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+S13B="$(printf '%s\n' "$RPALL" | LC_ALL=C awk 'index($0, "=== 13b.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2j]: 変数に受けてから転送する行に ★（Rails）"            "★ app/controllers/accounts_controller.rb:5:" "$S2J"
+contains "audit_grep[2j]: 確かめの無い転送に ★（Django）"                     "★ py/views.py:7:"               "$S2J"
+contains "audit_grep[2j]: 確かめのある転送も並べる（Django）"                 "    py/views.py:12:"             "$S2J"
+contains "audit_grep[2j]: 確かめの無い転送に ★（Next.js の formData）"        "★ src/actions.ts:13:"           "$S2J"
+contains "audit_grep[2j]: 離れた転送の行まで変数を追う（Next.js）"            "★ src/actions.ts:20:"           "$S2J"
+contains "audit_grep[2j]: 次の経路の確かめを拾わない（Express）"              "★ web/login.js:6:"              "$S2J"
+absent   "audit_grep[2j]: 確かめのある転送には ★ を付けない（Express）"       "★ web/login.js:12:"             "$S2J"
+contains "audit_grep[2j]: 分割代入で受けた値も追う（Express）"                "★ web/login.js:25:"             "$S2J"
+contains "audit_grep[2j]: / で始まるかだけの確かめを区別する"                 "web/login.js:31:  const to = req.query.to;（/ で始まるかだけ" "$S2J"
+absent   "audit_grep[2j]: 安全な転送の関数を通すものには ★ を付けない"         "★ web/login.js:40:"             "$S2J"
+contains "audit_grep[2j]: 安全な転送の関数を通すものも並べる"                 "    web/login.js:40:"           "$S2J"
+absent   "audit_grep[2j]: 取得先に使う値は並べない（SSRF は 3 節）"           "web/login.js:19:"               "$S2J"
+contains "audit_grep[13b]: 複数行の規則の下限に ★（Rails）"                   "★ app/models/member.rb:5:"      "$S13B"
+absent   "audit_grep[13b]: 別の項目の規則を拾わない（Rails）"                 "member.rb:6:"                   "$S13B"
+absent   "audit_grep[13b]: 別の項目の規則を拾わない（zod）"                   "src/actions.ts:9:"              "$S13B"
+contains "audit_grep[13b]: 認証基盤の設定の下限に ★（Supabase）"              "★ supabase/config.toml:4:"      "$S13B"
+contains "audit_grep[13b]: 検証器の下限に ★（Django）"                        "★ py/settings_dev.py:5:"        "$S13B"
+contains "audit_grep[13b]: 8〜14 文字は ★ を付けずに並べる（zod）"            "    src/actions.ts:8:"           "$S13B"
+absent   "audit_grep[13b]: 15 文字以上は並べない（Django）"                   "py/settings.py"                 "$S13B"
+contains "audit_grep[★一覧]: 2j 節の ★ も集める"                             "[2j.] ★ py/views.py:7:"         "$RPALL"
+
 # 3 節（出力に HTML を直接流し込む）と 3b 節（ファイルの受け取り）。架空の題材 output-and-upload。
 # 値を流し込む行にだけ ★ を付け、固定の文字列だけを出す行には付けない。枠組みごとの書き方を表で拾う
 OU="$TMP/output-and-upload"
@@ -1806,7 +1834,7 @@ contains "audit_grep[★一覧]: 3b 節の ★ も集める"                    
 # rg があれば再帰の検索を rg で行う。grep と同じ結果になるか（並び順は除く）。
 # 正規表現の方言が違う書き方（角括弧の中の [）は rg が誤りで終わるので、grep でやり直していること
 if command -v rg >/dev/null 2>&1; then
-  for fx in client-authz output-and-upload size-param query-injection; do
+  for fx in client-authz output-and-upload size-param query-injection redirect-and-password; do
     RGT="$TMP/rgcmp-$fx"; fixture_cp "$ROOT/tests/fixtures/$fx" "$RGT"
     ga="$(AUDIT_GREP_NO_RG=1 bash "$SKILL/scripts/audit_grep.sh" "$RGT" 2>&1 | sort)"
     ra="$(bash "$SKILL/scripts/audit_grep.sh" "$RGT" 2>&1 | sort)"

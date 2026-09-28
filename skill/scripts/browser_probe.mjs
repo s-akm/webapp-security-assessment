@@ -74,7 +74,7 @@ export const CMP = [
   [/(^|\.)axept\.io$/, "同意管理（Axeptio）"],
 ];
 
-// リアルタイム通信の既知の接続先（計測・広告に当たらないもの）
+// リアルタイム通信の既知の接続先（計測・広告に該当しないもの）
 export const REALTIME = [
   [/(^|\.)supabase\.co$/, "Supabase Realtime"],
   [/(^|\.)(pusher\.com|pusherapp\.com)$/, "Pusher"],

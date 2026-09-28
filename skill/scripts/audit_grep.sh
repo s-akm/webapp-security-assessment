@@ -136,7 +136,7 @@ grep() {
   return $st
 }
 
-# -I はバイナリを読み飛ばす。画像や PDF が「HTML を直接流し込む」に当たって並ぶのを防ぐ。
+# -I はバイナリを読み飛ばす。画像や PDF が「HTML を直接流し込む」に一致して並ぶのを防ぐ。
 # 依存・生成物・ビルドの出力は読まない。遅くなるうえに、他人のコードが指摘の候補に並ぶ。
 EX='-I --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build
     --exclude-dir=.next --exclude-dir=vendor --exclude-dir=venv --exclude-dir=.venv
@@ -297,7 +297,7 @@ hr "0. 構成の判定（どの資料が要るかを決める）"
 # 送信先は recon.sh・browser_probe.mjs の一覧（ホスト名）と同じ 17 種を、コードに現れる語で引く。
 # エラー監視（Sentry）とチャット（Intercom）も、利用者の端末から第三者へ送る点は同じなので含める
 # （電気通信事業法の外部送信規律は目的を問わない。08 の 1 節）。短い関数名（ytag・twq・ttq）は、
-# keytag( のような別の語に当たらないよう前に語の境界を置き、汎用の CDN（s.yimg.jp）はタグの配信パスまで見る。
+# keytag( のような別の語に一致しないよう前に語の境界を置き、汎用の CDN（s.yimg.jp）はタグの配信パスまで見る。
 TAGPAT='googletagmanager|google-analytics|analytics\.google\.com|gtag\(|adsbygoogle|pagead2|googlesyndication|googleadservices|doubleclick|connect\.facebook|fbq\(|clarity\.ms|@microsoft/clarity|hotjar|analytics\.tiktok|(^|[^A-Za-z0-9_$.])ttq\.|snap\.licdn|_linkedin_partner_id|ads-twitter|(^|[^A-Za-z0-9_$.])twq\(|s\.yimg\.jp/images/listing/tool/cv/ytag\.js|(^|[^A-Za-z0-9_$.])ytag\(|yjads|widget\.intercom\.io|intercomSettings|@intercom/|(^|[^A-Za-z0-9_$.])Intercom\(|@sentry/|sentry\.io|sentry-cdn\.com|Sentry\.init|logrocket|LogRocket|fullstory|FullStory|posthog|datadogRum|browser-rum|mouseflow|_mfq|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts'
 # 対象に無い技術の資料を読むのは時間の無駄で、逆に「読んだつもり」になる危険もある。
 # ここで何があるかを先に確定させ、要る資料だけを開く。
@@ -394,7 +394,7 @@ else
   say "CI の定義" "無"
 fi
 
-# node_modules の下まで辿ると大きなリポジトリで遅く、依存の package.json にも当たるので除く
+# node_modules の下まで辿ると大きなリポジトリで遅く、依存の package.json にも一致するので除く
 if [[ -n "$(grep -rlE "${EXA[@]}" '"(stripe|@stripe/stripe-js|@stripe/react-stripe-js|payjp|@payjp/[a-z-]+|square|@square/web-sdk|komoju)"' \
      --include='package.json' . 2>/dev/null | head -1)" ]]; then
   say "カード決済" "有 → 06 の「カード決済を扱う場合」"
@@ -902,6 +902,52 @@ echo "  --- 件数を決める値をリクエストから読んでいる（★ �
 echo "  ※ ★ は、読んだ値のまま件数を決めていれば指摘になる（上限を付けるか、上限で切り詰める）。公開の一覧でも「公開だから問題なし」にしない"
 echo "    ★ の無い行も、上限の確かめがその値に掛かっているかを読む。ファイルのどこかに上限の書き方があるだけで ★ を外している"
 
+hr "2j. 転送先を利用者の値で決めていないか（07 の 4 節・オープンリダイレクト）"
+# ログイン後の戻り先・再設定のあとの行き先・決済からの復帰など。転送先らしい名前の値をリクエストから読み、
+# その値で転送している行を並べる。読み方は 2g・2h 節と同じく枠組みごとの表で持つ。
+# 変数に受けてから転送する書き方（path = params[:x] … redirect_to path）も拾うため、受けた変数を追う
+REDIR_NAME='(to|url|next|next_?url|return_?to|return_?url|return_?path|redirect|redirect_?to|redirect_?url|redirect_?uri|redirect_?path|continue|callback_?url|dest|destination|goto|back_?url|forward_?url|success_?url|target_?url)'
+REDIR_IN="(req|request|ctx|c|event|r)\.(query|body|params|args|form|GET|POST|query_params|nextUrl\.searchParams)(\.|\[['\"]|\.get\(['\"]|\.Get\(['\"])${REDIR_NAME}['\"]?\b"
+REDIR_IN="$REDIR_IN|(searchParams|query|formData|URLSearchParams\([^)]*\))\??\.(get\(['\"]${REDIR_NAME}['\"]|${REDIR_NAME}\b)"
+REDIR_IN="$REDIR_IN|@(Query|Param|Body)\(['\"]${REDIR_NAME}['\"]|@RequestParam\([^)]*['\"]${REDIR_NAME}['\"]|\[FromQuery[^]]*\][^,)]*\b${REDIR_NAME}\b"
+REDIR_IN="$REDIR_IN|\{[^}]*\b${REDIR_NAME}\b[^}]*\}[[:space:]]*=[[:space:]]*(await[[:space:]]+)?(req|request|ctx|c|event)\.(query|body|params)|params\[:${REDIR_NAME}\]|params\.(fetch|dig)\(:${REDIR_NAME}\b|session\[:${REDIR_NAME}\]"
+REDIR_IN="$REDIR_IN|\\\$request->(input|get|query)\(['\"]${REDIR_NAME}['\"]|\\\$_(GET|POST|REQUEST)\[['\"]${REDIR_NAME}['\"]\]|\.(Query|DefaultQuery|QueryParam|FormValue)\(\"${REDIR_NAME}\""
+# 転送の書き方（サーバー側とブラウザ側）
+REDIR_SINK='redirect_to\b|redirect\(|[Rr]edirect(Response|Result|View)?\(|HttpResponseRedirect|sendRedirect|Response\.Redirect|LocalRedirect|header\([^)]*Location|[Ll]ocation["'"'"']?[[:space:]]*[:,=][^=]|location\.(href|assign|replace)|router\.(push|replace)\(|navigate\('
+# 転送先を確かめている書き方。自サイトの中か、許可したホストかを見ている
+REDIR_SLASH='startsWith\(["'"'"'`]/|start_with\?\(["'"'"']/|startswith\(["'"'"']/|HasPrefix\([^,]+,[[:space:]]*"/|\^/'
+REDIR_GUARD='is[A-Za-z]*(Allowed|Safe|Valid|Local|Internal)[A-Za-z]*\(|[A-Za-z_]*([Ss]afe|[Ss]anitize|[Vv]alidate)[A-Za-z_]*(Url|URL|Redirect|Return|Path|Next|Dest|Target)[A-Za-z_]*\(|url_has_allowed_host_and_scheme|is_safe_url|IsLocalUrl|isLocalUrl|LocalRedirect|only_path|allow_other_host|allowed_?hosts?|ALLOWED_(HOSTS|REDIRECT|ORIGINS)|allow_?list|white_?list|safe_?(url|redirect)|isSafe|isRelative|isValidRedirect|validateRedirect|\.origin[[:space:]]*(===|==|!==|!=)|\.host(name)?[[:space:]]*(===|==|!==|!=)|urlparse|parse_url|URI\.parse|same_?origin|sameOrigin'
+INCL_R=("${INCL[@]}" --include='*.tsx' --include='*.jsx' --include='*.vue' --include='*.svelte')
+{ grep -rnEi "${EXA[@]}" "$REDIR_IN" "${INCL_R[@]}" . 2>/dev/null | sed 's|^\./||' \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+:' \
+    | while IFS= read -r l; do
+        f="${l%%:*}"; r="${l#*:}"; n="${r%%:*}"
+        c="${r#*:}"
+        # 読んだ値を変数に受けていれば（dest = params[:x]・const next = …）、その変数を使う転送の行を 80 行先まで探す。
+        # 受けていなければ（redirect_to params[:x]・引数の装飾子）、15 行先までの最初の転送の行を使う
+        v="$(printf '%s' "$c" | sed -nE 's/^[[:space:]]*(const|let|var|final|val|my)?[[:space:]]*(@?[A-Za-z_][A-Za-z0-9_]*)([[:space:]]*:[^=]*)?[[:space:]]*=[^=].*/\2/p')"
+        # 分割代入（const { next } = req.query）は、括弧の中の名前を変数にする
+        [[ -z "$v" ]] && v="$(printf '%s' "$c" | sed -nE 's/.*\{([^}]*)\}[[:space:]]*=.*/\1/p' | grep -oEi "\b${REDIR_NAME}\b" | paste -sd '|' -)" && [[ -n "$v" ]] && v="($v)"
+        if [[ -n "$v" ]]; then
+          k="$(sed -n "$((n + 1)),$((n + 80))p" "$f" 2>/dev/null | grep -nE "$REDIR_SINK" | grep -E "(^|[^A-Za-z0-9_@])${v}([^A-Za-z0-9_]|$)" | head -1 | cut -d: -f1)"
+        else
+          k="$(sed -n "${n},$((n + 15))p" "$f" 2>/dev/null | grep -nE "$REDIR_SINK" | head -1 | cut -d: -f1)"; [[ -n "$k" ]] && k=$((k - 1))
+        fi
+        # 転送していなければ並べない（別の用途。取得先に使うものは 3 節の SSRF で見る）
+        [[ -n "$k" ]] || continue
+        # 確かめは、読んだ行の少し前から転送の行までで探す（先の関数の確かめを拾わないように、転送の行で止める）
+        s=$((n > 3 ? n - 3 : 1)); reg="$(sed -n "${s},$((n + k))p" "$f" 2>/dev/null)"
+        if grep -qE "$REDIR_GUARD" <<<"$reg"; then printf '    %s\n' "$l"
+        elif grep -qE "$REDIR_SLASH" <<<"$reg"; then
+          # / で始まるかだけを確かめ、// や /\ を弾いていなければ、外部のホストへ転送される（//attacker.example）
+          if grep -qE "[\"'\`]//|\\\\\\\\|\\\\/" <<<"$reg"; then printf '    %s\n' "$l"
+          else printf '  ★ %s（/ で始まるかだけを確かめている）\n' "$l"; fi
+        else printf '  ★ %s\n' "$l"; fi
+      done | cut -c1-220 | lim 25; } | mask | show
+echo "  ※ ★ は、読んだ値の前後に転送先の確かめが見当たらない。自サイトの中（/ で始まり // や /\\ で始まらない）か、"
+echo "    完全一致の許可リストに入っているかを確かめていなければ指摘になる。ログイン画面を踏み台にしたフィッシングに使える"
+echo "    枠組みの既定で外部への転送を拒むもの（Rails 7 以降の raise_on_open_redirects など）は、設定が有効かも確かめる"
+
 hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）"
 # 'use server' のファイルでは、export された関数 1 つ 1 つが入口になる。
 # ファイル単位の「定義 N / ガード M」では、どの関数が素通しかまでは分からない。
@@ -1125,7 +1171,7 @@ echo "    受け取り口があるのに判定の行が 1 つも無ければ、�
 hr "4. 秘密情報のハードコード（値は伏字にして出力する）"
 # .env* はローカル専用の設定ファイルで、値が入っているのが正常。
 # 中身を出力すると事故になるので、内容の走査からは外し、存在の有無だけを 4c で見る。
-# 2 本の grep は同じ行に当たることがある（例: sk_live_ の代入は両方に該当する）。
+# 2 本の grep は同じ行に一致することがある（例: sk_live_ の代入は両方に該当する）。
 # 伏字にしたうえで sort -u を通し、同じ行が二重に並ばないようにする。
 {
   grep -rniE "${EXA[@]}" --exclude='.env*' \
@@ -1358,6 +1404,35 @@ echo "  --- パスワードのハッシュと暗号の使い方 ---"
   grep -rniE "${EXA[@]}" 'md5|sha1[^0-9]|ECB|createCipheriv?\(|Cipher\.getInstance' . 2>/dev/null | lim 15
 } | mask | sort -u | lim 25 | show
 echo "  ※ MD5 / SHA-1 / ECB が出たら、何に使っているかを読む。02 の N 節を参照"
+
+hr "13b. パスワードの長さの下限（02 の B-1・NIST SP 800-63B-4）"
+# 検証の規則（Rails の length・zod や yup の min・Django の MinimumLengthValidator・Supabase の設定など）から、
+# 長さの下限を表で拾う。行そのものか前の 5 行にパスワードの語があるものだけを並べる
+PWLEN='(min(imum)?_?(password_?)?_?len(gth)?|minlength|min_?len|MinimumLength|RequiredLength|PASSWORD_MIN(IMUM)?_LENGTH)[^0-9=<>]{0,6}[=:>(][[:space:]]*["'"'"']?[0-9]+|length[^0-9]{0,15}(within|in|minimum|min)[^0-9]{0,6}[0-9]+|\.min\([[:space:]]*[0-9]+|(password|passwd|pwd|pw)\.length[[:space:]]*(<|<=|>=|>)[[:space:]]*[0-9]+|len\((password|passwd|pwd|pw)[^)]*\)[[:space:]]*(<|<=|>=|>)[[:space:]]*[0-9]+|\.\{[0-9]+,'
+PW_WORD='pass(word)?|passwd|pwd|パスワード'
+PW_FIELD='validates?[[:space:]]+:[A-Za-z_]|^[[:space:]]*["'"'"']?[A-Za-z_][A-Za-z0-9_]*["'"'"']?[[:space:]]*[:=][[:space:]]*(z|yup|Joi|v|t|s|forms|models|serializers|fields|schema)\.|["'"'"']NAME["'"'"'][[:space:]]*:'
+INCL_P=("${INCL[@]}" --include='*.tsx' --include='*.jsx' --include='*.toml' --include='*.yml' --include='*.yaml' --include='*.exs' --include='*.ini' --include='*.properties')
+{ grep -rnEi "${EXA[@]}" "$PWLEN" "${INCL_P[@]}" . 2>/dev/null | sed 's|^\./||' \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+:' \
+    | while IFS= read -r l; do
+        f="${l%%:*}"; r="${l#*:}"; n="${r%%:*}"; c="${r#*:}"
+        # どの項目の規則かを、行から前へ最大 5 行さかのぼって決める。パスワードの語が先に出ればパスワードの規則、
+        # 別の項目の始まり（validates :name・name: z.string() など）が先に出れば、その項目の規則なので並べない
+        own=""; j=$n
+        while (( j >= 1 && j >= n - 5 )); do
+          t="$(sed -n "${j}p" "$f" 2>/dev/null)"
+          if grep -qiE "$PW_WORD" <<<"$t"; then own=pw; break; fi
+          if grep -qE "$PW_FIELD" <<<"$t"; then break; fi
+          j=$((j - 1))
+        done
+        [[ "$own" == pw ]] || continue
+        v="$(printf '%s' "$c" | grep -oEi "$PWLEN" | head -1 | grep -oE '[0-9]+' | head -1)"
+        [[ -n "$v" ]] || continue
+        v=$((10#$v)); if (( v < 8 )); then printf '  ★ %s（下限 %s）\n' "$l" "$v"; elif (( v < 15 )); then printf '    %s（下限 %s）\n' "$l" "$v"; fi
+      done | cut -c1-220 | lim 20; } | mask | show
+echo "  ※ ★ は、下限が 8 文字に満たない。多要素の一部でも 800-63B-4 の最低（8 文字）を下回る"
+echo "    ★ の無い行（8〜14 文字）は、パスワードだけで認証するなら 15 文字以上との差になる。多要素の一部なら問題ない"
+echo "    下限が見つからなければ、枠組みや認証基盤の既定の下限を確かめる（Supabase は既定 6 文字など）"
 
 hr "14. 通信の保護（証明書の検証を切っていないか）"
 {
