@@ -36,8 +36,8 @@ build/
   identifying-words.sh  公開してはいけない語の一覧を、手元の非公開のファイルから作る（案件語と、評価の題材の名前）
 .github/        CI（macOS と Linux）、Dependabot、secret scanning の設定
 tests/          スキルを直したときに壊れていないかを見る
-  run.sh        検査本体（777 件）
-  mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（160 件）
+  run.sh        検査本体（788 件）
+  mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（163 件）
   self-audit.sh 配布前の自己監査。上の 2 つに加え、方針の遵守と配布物を見る
   eval/         実地の評価。スキルを教材に当て、見つけた割合と方針の遵守を測る（費用がかかる。CI では回さない）
     local/      題材ごとの情報（.gitignore 済み。手元にだけ置く）
@@ -195,8 +195,7 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 **題材を特定できる情報はリポジトリに入れない。** 題材の一覧・題材ごとの表・前提・結果の履歴は、手元の
 `tests/eval/local/`（`.gitignore` 済み）に置く。公開の側にあるのは、題材に依らない実行・下拵え・採点の仕組みだけ。
 
-外部のネットワークに出て費用がかかるので、CI では回さない。資料か `audit_grep.sh` を変えた版だけ、軽い題材から
-Sonnet で 1 回回す。**教材なので、見つけた割合は実案件より高く出る。** 版ごとの比較に使う。
+外部のネットワークに出て費用がかかるので、CI では実行しない。版を上げる前に、全題材に Opus 5.5 で 1 回ずつ当てる。**教材なので、見つけた割合は実案件より高く出る。** 版ごとの比較に使う。
 詳しくは [tests/eval/README.md](tests/eval/README.md)。
 
 ### 自己監査
@@ -255,10 +254,9 @@ Sonnet で 1 回回す。**教材なので、見つけた割合は実案件よ�
 ### 版を上げる
 
 版は、変更のたびではなく、**登録したすべての題材で実地の評価を行い、前の版に劣後していないと確かめてから**上げる。
-同じ版・同じ題材でも見つけた数が 4 件ほど揺れるので、1 題材 1 回の結果では劣後を見分けられない。
-
-1. 題材ごとに 2 回以上、今の HEAD を当てる（`./tests/eval/run-eval.sh <題材> --record`。[tests/eval/README.md](tests/eval/README.md)）
-2. `./tests/eval/compare.py` が「劣後なし」で終わること（終了コード 0）。前の版のタグと、skill/ の中身で比べる
+1. 題材ごとに 1 回、今の HEAD を当てる（`./tests/eval/run-eval.sh <題材> --record`。[tests/eval/README.md](tests/eval/README.md)）
+2. `./tests/eval/compare.py` が「劣後なし」で終わること（終了コード 0）。前の版のタグと、skill/ の中身で比べる。
+   「要再確認」の題材は、もう 1 回当ててから判定する。違反が出た回は、原因を調べて CHANGELOG に残す
 3. `./tests/self-audit.sh` に赤が無いこと
 4. CHANGELOG の「未リリース」を版の見出しに変え、評価の結果（題材は構成だけで書く）を添える
 5. `VERSION` を上げて `./build/build.sh`、タグを付けて push する

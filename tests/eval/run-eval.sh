@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # スキルを実際に当てて、見つけた割合と方針の遵守を測る。
 #
-#   tests/eval/run-eval.sh <題材> [--model <モデル>] [--budget <米ドル>] [--record] [--prep-only]
-#     既定は --model sonnet --budget 10。配る前の節目だけ --model opus で回す
+#   tests/eval/run-eval.sh <題材> [--model <モデル>] [--budget <米ドル>] [--skill-ref <タグ|コミット>] [--record] [--prep-only]
+#     既定は --model claude-opus-5-5 --budget 10。--skill-ref で、前の版の skill/ を当てる（新しいモデルで基準を作り直すとき）
 #   tests/eval/run-eval.sh --score-only <出力のディレクトリ> [--record]
 #
 # 題材は手元の tests/eval/local/targets.tsv に書く（公開しない。書き方は tests/eval/README.md）。固定したコミットを取ってきて、
@@ -10,7 +10,7 @@
 #
 # tests/run.sh と違い、外部のネットワークに出て（GitHub から題材を取る・モデルを呼ぶ）、費用がかかる。
 # CI では実行しない。スキルの版を上げる前に手で実行し、--record で tests/eval/local/history.tsv に 1 行残す。
-# 版を上げてよいかは tests/eval/compare.py で確かめる（全題材で 2 回以上、前の版に劣後していないこと）。
+# 版を上げてよいかは tests/eval/compare.py で確かめる（全題材で 1 回ずつ当て、疑いのある題材だけもう 1 回）。
 set -euo pipefail
 # 全体を 1 つの { } に入れ、実行の前に最後まで読み切らせる。bash は長い処理の間もファイルの続きを読むので、
 # 評価の実行中にこのファイルを直すと、ずれた位置から読んで壊れる（実測で、採点の手前で止まった）
@@ -20,11 +20,13 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVAL="$ROOT/tests/eval"
 # 題材ごとの情報（取得元・下拵え・前提・結果）は手元の置き場に置く。題材を特定できる情報を公開リポジトリに入れないため
 LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
-MODEL="sonnet"; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""
+# 見落としを減らすため、知識の多いモデルで当てる。別名（opus）は CLI の版で指すモデルが変わり、比較が切れるので完全な ID で固定する
+MODEL="claude-opus-5-5"; SKILL_REF=""; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) MODEL="$2"; shift 2 ;;
+    --skill-ref) SKILL_REF="$2"; shift 2 ;;
     --budget) BUDGET="$2"; shift 2 ;;
     --record) RECORD=1; shift ;;
     --prep-only) PREP_ONLY=1; shift ;;
@@ -59,14 +61,14 @@ with open(sys.argv[2], "w", encoding="utf-8") as f:
   skill_commit="$(cat "$out/skill_commit" 2>/dev/null || git -C "$ROOT" rev-parse --short HEAD)"
   [[ -f "$LOCAL/history.tsv" ]] || printf '日付\tスキルの版\tスキルのコミット\t題材\t題材のコミット\tモデル\t見つけた\tうち行で指した\t範囲内\t保留\t見誤り\t範囲が広い\t見落とし\t一覧外\t違反\t費用（米ドル）\t分\t入力トークン\tキャッシュ読みトークン\t出力トークン\n' > "$LOCAL/history.tsv"
   # 項目ごとの結果も 1 行ずつ残す（compare.py が、版の間で見つけなくなった項目を探すのに使う）
-  [[ -f "$LOCAL/items.tsv" ]] || printf '日付\tスキルの版\tスキルのコミット\t題材\t実行\t項目\t範囲\t状態\n' > "$LOCAL/items.tsv"
+  [[ -f "$LOCAL/items.tsv" ]] || printf '日付\tスキルの版\tスキルのコミット\t題材\t実行\t項目\t範囲\t状態\tモデル\n' > "$LOCAL/items.tsv"
   python3 - "$out/summary.json" "$LOCAL/history.tsv" "$skill_version" "$skill_commit" "$target" "$tcommit" "$LOCAL/items.tsv" "$(basename "$(dirname "$out")")" <<'PY'
 import datetime, json, sys
 s = json.load(open(sys.argv[1], encoding='utf-8'))
 with open(sys.argv[7], 'a', encoding='utf-8') as f:
     for r in s.get('rows', []):
         f.write('\t'.join([datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[8],
-                           r['id'], r['scope'], r['status']]) + '\n')
+                           r['id'], r['scope'], r['status'], s.get('model', '')]) + '\n')
 row = [datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6][:12], s.get('model', ''),
        s['found'], s.get('found_precise', ''), s['in_total'], s['held'], s['misjudged'], s.get('too_wide', ''), s['missed'],
        s['extra'], s['violations'],
@@ -125,16 +127,24 @@ echo "答えの一覧を取り出し、手掛かりを消す"
 # 出力の置き場は題材の外で、答えの一覧（$OUT）とも分ける。スキルを題材の中に置く前に回す
 # （後に回すと、スキル自身のファイルまで監査の対象に混ざる。2.20.1 までの実測で recon.sh の行が出ていた）
 EVID="$WORK/evidence"; mkdir -p "$EVID"
-( cd "$SRC" && bash "$ROOT/skill/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
+# 当てるスキル。--skill-ref なら、その版の skill/ と VERSION を git から取り出す（下拵えの audit_grep.sh もその版のものを使う）
+SKILL_SRC="$ROOT/skill"; SKILL_VERSION_FILE="$ROOT/VERSION"
+if [[ -n "$SKILL_REF" ]]; then
+  mkdir -p "$WORK/skill-ref"
+  git -C "$ROOT" archive "$SKILL_REF" skill VERSION | tar -x -C "$WORK/skill-ref"
+  SKILL_SRC="$WORK/skill-ref/skill"; SKILL_VERSION_FILE="$WORK/skill-ref/VERSION"
+fi
+( cd "$SRC" && bash "$SKILL_SRC/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
 echo "audit_grep.sh を先に回した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
 
 # スキルを題材の中に置く。--setting-sources project で、利用者の手元の設定・スキル・CLAUDE.md は読まない
 mkdir -p "$SRC/.claude/skills"
-cp -R "$ROOT/skill" "$SRC/.claude/skills/webapp-security-assessment"
+cp -R "$SKILL_SRC" "$SRC/.claude/skills/webapp-security-assessment"
 # 当てるスキルの版とコミットを、写した時点で控える（記録に使う）
-cat "$ROOT/VERSION" > "$OUT/skill_version"
+cat "$SKILL_VERSION_FILE" > "$OUT/skill_version"
 # 行をつなぐのに paste -sd '' は使わない（macOS の paste は区切りを空にできず、失敗して評価が始まらない）
-{ git -C "$ROOT" rev-parse --short HEAD; git -C "$ROOT" diff --quiet HEAD -- skill || echo "+未コミット"; } | tr -d '\n' > "$OUT/skill_commit"
+if [[ -n "$SKILL_REF" ]]; then git -C "$ROOT" rev-parse --short "$SKILL_REF^{commit}" | tr -d '\n' > "$OUT/skill_commit"
+else { git -C "$ROOT" rev-parse --short HEAD; git -C "$ROOT" diff --quiet HEAD -- skill || echo "+未コミット"; } | tr -d '\n' > "$OUT/skill_commit"; fi
 
 
 if [[ "$PREP_ONLY" -eq 1 ]]; then

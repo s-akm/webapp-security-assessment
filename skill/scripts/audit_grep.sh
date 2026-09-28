@@ -950,6 +950,33 @@ echo "  --- SQL を文字列連結で組み立てる ---"
 } | mask | sort -u | lim 30 | show
 echo "  ※ 連結が定数だけなら問題ない。外部入力が混ざる経路があるかを 1 件ずつ読む"
 
+echo "  --- SQL 以外の問い合わせ・テンプレートを組み立てる（LDAP・XPath・NoSQL・サーバー側のテンプレート。★ は値を差し込む行）---"
+# どれも「問い合わせの文字列に値を差し込む」と注入になる。言語や部品が違っても、問い合わせの書き方そのもの
+# （LDAP の検索条件 (属性=…)、XPath の //要素[@属性=…]、NoSQL の $where、テンプレートの文字列からの組み立て）は共通なので、
+# 書き方の表と「差し込み」の組み合わせで拾う。資料に一行あるだけで、見つけるかどうかがモデルの知識任せになっていた
+QL_LDAP='["'"'"'`]\((&|\||!)?\(?[A-Za-z][A-Za-z0-9-]*=|ldap[A-Za-z_.]*\.(search|search_s|search_ext_s|bind)\(|DirContext|DirectorySearcher|LdapTemplate|ldap_search\(|Net::LDAP|search_filter'
+QL_XPATH='xpath[A-Za-z]*\(|XPathExpression|XPath\.(compile|evaluate)|selectNodes\(|SelectSingleNode\(|SelectNodes\(|xpath\.select|document\.evaluate\(|["'"'"'`]//[A-Za-z*]+\[@'
+QL_NOSQL='\$where|\$function|\$accumulator|mapReduce|\.(find|findOne|updateOne|deleteMany|aggregate)\([[:space:]]*(req|request|ctx\.request)\.(body|query)|JSON\.parse\([[:space:]]*(req|request)\.(query|body)'
+QL_TPL='render_template_string\(|\.from_string\(|jinja2\.Template\(|Template\([^)]*\)\.render|ejs\.render\(|pug\.(render|compile)\(|nunjucks\.renderString\(|Handlebars\.compile\(|(_|lodash)\.template\(|ERB\.new\(|Liquid::Template\.parse|Velocity\.evaluate|createTemplate\(|Mustache\.render\(|doT\.template\(|new[[:space:]]+Template\('
+# 差し込みの書き方（連結・埋め込み・書式指定）。リクエストの値を直接渡す形も数える
+QL_INTERP='\$\{|#\{|["'"'"'`][[:space:]]*\+[[:space:]]*[A-Za-z_$(]|[A-Za-z_)\]][[:space:]]*\+[[:space:]]*["'"'"'`]|%[[:space:]]*\(|["'"'"'`][[:space:]]*%[[:space:]]*[A-Za-z_(]|\.format\(|(^|[^A-Za-z0-9_])f["'"'"']|(req|request|params|ctx)\.(body|query|params|args|GET|POST)|params\['
+{
+  for kind in "LDAP:$QL_LDAP" "XPath:$QL_XPATH" "NoSQL:$QL_NOSQL" "テンプレート:$QL_TPL"; do
+    k="${kind%%:*}"; pat="${kind#*:}"
+    grep -rnE "${EXA[@]}" "$pat" "${INCL[@]}" --include='*.tsx' --include='*.jsx' --include='*.cs' . 2>/dev/null | sed 's|^\./||' \
+      | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+:' \
+      | while IFS= read -r l; do
+          c="${l#*:}"; c="${c#*:}"
+          # XPath とテンプレートは、別の行で組み立てた式を変数で渡す形も多い。渡すものが固定の文字列でなければ ★ にする
+          lit=1
+          if [[ "$k" == "XPath" || "$k" == "テンプレート" ]] && grep -qE "(select|evaluate|compile|render|from_string|Template|render_template_string|renderString|parse|xpath[A-Za-z]*)[[:space:]]*\\([[:space:]]*[A-Za-z_$]" <<<"$c"; then lit=0; fi
+          if grep -qE "$QL_INTERP" <<<"$c" || [[ $lit -eq 0 ]]; then printf '  ★ [%s] %s\n' "$k" "$l"; else printf '    [%s] %s\n' "$k" "$l"; fi
+        done
+  done
+} | mask | lim 30 | show
+echo "  ※ ★ は、差し込む値の出どころをたどる。外部入力なら、その言語の書き方で値を無害化しているか（LDAP のエスケープ・"
+echo "    XPath の変数束縛・NoSQL の演算子の除去・テンプレートは文字列から組み立てない）を確かめる。無ければ指摘になる（02 の D-1）"
+
 hr "3b. ファイルの受け取り（07 の 6 節）"
 # 受け取り口は枠組みごとに書き方が違う。表で持ち、どの言語でも同じ見方で並べる。
 # 種類の判定は、許す種類を列挙する（許可リスト）のが基本。禁止する種類を列挙する（拒否リスト）と、

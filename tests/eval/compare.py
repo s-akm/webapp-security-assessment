@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """版を上げる前に、候補が前の版に劣後していないかを、実地の評価の履歴で確かめる。
 
-  tests/eval/compare.py [--new <版|コミット|タグ>] [--old <版|コミット|タグ>] [--min-runs 2] [--tolerance 2]
+  tests/eval/compare.py [--new <版|コミット|タグ>] [--old <版|コミット|タグ>] [--tolerance 2]
 
 既定は、新 = 今の HEAD の skill/、旧 = いちばん新しい v タグの skill/。
 履歴の行は「当てたスキルのコミットの skill/ の中身（git の木）」でまとめる。版を上げずに積んだ変更も、
 中身が同じなら同じ候補として数え、評価の道具だけを直したコミットで当てた回も、同じ版として数える。
 旧の版を当てていない題材は、その題材でいちばん新しく当てた別の中身を旧として使い、そのことを出す。
+**旧は、新と同じモデルで当てた回だけを使う。** モデルが違う回しか無ければ、それと比べたうえで、版の差とモデルの差が
+混ざっていることを出す（版の良し悪しの判定には使わない）。
 
 読むもの（手元の置き場。公開しない）:
   history.tsv  1 回 1 行（run-eval.sh --record が足す）
   items.tsv    1 回・1 項目 1 行（同上。項目ごとの見つけた・見落としを比べるのに使う）
 
-劣後とみなすもの:
-  - 新で違反が 1 件でもある
-  - 新の見つけた数の平均が、旧の平均から --tolerance を超えて下がった
-  - 旧で 2 回以上当ててすべて見つけた項目を、新で 2 回以上当てて 1 度も見つけなかった
-終了コード: 0 = 劣後なし、1 = 劣後あり、3 = 新の回数が --min-runs に足りない題材がある（判定できない）
+題材ごとに 1 回ずつ当て、疑いのある題材だけをもう 1 回当てる。疑いは次の 3 つ:
+  - 1 回あたりの違反の数が、旧より増えた
+  - 見つけた数の平均が、旧の平均から --tolerance を超えて下がった
+  - 旧ですべての回で見つけた項目を、新で 1 度も見つけなかった
+新が 1 回だけなら「要再確認」、2 回以上でも疑いが残れば「劣後」とする（旧が 1 回だけの項目の抜けは「注意」にとどめる）。
+違反が出た回は、劣後でなくても原因を調べて CHANGELOG に残す。
+
+終了コード: 0 = 劣後なし、1 = 劣後あり、3 = 要再確認か未評価の題材がある（もう 1 回当ててから判定する）
 """
 import argparse
 import csv
@@ -90,7 +95,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--new', default='HEAD')
     ap.add_argument('--old', default=None)
-    ap.add_argument('--min-runs', type=int, default=2)
     ap.add_argument('--tolerance', type=float, default=2.0)
     ap.add_argument('--local', default=os.environ.get('WSA_EVAL_LOCAL', os.path.join(ROOT, 'tests', 'eval', 'local')))
     a = ap.parse_args()
@@ -110,84 +114,107 @@ def main():
     print(f'新: {a.new}　旧: {old_sel or "（タグが無い）"}')
 
     targets = list(OrderedDict.fromkeys(r['題材'] for r in hist))
-    regress, short = [], []
+    regress, recheck, unevaluated, mixed = [], [], [], []
     for t in targets:
         trows = [r for r in hist if r['題材'] == t]
         new = [r for r in trows if group_key(r) in new_keys]
-        old = [r for r in trows if group_key(r) in old_keys]
-        note = ''
-        if not old:
-            # 旧の版を当てていない題材は、その題材でいちばん新しく当てた別の中身を旧にする
-            prev = [r for r in trows if group_key(r) not in new_keys and group_key(r) is not None]
-            if prev:
-                k = group_key(prev[-1])
-                old = [r for r in prev if group_key(r) == k]
-                why = '旧の版は新と中身が同じ' if same_as_old else '旧の版はこの題材で未評価'
-                note = f'（{why}。代わりに {old[-1]["スキルの版"]}・{old[-1]["スキルのコミット"]} と比べる）'
-        print(f'\n■ {t}{note}')
+        print(f'\n■ {t}')
         if not new:
             print('  新: 未評価')
-            short.append(t)
+            unevaluated.append(t)
             continue
+        models = {r['モデル'] for r in new}
+        # 旧は、新と同じモデルで当てた回だけ。無ければ別のモデルの回と比べ、判定には使わない
+        cands = [r for r in trows if group_key(r) not in new_keys and group_key(r) is not None]
+        same_model = [r for r in cands if r['モデル'] in models]
+        pool = same_model or cands
+        old = [r for r in pool if group_key(r) in old_keys]
+        note = ''
+        if not old and pool:
+            k = group_key(pool[-1])
+            old = [r for r in pool if group_key(r) == k]
+            why = '旧の版は新と中身が同じ' if same_as_old else '旧の版はこの題材で未評価'
+            note = f'（{why}。代わりに {old[-1]["スキルの版"]}・{old[-1]["スキルのコミット"]} と比べる）'
+        model_differs = bool(old) and not same_model
+        if note:
+            print(f'  {note}')
+        if model_differs:
+            print(f'  ※ 旧は別のモデル（{"・".join(sorted({r["モデル"] for r in old}))}）で当てた回しか無い。'
+                  f'版の差とモデルの差が混ざるので、劣後の判定には使わない')
 
         def line(label, rs):
             f = [num(r['見つけた']) for r in rs]
-            return (f'  {label}: {len(rs)} 回　見つけた {"・".join(str(int(x)) for x in f)}（平均 {mean(f):.1f} / {rs[0]["範囲内"]}）'
+            return (f'  {label}: {len(rs)} 回（{"・".join(sorted({r["モデル"] for r in rs}))}）　'
+                    f'見つけた {"・".join(str(int(x)) for x in f)}（平均 {mean(f):.1f} / {rs[0]["範囲内"]}）'
                     f'　見誤り 平均 {mean([num(r["見誤り"]) for r in rs]):.1f}'
                     f'　一覧外 平均 {mean([num(r["一覧外"]) for r in rs]):.1f}'
-                    f'　違反 {int(sum(num(r["違反"]) for r in rs))}'
+                    f'　違反 {"・".join(str(int(num(r["違反"]))) for r in rs)}'
                     f'　費用 平均 {mean([num(r["費用（米ドル）"]) for r in rs]):.2f} 米ドル')
         if old:
             print(line('旧', old))
         print(line('新', new))
 
-        bad = []
-        if sum(num(r['違反']) for r in new) > 0:
-            bad.append('新で違反がある')
-        if old and mean([num(r['見つけた']) for r in new]) < mean([num(r['見つけた']) for r in old]) - a.tolerance:
-            bad.append(f'見つけた数の平均が {a.tolerance:g} 件を超えて下がった')
-        if len(new) < a.min_runs:
-            short.append(t)
-            print(f'  新の回数が {a.min_runs} 回に足りない')
-
-        # 項目ごと。items.tsv の「実行」で 1 回を数える
-        def per_item(keys):
-            runs = defaultdict(set)
-            found = defaultdict(set)
-            for r in items:
-                if r['題材'] != t or r.get('範囲') != 'in' or group_key(r) not in keys:
-                    continue
-                runs[r['項目']].add(r['実行'])
-                if r['状態'] == '見つけた':
-                    found[r['項目']].add(r['実行'])
-            return runs, found
+        doubts = []
+        if any(num(r['違反']) for r in new):
+            print('  注意: 違反が出た回がある。原因を調べて CHANGELOG に残す')
         if old:
-            okeys = {group_key(old[0])}
-            orun, ofound = per_item(okeys)
-            nrun, nfound = per_item(new_keys)
+            if mean([num(r['違反']) for r in new]) > mean([num(r['違反']) for r in old]):
+                doubts.append('1 回あたりの違反の数が旧より増えた')
+            if mean([num(r['見つけた']) for r in new]) < mean([num(r['見つけた']) for r in old]) - a.tolerance:
+                doubts.append(f'見つけた数の平均が {a.tolerance:g} 件を超えて下がった')
+
+            # 項目ごと。items.tsv の「実行」で 1 回を数え、モデルも揃える
+            def per_item(keys, model_set):
+                runs, found = defaultdict(set), defaultdict(set)
+                for r in items:
+                    if r['題材'] != t or r.get('範囲') != 'in' or group_key(r) not in keys:
+                        continue
+                    if model_set and r.get('モデル', '') not in model_set:
+                        continue
+                    runs[r['項目']].add(r['実行'])
+                    if r['状態'] == '見つけた':
+                        found[r['項目']].add(r['実行'])
+                return runs, found
+            orun, ofound = per_item({group_key(old[0])}, {x['モデル'] for x in old})
+            nrun, nfound = per_item(new_keys, models)
             for iid in sorted(set(orun) & set(nrun)):
                 on, of, nn, nf = len(orun[iid]), len(ofound[iid]), len(nrun[iid]), len(nfound[iid])
+                msg = f'{iid}: 旧 {of}/{on} → 新 {nf}/{nn}'
                 if of == on and nf == 0:
-                    msg = f'{iid}: 旧 {of}/{on} → 新 {nf}/{nn}'
-                    if on >= 2 and nn >= 2:
-                        bad.append(f'項目を見つけなくなった（{msg}）')
+                    if on >= 2 or nn < 2:
+                        doubts.append(f'項目を見つけなくなった（{msg}）')
                     else:
-                        print(f'  注意: 回数が少ないので劣後とはしない（{msg}）')
+                        print(f'  注意: 旧が 1 回だけなので劣後とはしない（{msg}）')
                 elif of == 0 and nf == nn and nn:
-                    print(f'  改善: {iid}: 旧 {of}/{on} → 新 {nf}/{nn}')
-        for b in bad:
-            print(f'  劣後: {b}')
-        if bad:
+                    print(f'  改善: {msg}')
+
+        if doubts and model_differs:
+            for d in doubts:
+                print(f'  参考: {d}（モデルが違うので判定しない）')
+            mixed.append(t)
+        elif doubts and len(new) < 2:
+            for d in doubts:
+                print(f'  要再確認: {d}（新が 1 回だけ。もう 1 回当てて判定する）')
+            recheck.append(t)
+        elif doubts:
+            for d in doubts:
+                print(f'  劣後: {d}')
             regress.append(t)
 
     print()
     if regress:
         print(f'劣後あり: {"・".join(regress)}')
         return 1
-    if short:
-        print(f'判定できない（新の評価が {a.min_runs} 回に足りない）: {"・".join(short)}')
+    if recheck or unevaluated:
+        if recheck:
+            print(f'要再確認（もう 1 回当てる）: {"・".join(recheck)}')
+        if unevaluated:
+            print(f'未評価: {"・".join(unevaluated)}')
         return 3
-    print('劣後なし')
+    if mixed:
+        print(f'劣後なし（ただし {"・".join(mixed)} は旧が別のモデルなので、版の比較にはなっていない）')
+    else:
+        print('劣後なし')
     return 0
 
 

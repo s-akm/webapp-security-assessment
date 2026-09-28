@@ -1698,6 +1698,20 @@ if printf '%s' "$S2G" | sed -n '/--- 受け取ったもの/,$p' | grep -F 'route
   ng "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない" "routes.js:2 が並んだ"
 else ok "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない"; fi
 
+# 3 節（SQL 以外の問い合わせ・テンプレートを組み立てる）。架空の題材 query-injection。
+# 問い合わせの書き方の表と「差し込み」の組み合わせで、値を差し込む行に ★ を付ける
+QI="$TMP/query-injection"
+cp -R "$ROOT/tests/fixtures/query-injection" "$QI"
+SQI="$(bash "$SKILL/scripts/audit_grep.sh" "$QI" 2>&1 | LC_ALL=C awk 'index($0, "--- SQL 以外の問い合わせ") { f = 1; next } f && /※ ★ は、差し込む/ { exit } f')"
+contains "audit_grep[3]: LDAP の検索条件に値を連結する行に ★"          "★ [LDAP] directory.py:2:"       "$SQI"
+contains "audit_grep[3]: 固定の LDAP の検索条件も並べる"               "    [LDAP] directory.py:5:"     "$SQI"
+contains "audit_grep[3]: XPath の式を書式指定で組み立てる行に ★"       "★ [XPath] catalog.java:3:"      "$SQI"
+contains "audit_grep[3]: リクエストの値をそのまま検索条件に渡す行に ★" "★ [NoSQL] orders.js:2:"         "$SQI"
+contains "audit_grep[3]: 固定の \$where も並べる"                      "    [NoSQL] orders.js:5:"       "$SQI"
+contains "audit_grep[3]: テンプレートを値を含む文字列から作る行に ★"   "★ [テンプレート] pages.py:3:"   "$SQI"
+contains "audit_grep[3]: テンプレートを変数から作る行に ★"             "★ [テンプレート] pages.py:7:"   "$SQI"
+absent   "audit_grep[3]: 固定の文字列のテンプレートには ★ を付けない"   "★ [テンプレート] pages.py:11:"  "$SQI"
+
 # 2h 節（取得する件数を利用者の値で決めていないか）。架空の題材 size-param。
 # 枠組みごとの読み方を表で拾い、同じファイルに上限の確かめが無い行に ★ を付ける
 SP="$TMP/size-param"
@@ -1929,7 +1943,7 @@ if bash -n "$ROOT/tests/eval/run-eval.sh" 2>/dev/null; then ok "eval: run-eval.s
 else ng "eval: run-eval.sh の構文"; fi
 # 題材の中のエージェント向けの設定を消す手順が残っているか（消さないと、評価の実行中に題材のフックや指示が読み込まれる）
 contains "eval: 題材のエージェント向けの設定を消す"              "for p in .claude CLAUDE.md"     "$(cat "$ROOT/tests/eval/run-eval.sh")"
-if awk '/cp -R "\$ROOT\/skill"/ && !c { c = NR } /> "\$OUT\/skill_version"/ && !v { v = NR } END { exit !(c && v && c < v) }' "$ROOT/tests/eval/run-eval.sh" \
+if awk '/cp -R "\$SKILL_SRC"/ && !c { c = NR } /> "\$OUT\/skill_version"/ && !v { v = NR } END { exit !(c && v && c < v) }' "$ROOT/tests/eval/run-eval.sh" \
    && grep -F 'skill_version="$(cat "$out/skill_version"' "$ROOT/tests/eval/run-eval.sh" >/dev/null; then
   ok "eval: 当てたスキルの版を、写した時点で控えて記録する"
 else ng "eval: 当てたスキルの版を、写した時点で控えて記録する" "記録の時点の版を使っている"; fi
@@ -1938,8 +1952,11 @@ pbad="$(grep -rnE "paste -s?d ?''" "$SKILL/scripts" "$ROOT/tests/eval" "$ROOT/bu
 if [[ -z "$pbad" ]]; then ok "スクリプトが、macOS で失敗する paste -sd '' を使っていない"
 else ng "スクリプトが、macOS で失敗する paste -sd '' を使っていない" "$(printf '%s' "$pbad" | head -2)"; fi
 contains "eval: 利用者の手元の設定を読まない"                    "--setting-sources project"      "$(cat "$ROOT/tests/eval/run-eval.sh")"
+# 当てるモデルは完全な ID で固定する（別名は CLI の版で指すモデルが変わり、版の比較が切れる）。前の版を当てる指定もある
+contains "eval: 当てるモデルを完全な ID で固定する"               'MODEL="claude-opus-5-5"'        "$(cat "$ROOT/tests/eval/run-eval.sh")"
+contains "eval: 前の版の skill/ を当てられる"                     'git -C "$ROOT" archive "$SKILL_REF" skill VERSION' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # audit_grep は、スキルを題材の中に置く前に回す（後だと、スキル自身のファイルが監査の対象に混ざる）
-if awk '/bash "\$ROOT\/skill\/scripts\/audit_grep.sh"/ && !a { a = NR } /cp -R "\$ROOT\/skill"/ && !c { c = NR } END { exit !(a && c && a < c) }' "$ROOT/tests/eval/run-eval.sh"; then
+if awk '/bash "\$SKILL_SRC\/scripts\/audit_grep.sh"/ && !a { a = NR } /cp -R "\$SKILL_SRC"/ && !c { c = NR } END { exit !(a && c && a < c) }' "$ROOT/tests/eval/run-eval.sh"; then
   ok "eval: audit_grep をスキルを置く前に回す"
 else ng "eval: audit_grep をスキルを置く前に回す" "スキルを置いた後に回している"; fi
 # 評価は 10 分を超えて動く。その間にこのファイルを直しても壊れないよう、全体を { } に入れて先に読み切らせる
@@ -1949,18 +1966,18 @@ else ng "eval: run-eval.sh を実行の前に最後まで読み切る" "全体�
 
 # 版の比較（compare.py）。版を上げてよいかの判定に使うので、劣後を見逃さないか・足りない回数で「劣後なし」と言わないかを確かめる。
 # 架空の題材 t1 で、旧 9.9.0 と新 9.9.1 を比べる。コミットは git で解けない語にして、版の名前でまとめさせる
-cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数>
+cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル]
   local d="$TMP/eval-cmp-$1"; mkdir -p "$d"
-  python3 - "$d" "$2" "$3" "$4" <<'PY'
+  python3 - "$d" "$2" "$3" "$4" "${5:-m}" <<'PY'
 import sys
-d, found, viol, xfound = sys.argv[1], sys.argv[2].split(), int(sys.argv[3]), int(sys.argv[4])
+d, found, viol, xfound, om = sys.argv[1], sys.argv[2].split(), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
 H = ['日付', 'スキルの版', 'スキルのコミット', '題材', '題材のコミット', 'モデル', '見つけた', 'うち行で指した', '範囲内', '保留', '見誤り',
      '範囲が広い', '見落とし', '一覧外', '違反', '費用（米ドル）', '分', '入力トークン', 'キャッシュ読みトークン', '出力トークン']
-hist, items = ['\t'.join(H)], ['\t'.join(['日付', 'スキルの版', 'スキルのコミット', '題材', '実行', '項目', '範囲', '状態'])]
-runs = [('9.9.0', 'zzold01', f, 0, 1) for f in ('10', '12')] + [('9.9.1', 'zznew01', f, viol, int(i < xfound)) for i, f in enumerate(found)]
-for n, (ver, c, f, v, x) in enumerate(runs):
-    hist.append('\t'.join(['2026-01-01', ver, c, 't1', 'x', 'm', f, f, '19', '0', '0', '0', '0', '5', str(v), '2', '10', '1', '1', '1']))
-    items.append('\t'.join(['2026-01-01', ver, c, 't1', f'run{n}', 'X', 'in', '見つけた' if x else '見落とし']))
+hist, items = ['\t'.join(H)], ['\t'.join(['日付', 'スキルの版', 'スキルのコミット', '題材', '実行', '項目', '範囲', '状態', 'モデル'])]
+runs = [('9.9.0', 'zzold01', f, 0, 1, om) for f in ('10', '12')] + [('9.9.1', 'zznew01', f, viol, int(i < xfound), 'm') for i, f in enumerate(found)]
+for n, (ver, c, f, v, x, m) in enumerate(runs):
+    hist.append('\t'.join(['2026-01-01', ver, c, 't1', 'x', m, f, f, '19', '0', '0', '0', '0', '5', str(v), '2', '10', '1', '1', '1']))
+    items.append('\t'.join(['2026-01-01', ver, c, 't1', f'run{n}', 'X', 'in', '見つけた' if x else '見落とし', m]))
 open(d + '/history.tsv', 'w').write('\n'.join(hist) + '\n'); open(d + '/items.tsv', 'w').write('\n'.join(items) + '\n')
 PY
   CMP_OUT="$(WSA_EVAL_LOCAL="$d" python3 "$ROOT/tests/eval/compare.py" --new 9.9.1 --old 9.9.0 2>&1)"; CMP_RC=$?
@@ -1969,17 +1986,22 @@ cmp_case ok "11 12" 0 2 || true
 if [[ "$CMP_RC" -eq 0 ]] && grep -qF '劣後なし' <<<"$CMP_OUT"; then ok "eval[比較]: 劣後が無ければ 0 で終わる"
 else ng "eval[比較]: 劣後が無ければ 0 で終わる" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 cmp_case viol "11 12" 1 2 || true
-if [[ "$CMP_RC" -eq 1 ]] && grep -qF '新で違反がある' <<<"$CMP_OUT"; then ok "eval[比較]: 新で違反があれば劣後とする"
-else ng "eval[比較]: 新で違反があれば劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+if [[ "$CMP_RC" -eq 1 ]] && grep -qF '1 回あたりの違反の数が旧より増えた' <<<"$CMP_OUT"; then ok "eval[比較]: 違反が旧より増えれば劣後とする"
+else ng "eval[比較]: 違反が旧より増えれば劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 cmp_case drop "7 8" 0 2 || true
 if [[ "$CMP_RC" -eq 1 ]] && grep -qF '見つけた数の平均が' <<<"$CMP_OUT"; then ok "eval[比較]: 見つけた数の平均が許す幅を超えて下がれば劣後とする"
 else ng "eval[比較]: 見つけた数の平均が許す幅を超えて下がれば劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 cmp_case item "11 12" 0 0 || true
 if [[ "$CMP_RC" -eq 1 ]] && grep -qF '項目を見つけなくなった（X: 旧 2/2 → 新 0/2）' <<<"$CMP_OUT"; then ok "eval[比較]: 旧で毎回見つけた項目を新で 1 度も見つけなければ劣後とする"
 else ng "eval[比較]: 旧で毎回見つけた項目を新で 1 度も見つけなければ劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
-cmp_case short "12" 0 1 || true
-if [[ "$CMP_RC" -eq 3 ]] && ! grep -qF '劣後なし' <<<"$CMP_OUT"; then ok "eval[比較]: 新の回数が足りなければ「劣後なし」と言わない"
-else ng "eval[比較]: 新の回数が足りなければ「劣後なし」と言わない" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+cmp_case short "7" 0 0 || true
+if [[ "$CMP_RC" -eq 3 ]] && grep -qF '要再確認（もう 1 回当てる）: t1' <<<"$CMP_OUT" && ! grep -qF '劣後なし' <<<"$CMP_OUT"; then
+  ok "eval[比較]: 新が 1 回だけで疑いがあれば、劣後とも劣後なしとも言わず、もう 1 回当てさせる"
+else ng "eval[比較]: 新が 1 回だけで疑いがあれば、劣後とも劣後なしとも言わず、もう 1 回当てさせる" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+cmp_case model "7 8" 0 0 other || true
+if [[ "$CMP_RC" -eq 0 ]] && grep -qF '版の差とモデルの差が混ざる' <<<"$CMP_OUT" && grep -qF '版の比較にはなっていない' <<<"$CMP_OUT"; then
+  ok "eval[比較]: 旧が別のモデルの回しか無ければ、劣後の判定に使わず、そのことを出す"
+else ng "eval[比較]: 旧が別のモデルの回しか無ければ、劣後の判定に使わず、そのことを出す" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 
 # 手元の題材の検査（tests/eval/local/tests.sh）。題材を特定できる情報を含むので公開しない。
 # あるときだけ回し、成功の数は公開の件数とは別に出す（README の件数は公開の検査だけ）。失敗は全体の失敗に数える

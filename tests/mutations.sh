@@ -307,15 +307,21 @@ mutate "scan_secrets: 差し込みの書き方を値とみなす" "scripts/scan_
   's = s.replace("|process\\.env|os", "|os", 1)'
 mutate "資料: 埋め込まれた値の指摘で写しやすいことを書かない" "SKILL.md" "埋め込まれた値の指摘で値を写さない" \
   's = s.replace("値が埋め込まれていること自体を指摘するときが、いちばん写しやすい", "値に注意する", 1)'
+mutate "3 節: 差し込みを見ずに問い合わせを並べる" "scripts/audit_grep.sh" "LDAP の検索条件に値を連結する行に ★" \
+  's = s.replace("if grep -qE \"$QL_INTERP\" <<<\"$c\" || [[ $lit -eq 0 ]]; then", "if [[ $lit -eq 0 ]]; then", 1)'
+mutate "3 節: 変数から作るテンプレートを見ない" "scripts/audit_grep.sh" "テンプレートを変数から作る行に ★" \
+  's = s.replace("then lit=0; fi", "then lit=1; fi", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 mutate "eval: 範囲の答えを書き始めの行だけで見る" "../tests/eval/score.py" "範囲の答えは、指摘の範囲が重なれば一致させる" \
   's = s.replace("(lo <= r[\x27end\x27] and hi >= r[\x27start\x27] if hi > lo", "(r[\x27start\x27] <= lo <= r[\x27end\x27] if hi > lo", 1)'
 mutate "eval: run-eval.sh を少しずつ読む" "../tests/eval/run-eval.sh" "run-eval.sh を実行の前に最後まで読み切る" \
   's = s.replace("\n{\n\nROOT=", "\n\nROOT=", 1).replace("\nexit\n}\n", "\n", 1)'
-mutate "eval: 比較で違反を劣後としない" "../tests/eval/compare.py" "新で違反があれば劣後とする" \
-  's = s.replace("        if sum(num(r[\x27違反\x27]) for r in new) > 0:", "        if False:", 1)'
-mutate "eval: 比較で回数が足りなくても劣後なしと言う" "../tests/eval/compare.py" "新の回数が足りなければ「劣後なし」と言わない" \
-  's = s.replace("    if short:\n", "    if False:\n", 1)'
+mutate "eval: 比較で違反の増加を劣後としない" "../tests/eval/compare.py" "違反が旧より増えれば劣後とする" \
+  's = s.replace("if mean([num(r[\x27違反\x27]) for r in new]) > mean([num(r[\x27違反\x27]) for r in old]):", "if False:", 1)'
+mutate "eval: 比較で 1 回だけの疑いを見逃す" "../tests/eval/compare.py" "新が 1 回だけで疑いがあれば" \
+  's = s.replace("        elif doubts and len(new) < 2:", "        elif False:", 1)'
+mutate "eval: 比較でモデルの違う旧と判定する" "../tests/eval/compare.py" "旧が別のモデルの回しか無ければ" \
+  's = s.replace("        if doubts and model_differs:", "        if False:", 1)'
 mutate "eval: URL の // もコメントとして消す" "../tests/eval/prep_anchors.py" "URL の中の // を壊さない" \
   's = s.replace("SLASH = [re.compile(r\x27(^|(?<=[\\s;,)\\]}]))//.*$\x27)", "SLASH = [re.compile(r\x27//.*$\x27)")'
 mutate "eval: 手掛かりの消し残しがあっても止めない" "../tests/eval/prep_anchors.py" "手掛かりの消し残しがあれば止まる" \
