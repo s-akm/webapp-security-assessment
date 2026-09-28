@@ -228,7 +228,8 @@ check_reviewed "実地の評価で使うモデルに確認日が書いてある"
 
 # 「効」を動詞に使う言い回しは、何がどうなるかを言っていない。
 # 働く・適用される・防御になる・読み込まれる、のように具体的に書く（2.19.0 で全体から外した）。有効・無効は対象外
-kiku="$(grep -rnE '(^|[^有無])効(く|い|か|き|け|こ)' "$SKILL" "$ROOT/README.md" "$ROOT/tests/eval" "$ROOT/tests/fixtures" 2>/dev/null | head -3 || true)"
+# 手元の置き場（tests/eval/local/。公開しない）は外す。監査の結果などモデルの出力を控える場所で、公開の文面ではない
+kiku="$(grep -rnE --exclude-dir=local '(^|[^有無])効(く|い|か|き|け|こ)' "$SKILL" "$ROOT/README.md" "$ROOT/tests/eval" "$ROOT/tests/fixtures" 2>/dev/null | head -3 || true)"
 if [[ -z "$kiku" ]]; then ok "「効」を動詞に使う言い回しが無い"
 else ng "「効」を動詞に使う言い回しが無い" "$(printf '%s' "$kiku" | cut -c1-120 | tr '\n' ' ')"; fi
 
