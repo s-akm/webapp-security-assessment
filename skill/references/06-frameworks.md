@@ -166,7 +166,7 @@ Webhook と外部連携 = V4、暗号 = V11、通信 = V12、設定 = V13、デ�
 | API1 | Broken Object Level Authorization | A-3（IDOR）。**API 攻撃の 4 割前後を占めるとされる。ここが本丸** |
 | API2 | Broken Authentication | B 群 |
 | API3 | Broken Object Property Level Authorization | **受け取ったオブジェクトをそのまま更新に渡していないか**（07 の 9 節、マスアサインメント）。応答に不要な項目を含めていないか |
-| API4 | Unrestricted Resource Consumption | F-2（レート制限）、件数の上限、ページングの強制 |
+| API4 | Unrestricted Resource Consumption | F-2（レート制限）、件数の上限（07 の 9-1 節・`audit_grep.sh` の 2h 節）、ページングの強制 |
 | API5 | Broken Function Level Authorization | A-1（ハンドラごとのガード）。**管理用の操作を一般利用者が呼べないか** |
 | API6 | Unrestricted Access to Sensitive Business Flows | F-1。**自動化されると困る流れ**（予約の買い占め、大量申込）に対策があるか |
 | API7 | Server Side Request Forgery | 07 の 5 節 |

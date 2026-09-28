@@ -1683,6 +1683,22 @@ if printf '%s' "$S2G" | sed -n '/--- 受け取ったもの/,$p' | grep -F 'route
   ng "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない" "routes.js:2 が並んだ"
 else ok "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない"; fi
 
+# 2h 節（取得する件数を利用者の値で決めていないか）。架空の題材 size-param。
+# 枠組みごとの読み方を表で拾い、同じファイルに上限の確かめが無い行に ★ を付ける
+SP="$TMP/size-param"
+cp -R "$ROOT/tests/fixtures/size-param" "$SP"
+S2H="$(bash "$SKILL/scripts/audit_grep.sh" "$SP" 2>&1 | LC_ALL=C awk 'index($0, "=== 2h.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2h]: 上限の無い件数に ★（NestJS。下限だけを見る）"       "★ orders.controller.ts:4:"      "$S2H"
+contains "audit_grep[2h]: 上限の無い件数に ★（FastAPI の Query）"              "★ search.py:2:"                 "$S2H"
+contains "audit_grep[2h]: 上限の無い件数に ★（Rails）"                          "★ notes_controller.rb:3:"       "$S2H"
+contains "audit_grep[2h]: 上限の無い件数に ★（Spring）"                         "★ InvoiceController.java:3:"    "$S2H"
+contains "audit_grep[2h]: 上限で切り詰める行も並べる（Express）"               "    feed.js:2:"                  "$S2H"
+absent   "audit_grep[2h]: 上限で切り詰める行には ★ を付けない（Express）"      "★ feed.js"                      "$S2H"
+absent   "audit_grep[2h]: 宣言で上限を付けた行には ★ を付けない（FastAPI の le=）" "★ reports.py"                "$S2H"
+absent   "audit_grep[2h]: 大きすぎる値を弾く行には ★ を付けない（Go）"          "★ events.go"                    "$S2H"
+contains "audit_grep[2h]: 大きすぎる値を弾く行も並べる（Go）"                  "    events.go:4:"                "$S2H"
+absent   "audit_grep[2h]: 経路の無いファイルの引数の既定値を拾わない"          "repository.py"                  "$S2H"
+
 # 3 節（出力に HTML を直接流し込む）と 3b 節（ファイルの受け取り）。架空の題材 output-and-upload。
 # 値を流し込む行にだけ ★ を付け、固定の文字列だけを出す行には付けない。枠組みごとの書き方を表で拾う
 OU="$TMP/output-and-upload"

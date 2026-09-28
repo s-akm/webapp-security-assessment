@@ -295,6 +295,12 @@ mutate "3b 節: 名前の切れ目を見ずに拒否リストとする" "scripts
   's = s.replace("if (c ~ fwd || c ~ rev) print", "print", 1)'
 mutate "3b 節: Rails の入れ子の params を拾わない" "scripts/audit_grep.sh" "受け取り口（Rails の入れ子の params）" \
   's = s.replace("params(\\[:[a-z_]+\\])*\\[:[a-z_]*(file", "params\\[:[a-z_]*(file", 1).replace("|\\.original_filename|UploadedFile", "", 1)'
+mutate "2h 節: 上限の確かめを見ない" "scripts/audit_grep.sh" "上限で切り詰める行には ★ を付けない" \
+  's = s.replace("if grep -qE \"$ub\" <<<\"$c\" || grep -qE \"$ub\" \"$f\" 2>/dev/null; then", "if false; then", 1)'
+mutate "2h 節: 経路の無いファイルの引数も拾う" "scripts/audit_grep.sh" "経路の無いファイルの引数の既定値" \
+  's = s.replace("\x27 \"$f\" 2>/dev/null; then continue; fi", "\x27 \"$f\" 2>/dev/null; then :; fi", 1)'
+mutate "2h 節: NestJS の @Query を読まない" "scripts/audit_grep.sh" "上限の無い件数に ★（NestJS" \
+  's = s.replace("SIZE_IN=\"$SIZE_IN|@(Query|Param|Body)", "SIZE_IN=\"$SIZE_IN|@(Xuery|Param|Body)", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 mutate "eval: run-eval.sh を少しずつ読む" "../tests/eval/run-eval.sh" "run-eval.sh を実行の前に最後まで読み切る" \
   's = s.replace("\n{\n\nROOT=", "\n\nROOT=", 1).replace("\nexit\n}\n", "\n", 1)'

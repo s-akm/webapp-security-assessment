@@ -773,6 +773,30 @@ echo "  --- 受け取ったものを、そのまま作成・更新に渡して�
 echo "  ※ ★ は、読んだ値が権限の判定（管理者か、所有者か、役割は何か）に使われていれば指摘になる。絞り込みの条件に使うだけなら問題ない"
 echo "    受け取ったものを渡す行は、DTO や許可リストで項目を絞っていれば問題ない。絞っていなければ、利用者が権限や所有者の列を書き換えられる"
 
+hr "2h. 取得する件数・大きさを、利用者が送った値で決めていないか（07 の 9-1 節・API4）"
+# 一覧の件数（limit・per_page・pageSize など）を利用者が決め、上限を確かめていなければ、1 回の要求で全件を取り出せる。
+# 公開の一覧でも同じ（負荷と、情報の一括取得）。読み方は 2g 節と同じく枠組みごとの表で持ち、名前の表と組み合わせる
+SIZE_NAME='(limit|per_?page|perPage|page_?size|pageSize|page_?limit|pageLimit|take|top|max_?results|maxResults|batch_?size|batchSize|max_?items|maxItems)'
+SIZE_IN="(req|request|ctx|c|event|r)\.(query|body|params|args|form|GET|POST|query_params|URL\.Query\(\))(\.|\[['\"]|\.get\(['\"]|\.Get\(['\"])${SIZE_NAME}['\"]?"
+SIZE_IN="$SIZE_IN|@(Query|Param|Body)\(['\"]${SIZE_NAME}['\"]|@RequestParam\([^)]*['\"]${SIZE_NAME}['\"]|\[FromQuery[^]]*\][^,)]*\b${SIZE_NAME}\b"
+SIZE_IN="$SIZE_IN|\b${SIZE_NAME}[[:space:]]*:[[:space:]]*(int|Optional\[int\]|Annotated\[int)[^=]*=[[:space:]]*(Query\(|[0-9])|params\[:${SIZE_NAME}\]"
+SIZE_IN="$SIZE_IN|\\\$request->(input|get|query)\(['\"]${SIZE_NAME}['\"]|\\\$_(GET|POST|REQUEST)\[['\"]${SIZE_NAME}['\"]\]|\.(Query|DefaultQuery|QueryParam|FormValue)\(\"${SIZE_NAME}\""
+echo "  --- 件数を決める値をリクエストから読んでいる（★ は、同じファイルに上限の確かめが見当たらない）"
+{ grep -rnEi "${EXA[@]}" "$SIZE_IN" "${INCL[@]}" . 2>/dev/null | sed 's|^\./||' \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+:' \
+    | while IFS= read -r l; do
+        f="${l%%:*}"; c="${l#*:}"; c="${c#*:}"
+        n="$(printf '%s' "$c" | grep -oEi "$SIZE_NAME" | head -1)"
+        # 型と既定値だけの引数（limit: int = 10）は、経路を登録するファイルのときだけ問い合わせの値になる（FastAPI など）
+        if ! grep -qE 'Query\(|Annotated' <<<"$c" && grep -qE ":[[:space:]]*(int|Optional\[int\])[^=]*=[[:space:]]*[0-9]" <<<"$c" \
+           && ! grep -qE '@(router|app|api|bp|blueprint)\.(get|post|put|patch|delete|route|api_route)\(' "$f" 2>/dev/null; then continue; fi
+        # 上限の確かめ: その値を小さいほうに寄せる・大きすぎれば弾く・宣言で上限を付ける（le=・@Max・max_value など）
+        ub="(min|clamp|coerceAtMost)[[:space:]]*\([^)]*\b${n}\b|\b${n}\b[[:space:]]*(>|>=)[[:space:]]*([1-9][0-9]+|[A-Za-z_.]*[Mm][Aa][Xx])|\ble[[:space:]]*=|\blte[[:space:]]*=|@Max\(|max_value|MaxValue|max_page_size|maxPageSize|MAX_(PAGE|LIMIT|SIZE)|maxLimit"
+        if grep -qE "$ub" <<<"$c" || grep -qE "$ub" "$f" 2>/dev/null; then printf '    %s\n' "$l"; else printf '  ★ %s\n' "$l"; fi
+      done | lim 25; } | mask | show
+echo "  ※ ★ は、読んだ値のまま件数を決めていれば指摘になる（上限を付けるか、上限で切り詰める）。公開の一覧でも「公開だから問題なし」にしない"
+echo "    ★ の無い行も、上限の確かめがその値に掛かっているかを読む。ファイルのどこかに上限の書き方があるだけで ★ を外している"
+
 hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）"
 # 'use server' のファイルでは、export された関数 1 つ 1 つが入口になる。
 # ファイル単位の「定義 N / ガード M」では、どの関数が素通しかまでは分からない。
