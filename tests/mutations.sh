@@ -286,6 +286,12 @@ mutate "資料: grep のパターンを引用符の中で改行する" "referenc
   's = s.replace("evaluateJavascript\x27 \\\n  -e \x27javaScriptEnabled", "evaluateJavascript|\njavaScriptEnabled", 1)'
 
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
+mutate "eval: run-eval.sh を少しずつ読む" "../tests/eval/run-eval.sh" "run-eval.sh を実行の前に最後まで読み切る" \
+  's = s.replace("\n{\n\nROOT=", "\n\nROOT=", 1).replace("\nexit\n}\n", "\n", 1)'
+mutate "eval: 比較で違反を劣後としない" "../tests/eval/compare.py" "新で違反があれば劣後とする" \
+  's = s.replace("        if sum(num(r[\x27違反\x27]) for r in new) > 0:", "        if False:", 1)'
+mutate "eval: 比較で回数が足りなくても劣後なしと言う" "../tests/eval/compare.py" "新の回数が足りなければ「劣後なし」と言わない" \
+  's = s.replace("    if short:\n", "    if False:\n", 1)'
 mutate "eval: URL の // もコメントとして消す" "../tests/eval/prep_anchors.py" "URL の中の // を壊さない" \
   's = s.replace("SLASH = [re.compile(r\x27(^|(?<=[\\s;,)\\]}]))//.*$\x27)", "SLASH = [re.compile(r\x27//.*$\x27)")'
 mutate "eval: 手掛かりの消し残しがあっても止めない" "../tests/eval/prep_anchors.py" "手掛かりの消し残しがあれば止まる" \

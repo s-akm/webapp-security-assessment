@@ -9,8 +9,12 @@
 # 答えの一覧を取り出し、答えの手掛かりを消してから、スキルだけを読み込ませた claude -p に当てる。
 #
 # tests/run.sh と違い、外部のネットワークに出て（GitHub から題材を取る・モデルを呼ぶ）、費用がかかる。
-# CI では回さない。スキルの版を上げる前に手で回し、--record で tests/eval/local/history.tsv に 1 行残す。
+# CI では実行しない。スキルの版を上げる前に手で実行し、--record で tests/eval/local/history.tsv に 1 行残す。
+# 版を上げてよいかは tests/eval/compare.py で確かめる（全題材で 2 回以上、前の版に劣後していないこと）。
 set -euo pipefail
+# 全体を 1 つの { } に入れ、実行の前に最後まで読み切らせる。bash は長い処理の間もファイルの続きを読むので、
+# 評価の実行中にこのファイルを直すと、ずれた位置から読んで壊れる（実測で、採点の手前で止まった）
+{
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVAL="$ROOT/tests/eval"
@@ -25,7 +29,7 @@ while [[ $# -gt 0 ]]; do
     --record) RECORD=1; shift ;;
     --prep-only) PREP_ONLY=1; shift ;;
     --score-only) SCORE_ONLY="$2"; shift 2 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) TARGET="$1"; shift ;;
   esac
 done
@@ -46,9 +50,15 @@ score_and_record() {
   skill_version="$(cat "$out/skill_version" 2>/dev/null || cat "$ROOT/VERSION")"
   skill_commit="$(cat "$out/skill_commit" 2>/dev/null || git -C "$ROOT" rev-parse --short HEAD)"
   [[ -f "$LOCAL/history.tsv" ]] || printf '日付\tスキルの版\tスキルのコミット\t題材\t題材のコミット\tモデル\t見つけた\tうち行で指した\t範囲内\t保留\t見誤り\t範囲が広い\t見落とし\t一覧外\t違反\t費用（米ドル）\t分\t入力トークン\tキャッシュ読みトークン\t出力トークン\n' > "$LOCAL/history.tsv"
-  python3 - "$out/summary.json" "$LOCAL/history.tsv" "$skill_version" "$skill_commit" "$target" "$tcommit" <<'PY'
+  # 項目ごとの結果も 1 行ずつ残す（compare.py が、版の間で見つけなくなった項目を探すのに使う）
+  [[ -f "$LOCAL/items.tsv" ]] || printf '日付\tスキルの版\tスキルのコミット\t題材\t実行\t項目\t範囲\t状態\n' > "$LOCAL/items.tsv"
+  python3 - "$out/summary.json" "$LOCAL/history.tsv" "$skill_version" "$skill_commit" "$target" "$tcommit" "$LOCAL/items.tsv" "$(basename "$(dirname "$out")")" <<'PY'
 import datetime, json, sys
 s = json.load(open(sys.argv[1], encoding='utf-8'))
+with open(sys.argv[7], 'a', encoding='utf-8') as f:
+    for r in s.get('rows', []):
+        f.write('\t'.join([datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[8],
+                           r['id'], r['scope'], r['status']]) + '\n')
 row = [datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6][:12], s.get('model', ''),
        s['found'], s.get('found_precise', ''), s['in_total'], s['held'], s['misjudged'], s.get('too_wide', ''), s['missed'],
        s['extra'], s['violations'],
@@ -57,7 +67,7 @@ row = [datetime.date.today().isoformat(), sys.argv[3], sys.argv[4], sys.argv[5],
 with open(sys.argv[2], 'a', encoding='utf-8') as f:
     f.write('\t'.join(map(str, row)) + '\n')
 PY
-  echo "  $LOCAL/history.tsv に記録した"
+  echo "  $LOCAL/history.tsv と items.tsv に記録した"
 }
 
 if [[ -n "$SCORE_ONLY" ]]; then
@@ -66,7 +76,7 @@ if [[ -n "$SCORE_ONLY" ]]; then
   exit 0
 fi
 
-[[ -n "$TARGET" ]] || { sed -n '2,12p' "$0"; exit 2; }
+[[ -n "$TARGET" ]] || { sed -n '2,13p' "$0"; exit 2; }
 [[ -f "$LOCAL/targets.tsv" ]] || { echo "題材の一覧が無い: $LOCAL/targets.tsv（書き方は tests/eval/README.md）" >&2; exit 2; }
 line="$(grep -v '^#' "$LOCAL/targets.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
 [[ -n "$line" ]] || { echo "題材 $TARGET が targets.tsv に無い" >&2; exit 2; }
@@ -154,3 +164,5 @@ json.dump(r[-1] if r else {}, open(sys.argv[2], "w", encoding="utf-8"), ensure_a
 
 score_and_record "$OUT" "$TARGET" "$COMMIT"
 echo "出力: $OUT"
+exit
+}

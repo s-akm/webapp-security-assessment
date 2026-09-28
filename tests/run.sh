@@ -1848,6 +1848,44 @@ contains "eval: 利用者の手元の設定を読まない"                    "
 if awk '/bash "\$ROOT\/skill\/scripts\/audit_grep.sh"/ && !a { a = NR } /cp -R "\$ROOT\/skill"/ && !c { c = NR } END { exit !(a && c && a < c) }' "$ROOT/tests/eval/run-eval.sh"; then
   ok "eval: audit_grep をスキルを置く前に回す"
 else ng "eval: audit_grep をスキルを置く前に回す" "スキルを置いた後に回している"; fi
+# 評価は 10 分を超えて動く。その間にこのファイルを直しても壊れないよう、全体を { } に入れて先に読み切らせる
+if awk 'NF { last2 = last1; last1 = $0 } /^set -euo pipefail$/ { s = NR } /^\{$/ && s && !b { b = NR } END { exit !(b && last2 == "exit" && last1 == "}") }' "$ROOT/tests/eval/run-eval.sh"; then
+  ok "eval: run-eval.sh を実行の前に最後まで読み切る"
+else ng "eval: run-eval.sh を実行の前に最後まで読み切る" "全体を { … exit; } に入れていない。実行中にファイルを直すと、ずれた位置から読む"; fi
+
+# 版の比較（compare.py）。版を上げてよいかの判定に使うので、劣後を見逃さないか・足りない回数で「劣後なし」と言わないかを確かめる。
+# 架空の題材 t1 で、旧 9.9.0 と新 9.9.1 を比べる。コミットは git で解けない語にして、版の名前でまとめさせる
+cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数>
+  local d="$TMP/eval-cmp-$1"; mkdir -p "$d"
+  python3 - "$d" "$2" "$3" "$4" <<'PY'
+import sys
+d, found, viol, xfound = sys.argv[1], sys.argv[2].split(), int(sys.argv[3]), int(sys.argv[4])
+H = ['日付', 'スキルの版', 'スキルのコミット', '題材', '題材のコミット', 'モデル', '見つけた', 'うち行で指した', '範囲内', '保留', '見誤り',
+     '範囲が広い', '見落とし', '一覧外', '違反', '費用（米ドル）', '分', '入力トークン', 'キャッシュ読みトークン', '出力トークン']
+hist, items = ['\t'.join(H)], ['\t'.join(['日付', 'スキルの版', 'スキルのコミット', '題材', '実行', '項目', '範囲', '状態'])]
+runs = [('9.9.0', 'zzold01', f, 0, 1) for f in ('10', '12')] + [('9.9.1', 'zznew01', f, viol, int(i < xfound)) for i, f in enumerate(found)]
+for n, (ver, c, f, v, x) in enumerate(runs):
+    hist.append('\t'.join(['2026-01-01', ver, c, 't1', 'x', 'm', f, f, '19', '0', '0', '0', '0', '5', str(v), '2', '10', '1', '1', '1']))
+    items.append('\t'.join(['2026-01-01', ver, c, 't1', f'run{n}', 'X', 'in', '見つけた' if x else '見落とし']))
+open(d + '/history.tsv', 'w').write('\n'.join(hist) + '\n'); open(d + '/items.tsv', 'w').write('\n'.join(items) + '\n')
+PY
+  CMP_OUT="$(WSA_EVAL_LOCAL="$d" python3 "$ROOT/tests/eval/compare.py" --new 9.9.1 --old 9.9.0 2>&1)"; CMP_RC=$?
+}
+cmp_case ok "11 12" 0 2 || true
+if [[ "$CMP_RC" -eq 0 ]] && grep -qF '劣後なし' <<<"$CMP_OUT"; then ok "eval[比較]: 劣後が無ければ 0 で終わる"
+else ng "eval[比較]: 劣後が無ければ 0 で終わる" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+cmp_case viol "11 12" 1 2 || true
+if [[ "$CMP_RC" -eq 1 ]] && grep -qF '新で違反がある' <<<"$CMP_OUT"; then ok "eval[比較]: 新で違反があれば劣後とする"
+else ng "eval[比較]: 新で違反があれば劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+cmp_case drop "7 8" 0 2 || true
+if [[ "$CMP_RC" -eq 1 ]] && grep -qF '見つけた数の平均が' <<<"$CMP_OUT"; then ok "eval[比較]: 見つけた数の平均が許す幅を超えて下がれば劣後とする"
+else ng "eval[比較]: 見つけた数の平均が許す幅を超えて下がれば劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+cmp_case item "11 12" 0 0 || true
+if [[ "$CMP_RC" -eq 1 ]] && grep -qF '項目を見つけなくなった（X: 旧 2/2 → 新 0/2）' <<<"$CMP_OUT"; then ok "eval[比較]: 旧で毎回見つけた項目を新で 1 度も見つけなければ劣後とする"
+else ng "eval[比較]: 旧で毎回見つけた項目を新で 1 度も見つけなければ劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+cmp_case short "12" 0 1 || true
+if [[ "$CMP_RC" -eq 3 ]] && ! grep -qF '劣後なし' <<<"$CMP_OUT"; then ok "eval[比較]: 新の回数が足りなければ「劣後なし」と言わない"
+else ng "eval[比較]: 新の回数が足りなければ「劣後なし」と言わない" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 
 # 手元の題材の検査（tests/eval/local/tests.sh）。題材を特定できる情報を含むので公開しない。
 # あるときだけ回し、成功の数は公開の件数とは別に出す（README の件数は公開の検査だけ）。失敗は全体の失敗に数える
