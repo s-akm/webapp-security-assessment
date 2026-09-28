@@ -81,6 +81,12 @@ done
 if [[ -z "$orphan" ]]; then ok "すべての references / scripts / templates が SKILL.md に載っている"
 else ng "孤児ファイルが無い" "SKILL.md に記載が無い:$orphan"; fi
 
+# 未確認事項が止めている相手は、台帳にある ID で書く（実地の評価で、台帳に無い名前を書いた回があった）
+if grep -qF '止めている相手は、台帳にある ID（S-x・U-x）で書く' "$SKILL/SKILL.md" \
+   && grep -qF '台帳にある ID（S-x・U-x）だけを書く' "$SKILL/references/04-findings-register.md"; then
+  ok "未確認事項が止めている相手を、台帳にある ID で書くと決めている"
+else ng "未確認事項が止めている相手を、台帳にある ID で書くと決めている" "SKILL.md の 4 か、04 の「影響する項目」から決まりが消えている"; fi
+
 # 題材の依存の定義ファイルは .fixture を付けて置く（fixture_cp の説明を参照）
 raw="$(git -C "$ROOT" ls-files tests/fixtures 2>/dev/null | grep -E '(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Gemfile|Gemfile\.lock|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|pom\.xml|Package\.swift)$' || true)"
 if [[ -z "$raw" ]]; then ok "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）"

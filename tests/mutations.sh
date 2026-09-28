@@ -285,6 +285,8 @@ mutate "資料: コマンド例でスクリプトの中の変数を使う" "refe
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("evaluateJavascript\x27 \\\n  -e \x27javaScriptEnabled", "evaluateJavascript|\njavaScriptEnabled", 1)'
 
+mutate "資料: 未確認事項が止める相手を ID で書くと決めない" "references/04-findings-register.md" "台帳にある ID で書くと決めている" \
+  's = s.replace("。**台帳にある ID（S-x・U-x）だけを書く**。相手がまだ指摘になっていなければ、先に「判断保留」の指摘として載せる", "", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 mutate "eval: run-eval.sh を少しずつ読む" "../tests/eval/run-eval.sh" "run-eval.sh を実行の前に最後まで読み切る" \
   's = s.replace("\n{\n\nROOT=", "\n\nROOT=", 1).replace("\nexit\n}\n", "\n", 1)'
