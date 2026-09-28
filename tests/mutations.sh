@@ -312,6 +312,8 @@ mutate "3 節: 差し込みを見ずに問い合わせを並べる" "scripts/aud
 mutate "3 節: 変数から作るテンプレートを見ない" "scripts/audit_grep.sh" "テンプレートを変数から作る行に ★" \
   's = s.replace("then lit=0; fi", "then lit=1; fi", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
+mutate "eval: 失敗した回も採点して記録する" "../tests/eval/run-eval.sh" "実行に失敗した回は採点も記録もしない" \
+  's = s.replace("sys.exit(0 if r and not r.get(\"is_error\") and r.get(\"structured_output\") else 1)", "sys.exit(0)", 1)'
 mutate "eval: 範囲の答えを書き始めの行だけで見る" "../tests/eval/score.py" "範囲の答えは、指摘の範囲が重なれば一致させる" \
   's = s.replace("(lo <= r[\x27end\x27] and hi >= r[\x27start\x27] if hi > lo", "(r[\x27start\x27] <= lo <= r[\x27end\x27] if hi > lo", 1)'
 mutate "eval: run-eval.sh を少しずつ読む" "../tests/eval/run-eval.sh" "run-eval.sh を実行の前に最後まで読み切る" \

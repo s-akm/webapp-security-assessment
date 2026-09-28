@@ -39,6 +39,15 @@ done
 # 採点して、求められれば履歴に 1 行足す
 score_and_record() {
   local out="$1" target="$2" tcommit="$3"
+  # 実行に失敗した回（結果の JSON が無い・エラーで終わった・台帳の中身が無い）は、採点も記録もしない。
+  # 記録すると「見つけた 0・違反 1」の行が残り、版の比較を狂わせる（モデルの指定を CLI が知らず、12 回とも即座に失敗したのに記録していた）
+  if ! python3 -c 'import json,sys
+r=json.load(open(sys.argv[1], encoding="utf-8"))
+sys.exit(0 if r and not r.get("is_error") and r.get("structured_output") else 1)' "$out/result.json" 2>/dev/null; then
+    echo "実行が失敗した（結果が無いかエラー）。採点も記録もしない。$out/claude.log を見る" >&2
+    tail -c 400 "$out/claude.log" 2>/dev/null >&2 || true
+    return 1
+  fi
   local tr=(); [[ -f "$out/transcript.jsonl" ]] && tr=(--transcript "$out/transcript.jsonl")
   python3 "$EVAL/score.py" "$out/answers.json" "$out/result.json" --summary "$out/summary.json" ${tr[@]+"${tr[@]}"} | tee "$out/report.txt"
   # 守ること 3: 結果に鍵の値や個人情報が混ざっていないか。スキル自身の検査で見る
@@ -55,6 +64,10 @@ with open(sys.argv[2], "w", encoding="utf-8") as f:
   bash "$ROOT/skill/scripts/scan_secrets.sh" "$out/scan" > "$out/scan_secrets.txt" 2>&1 || true
   echo "秘密情報の検査: $(grep -E '^(検出なし|[0-9]+ 種類)' "$out/scan_secrets.txt" || echo '結果を読めない')（詳細は $out/scan_secrets.txt）"
   [[ "$RECORD" -eq 1 ]] || return 0
+  # 答えの無い題材（実在の OSS に当てた監査）は、見つけた割合を測れないので履歴に入れない
+  if [[ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1], encoding="utf-8")).get("items") or []))' "$out/answers.json")" == "0" ]]; then
+    echo "  答えの無い題材なので、履歴には記録しない"; return 0
+  fi
   # 版とコミットは、スキルを題材に写した時点で控えたものを使う（実行中に版を上げても、当てた版を記録する）
   local skill_version skill_commit
   skill_version="$(cat "$out/skill_version" 2>/dev/null || cat "$ROOT/VERSION")"
@@ -97,6 +110,10 @@ PREP_SCRIPT="${PREP%% *}"; PREP_ARGS="${PREP#"$PREP_SCRIPT"}"
 if [[ -f "$LOCAL/$PREP_SCRIPT" ]]; then PREP_PATH="$LOCAL/$PREP_SCRIPT"; else PREP_PATH="$EVAL/$PREP_SCRIPT"; fi
 # 前提の列（6 列目）。無ければ premise/<題材の名前>.md
 PREMISE="$(printf '%s' "$line" | cut -f6)"; [[ -n "$PREMISE" ]] || PREMISE="premise/$TARGET.md"
+# 当てるディレクトリ（7 列目）。モノレポは対象のアプリのディレクトリだけを渡す（SKILL.md の「スクリプト」）
+SUBDIR="$(printf '%s' "$line" | cut -f7)"
+# 下拵えの列が「-」なら、答えの無い題材（実在の OSS）。採点せず、指摘の一覧だけを出す
+NO_ANSWERS=0; [[ "$PREP" == "-" ]] && NO_ANSWERS=1
 
 # 作業場所はリポジトリの外。題材には本物の形をした鍵や穴のあるコードがあるので、リポジトリに混ぜない
 BASE="${WSA_EVAL_DIR:-${TMPDIR:-/tmp}/wsa-eval}"
@@ -117,10 +134,22 @@ for p in .claude CLAUDE.md CLAUDE.local.md .mcp.json AGENTS.md .ai .cursor .curs
          .windsurfrules .clinerules .github/copilot-instructions.md .gemini GEMINI.md; do
   rm -rf "${SRC:?}/$p"
 done
+# モノレポでは下の階層にも置かれる（当てるディレクトリの CLAUDE.md や AGENTS.md は、その場で読み込まれる）
+find "$SRC" \( -name node_modules -prune \) -o \( -type f \( -name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md -o -name GEMINI.md \
+  -o -name .cursorrules -o -name .windsurfrules -o -name .clinerules -o -name .mcp.json \) -print \) | while IFS= read -r f; do rm -f "$f"; done
+find "$SRC" \( -name node_modules -prune \) -o \( -type d \( -name .claude -o -name .cursor -o -name .gemini -o -name .junie \) -print \) \
+  | while IFS= read -r d; do rm -rf "$d"; done
+APP="$SRC${SUBDIR:+/$SUBDIR}"
+[[ -d "$APP" ]] || { echo "当てるディレクトリが無い: $SUBDIR" >&2; exit 2; }
 
-echo "答えの一覧を取り出し、手掛かりを消す"
-# shellcheck disable=SC2086  # 引数は targets.tsv に書いた語。分けて渡す
-( cd "$LOCAL" && python3 -B "$PREP_PATH" $PREP_ARGS "$SRC" "$OUT/answers.json" )
+if [[ "$NO_ANSWERS" -eq 1 ]]; then
+  echo "答えの無い題材（採点しない）"
+  printf '{"items": [], "secrets": []}\n' > "$OUT/answers.json"
+else
+  echo "答えの一覧を取り出し、手掛かりを消す"
+  # shellcheck disable=SC2086  # 引数は targets.tsv に書いた語。分けて渡す
+  ( cd "$LOCAL" && python3 -B "$PREP_PATH" $PREP_ARGS "$SRC" "$OUT/answers.json" )
+fi
 
 # audit_grep.sh は先に回して、出力を読ませる。エージェントに回させると、変数やパイプを組み合わせたコマンドになり、
 # 許可の条件（読むことと audit_grep.sh の単独の呼び出し）に合わず止められる（初回の実測で 3 回止められ、1 度も回らなかった）。
@@ -134,12 +163,12 @@ if [[ -n "$SKILL_REF" ]]; then
   git -C "$ROOT" archive "$SKILL_REF" skill VERSION | tar -x -C "$WORK/skill-ref"
   SKILL_SRC="$WORK/skill-ref/skill"; SKILL_VERSION_FILE="$WORK/skill-ref/VERSION"
 fi
-( cd "$SRC" && bash "$SKILL_SRC/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
+( cd "$APP" && bash "$SKILL_SRC/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
 echo "audit_grep.sh を先に回した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
 
 # スキルを題材の中に置く。--setting-sources project で、利用者の手元の設定・スキル・CLAUDE.md は読まない
-mkdir -p "$SRC/.claude/skills"
-cp -R "$SKILL_SRC" "$SRC/.claude/skills/webapp-security-assessment"
+mkdir -p "$APP/.claude/skills"
+cp -R "$SKILL_SRC" "$APP/.claude/skills/webapp-security-assessment"
 # 当てるスキルの版とコミットを、写した時点で控える（記録に使う）
 cat "$SKILL_VERSION_FILE" > "$OUT/skill_version"
 # 行をつなぐのに paste -sd '' は使わない（macOS の paste は区切りを空にできず、失敗して評価が始まらない）
@@ -152,12 +181,19 @@ if [[ "$PREP_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
-command -v claude >/dev/null || { echo "claude が無い" >&2; exit 2; }
+# 使う claude の実行ファイル。手元の CLI が新しいモデルを知らないときは、WSA_CLAUDE_BIN で新しい版を指す
+CLAUDE_BIN="${WSA_CLAUDE_BIN:-claude}"
+command -v "$CLAUDE_BIN" >/dev/null || { echo "claude が無い: $CLAUDE_BIN" >&2; exit 2; }
 echo "スキルを当てる（モデル ${MODEL}、予算 \$${BUDGET}。数十分かかる）"
 # 指示の「前提」は題材ごとのファイル（手元の置き場）から差し込む
 premise_file="$LOCAL/$PREMISE"
 [[ -f "$premise_file" ]] || { echo "前提のファイルが無い: $premise_file" >&2; exit 2; }
-prompt="$(python3 -c 'import sys; print(open(sys.argv[1], encoding="utf-8").read().replace("{{premise}}\n", open(sys.argv[2], encoding="utf-8").read()).replace("{{audit_grep}}", sys.argv[3]), end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt")"
+prompt="$(python3 -c 'import sys
+t = open(sys.argv[1], encoding="utf-8").read().replace("{{premise}}\n", open(sys.argv[2], encoding="utf-8").read()).replace("{{audit_grep}}", sys.argv[3])
+if sys.argv[4] == "1":
+    # 答えの無い題材は教材ではない。冒頭の 1 行だけを差し替える
+    t = "このディレクトリは、オープンソースで公開されているソフトウェアのリポジトリを、評価のために手元へ写したものです。\n" + t.split("\n", 1)[1]
+print(t, end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt" "$NO_ANSWERS")"
 printf '%s\n' "$prompt" > "$OUT/prompt.txt"
 args=(-p "$prompt"
   --output-format stream-json --verbose --json-schema "$(cat "$EVAL/schema.json")"
@@ -171,7 +207,7 @@ args=(-p "$prompt"
   --disallowedTools WebFetch WebSearch Write Edit NotebookEdit Agent)
 args+=(--model "$MODEL")
 # 実行の記録（stream-json）を残し、最後の result の行を採点に使う。記録からスキルの使われ方も数える
-( cd "$SRC" && claude "${args[@]}" ) > "$OUT/transcript.jsonl" 2> "$OUT/claude.log" || echo "claude が 0 以外で終わった（$OUT/claude.log）"
+( cd "$APP" && "$CLAUDE_BIN" "${args[@]}" ) > "$OUT/transcript.jsonl" 2> "$OUT/claude.log" || echo "claude が 0 以外で終わった（$OUT/claude.log）"
 python3 -c 'import json,sys
 r=[]
 for l in open(sys.argv[1], encoding="utf-8"):
@@ -180,7 +216,7 @@ for l in open(sys.argv[1], encoding="utf-8"):
     if e.get("type")=="result": r.append(e)
 json.dump(r[-1] if r else {}, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)' "$OUT/transcript.jsonl" "$OUT/result.json"
 
-score_and_record "$OUT" "$TARGET" "$COMMIT"
+score_and_record "$OUT" "$TARGET" "$COMMIT" || { echo "出力: $OUT"; exit 1; }
 echo "出力: $OUT"
 exit
 }

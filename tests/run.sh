@@ -1953,6 +1953,16 @@ if [[ -z "$pbad" ]]; then ok "スクリプトが、macOS で失敗する paste -
 else ng "スクリプトが、macOS で失敗する paste -sd '' を使っていない" "$(printf '%s' "$pbad" | head -2)"; fi
 contains "eval: 利用者の手元の設定を読まない"                    "--setting-sources project"      "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # 当てるモデルは完全な ID で固定する（別名は CLI の版で指すモデルが変わり、版の比較が切れる）。前の版を当てる指定もある
+# 実行に失敗した回（結果が無い・エラー）は、採点も記録もしない。記録すると、見つけた 0 の行が版の比較を狂わせる
+FAILD="$TMP/eval-failed-run"; mkdir -p "$FAILD/out" "$TMP/eval-failed-local"
+printf '{"items": [{"id": "A", "scope": "in", "locations": [{"file": "a.js", "line": 1}], "ranges": []}], "secrets": []}\n' > "$FAILD/out/answers.json"
+printf '{}\n' > "$FAILD/out/result.json"; printf 'x\n' > "$FAILD/out/target"
+if ! WSA_EVAL_LOCAL="$TMP/eval-failed-local" bash "$ROOT/tests/eval/run-eval.sh" --score-only "$FAILD/out" --record >/dev/null 2>&1 \
+   && [[ ! -f "$TMP/eval-failed-local/history.tsv" ]]; then ok "eval: 実行に失敗した回は採点も記録もしない"
+else ng "eval: 実行に失敗した回は採点も記録もしない" "失敗した回を history.tsv に記録した"; fi
+# 答えの無い題材（実在の OSS）は、冒頭の「教材」の 1 行を差し替え、下の階層のエージェント向けの設定も消す
+contains "eval: 答えの無い題材には、教材と書かない指示を使う"   'このディレクトリは、オープンソースで公開されているソフトウェアのリポジトリを' "$(cat "$ROOT/tests/eval/run-eval.sh")"
+contains "eval: 下の階層のエージェント向けの設定も消す"         '-name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 contains "eval: 当てるモデルを完全な ID で固定する"               'MODEL="claude-opus-5-5"'        "$(cat "$ROOT/tests/eval/run-eval.sh")"
 contains "eval: 前の版の skill/ を当てられる"                     'git -C "$ROOT" archive "$SKILL_REF" skill VERSION' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # audit_grep は、スキルを題材の中に置く前に回す（後だと、スキル自身のファイルが監査の対象に混ざる）
