@@ -305,6 +305,8 @@ mutate "scan_secrets: 記号を含む値を見ない" "scripts/scan_secrets.sh" 
   's = s.replace("([bruf]?[\"\x27\"\x27\"\x27`][^\"\x27\"\x27\"\x27`<…[:space:]]{16,}|", "([bruf]?[\"\x27\"\x27\"\x27`][A-Za-z0-9_/+=-]{16,}|", 1)'
 mutate "scan_secrets: 差し込みの書き方を値とみなす" "scripts/scan_secrets.sh" "誤検出しない" \
   's = s.replace("|process\\.env|os", "|os", 1)'
+mutate "資料: 埋め込まれた値の指摘で写しやすいことを書かない" "SKILL.md" "埋め込まれた値の指摘で値を写さない" \
+  's = s.replace("値が埋め込まれていること自体を指摘するときが、いちばん写しやすい", "値に注意する", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 mutate "eval: 範囲の答えを書き始めの行だけで見る" "../tests/eval/score.py" "範囲の答えは、指摘の範囲が重なれば一致させる" \
   's = s.replace("(lo <= r[\x27end\x27] and hi >= r[\x27start\x27] if hi > lo", "(r[\x27start\x27] <= lo <= r[\x27end\x27] if hi > lo", 1)'

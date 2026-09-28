@@ -87,6 +87,13 @@ if grep -qF '止めている相手は、台帳にある ID（S-x・U-x）で書�
   ok "未確認事項が止めている相手を、台帳にある ID で書くと決めている"
 else ng "未確認事項が止めている相手を、台帳にある ID で書くと決めている" "SKILL.md の 4 か、04 の「影響する項目」から決まりが消えている"; fi
 
+# 値が埋め込まれていること自体を指摘するときに、値を写しやすい（実地の評価で、初期データのパスワード・設定の鍵・カード番号を写した）。
+# スクリプトを当てられない形で返すときは、読み直して確かめる
+if grep -qF '値が埋め込まれていること自体を指摘するときが、いちばん写しやすい' "$SKILL/SKILL.md" \
+   && grep -qF 'スクリプトを当てられない形で返すとき' "$SKILL/SKILL.md"; then
+  ok "埋め込まれた値の指摘で値を写さないこと、返す前の読み直しを決めている"
+else ng "埋め込まれた値の指摘で値を写さないこと、返す前の読み直しを決めている" "SKILL.md の 3 から決まりが消えている"; fi
+
 # 題材の依存の定義ファイルは .fixture を付けて置く（fixture_cp の説明を参照）
 raw="$(git -C "$ROOT" ls-files tests/fixtures 2>/dev/null | grep -E '(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Gemfile|Gemfile\.lock|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|pom\.xml|Package\.swift)$' || true)"
 if [[ -z "$raw" ]]; then ok "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）"
