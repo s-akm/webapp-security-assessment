@@ -21,6 +21,9 @@ EVAL="$ROOT/tests/eval"
 # 題材ごとの情報（取得元・下拵え・前提・結果）は手元の置き場に置く。題材を特定できる情報を公開リポジトリに入れないため
 LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
 # 見落としを減らすため、知識の多いモデルで当てる。別名（opus）は CLI の版で指すモデルが変わり、比較が切れるので完全な ID で固定する
+# モデルは更新されていくので、確認日から半年を過ぎたら tests/run.sh が知らせる。新しいモデルが出ていれば、知識と費用と
+# 出力が止められる頻度を比べて選び直し、--skill-ref で前の版の基準を作り直す
+EVAL_MODEL_REVIEWED="2026-09-28"
 MODEL="claude-opus-5-5"; SKILL_REF=""; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""
 
 while [[ $# -gt 0 ]]; do
@@ -103,7 +106,10 @@ fi
 [[ -n "$TARGET" ]] || { sed -n '2,13p' "$0"; exit 2; }
 [[ -f "$LOCAL/targets.tsv" ]] || { echo "題材の一覧が無い: $LOCAL/targets.tsv（書き方は tests/eval/README.md）" >&2; exit 2; }
 line="$(grep -v '^#' "$LOCAL/targets.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
-[[ -n "$line" ]] || { echo "題材 $TARGET が targets.tsv に無い" >&2; exit 2; }
+# 実在の OSS に当てる監査は、別の一覧（audits.tsv）に置く。列は同じ。targets.tsv と分けるのは、取得元のリポジトリ名が
+# 一般の語（payload など）のことがあり、公開前の照合の語に自動で入れると公開の資料と誤って一致するため（照合の語は ngwords に手で足す）
+[[ -n "$line" || ! -f "$LOCAL/audits.tsv" ]] || line="$(grep -v '^#' "$LOCAL/audits.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
+[[ -n "$line" ]] || { echo "題材 $TARGET が targets.tsv にも audits.tsv にも無い" >&2; exit 2; }
 REPO="$(printf '%s' "$line" | cut -f2)"; COMMIT="$(printf '%s' "$line" | cut -f3)"; PREP="$(printf '%s' "$line" | cut -f5)"
 # 下拵えの列は「スクリプト名 [引数]」（例: prep_anchors.py 題材.json）。スクリプトは手元の置き場から探し、無ければ
 # 公開の tests/eval/ から探す。引数の相対パスは手元の置き場から見る（下拵えは手元の置き場で動かす）

@@ -36,8 +36,8 @@ build/
   identifying-words.sh  公開してはいけない語の一覧を、手元の非公開のファイルから作る（案件語と、評価の題材の名前）
 .github/        CI（macOS と Linux）、Dependabot、secret scanning の設定
 tests/          スキルを直したときに壊れていないかを見る
-  run.sh        検査本体（792 件）
-  mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（165 件）
+  run.sh        検査本体（798 件）
+  mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（167 件）
   self-audit.sh 配布前の自己監査。上の 2 つに加え、方針の遵守と配布物を見る
   eval/         実地の評価。スキルを教材に当て、見つけた割合と方針の遵守を測る（費用がかかる。CI では回さない）
     local/      題材ごとの情報（.gitignore 済み。手元にだけ置く）
@@ -235,7 +235,7 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 | | 要るもの |
 |---|---|
 | `recon.sh` | `curl`、`dig`（無くても DNS 以外は動く） |
-| `audit_grep.sh` | `grep`、`git`（任意） |
+| `audit_grep.sh` | `grep`、`git`（任意）、`rg`（任意。あれば再帰の検索に使い、大きなリポジトリで 3〜4 倍速い） |
 | `scan_secrets.sh` | `grep`、`iconv`（任意）、`unzip`（Office の文書を見るとき） |
 | `make_register.py` | `openpyxl` |
 | `browser_probe.mjs` | Node.js 20 以降、`playwright` 1.63（評価対象のリポジトリには入れず、`NODE_PATH` で渡す） |

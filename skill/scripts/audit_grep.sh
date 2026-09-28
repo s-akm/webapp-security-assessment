@@ -79,6 +79,54 @@ fi
 REPO="${1:-.}"
 cd "$REPO" || { echo "パスが開けない: $REPO" >&2; exit 1; }
 
+# 再帰の検索は、ripgrep（rg）があれば rg で行う。grep はファイルを 1 本ずつ 1 つのスレッドで読むので、数万ファイルの
+# リポジトリで 1 本に数秒かかり、全体で数分になる（実在のモノレポで 2〜7 分。rg は同じ検索が 10 倍ほど速い）。
+# 置き換えるのは「-r と -E（または -F）を持ち、下の表のオプションだけを使う呼び出し」に限る。それ以外はそのまま grep に渡す。
+# 結果を grep と揃えるため、.gitignore を無視し、隠しファイルも読み、ファイル名を必ず付け、パスの順に並べる。
+# AUDIT_GREP_NO_RG=1 で grep に戻せる（結果を比べるときに使う）
+if [[ -z "${AUDIT_GREP_NO_RG:-}" ]] && command -v rg >/dev/null 2>&1; then AUDIT_GREP_RG=1; else AUDIT_GREP_RG=0; fi
+grep() {
+  local fl="${1:-}" orig=("$@")
+  if [[ "$AUDIT_GREP_RG" -ne 1 || ! "$fl" =~ ^-[a-zA-Z]+$ || "$fl" != *r* || ( "$fl" != *E* && "$fl" != *F* ) ]]; then
+    command grep "$@"; return
+  fi
+  local a=(--no-config --no-ignore --hidden --no-heading --color=never --sort=path --no-messages --with-filename)
+  local i c
+  for (( i = 1; i < ${#fl}; i++ )); do
+    c="${fl:$i:1}"
+    case "$c" in
+      r|E) ;;
+      n) a+=(-n) ;; i) a+=(-i) ;; o) a+=(-o) ;; l) a+=(-l) ;; q) a+=(-q) ;; c) a+=(-c) ;; F) a+=(-F) ;;
+      h) a+=(--no-filename) ;; H) a+=(--with-filename) ;; I) ;;
+      *) command grep "${orig[@]}"; return ;;
+    esac
+  done
+  shift
+  local pat="" have_pat=0 paths=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -I) ;;
+      --exclude-dir=*) a+=(-g "!${1#--exclude-dir=}") ;;
+      --exclude=*) a+=(-g "!${1#--exclude=}") ;;
+      --include=*) a+=(-g "${1#--include=}") ;;
+      -e) pat="$2"; have_pat=1; shift ;;
+      --) shift; break ;;
+      -*) command grep "${orig[@]}"; return ;;
+      *) if [[ $have_pat -eq 0 ]]; then pat="$1"; have_pat=1; else paths+=("$1"); fi ;;
+    esac
+    shift
+  done
+  while [[ $# -gt 0 ]]; do if [[ $have_pat -eq 0 ]]; then pat="$1"; have_pat=1; else paths+=("$1"); fi; shift; done
+  [[ ${#paths[@]} -gt 0 ]] || paths=(.)
+  # 正規表現の方言が違う（POSIX では角括弧の中の [ はただの文字だが、rg では構文の誤りになる）。rg が誤りで何も出さずに
+  # 終わったら、同じ呼び出しを grep でやり直す。黙って「検出なし」にしない
+  local out st
+  out="$(rg "${a[@]}" -e "$pat" -- "${paths[@]}")"; st=$?
+  if [[ $st -eq 2 && -z "$out" ]]; then command grep "${orig[@]}"; return; fi
+  [[ -n "$out" ]] && printf '%s\n' "$out"
+  return $st
+}
+
 # -I はバイナリを読み飛ばす。画像や PDF が「HTML を直接流し込む」に当たって並ぶのを防ぐ。
 # 依存・生成物・ビルドの出力は読まない。遅くなるうえに、他人のコードが指摘の候補に並ぶ。
 EX='-I --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=dist --exclude-dir=build

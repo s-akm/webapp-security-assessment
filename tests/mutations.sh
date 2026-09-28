@@ -311,6 +311,10 @@ mutate "3 節: 差し込みを見ずに問い合わせを並べる" "scripts/aud
   's = s.replace("if grep -qE \"$QL_INTERP\" <<<\"$c\" || [[ $lit -eq 0 ]]; then", "if [[ $lit -eq 0 ]]; then", 1)'
 mutate "3 節: 変数から作るテンプレートを見ない" "scripts/audit_grep.sh" "テンプレートを変数から作る行に ★" \
   's = s.replace("then lit=0; fi", "then lit=1; fi", 1)'
+mutate "資料: 攻撃の手順を書かない決まりを消す" "SKILL.md" "攻撃の手順と動く攻撃の文字列を書かない" \
+  's = s.replace("攻撃の手順と、そのまま動く攻撃の文字列（ペイロード）も書かない", "書き方に気をつける", 1)'
+mutate "audit_grep: rg の誤りを grep でやり直さない" "scripts/audit_grep.sh" "rg で検索しても grep と同じ結果になる（client-authz）" \
+  's = s.replace("  if [[ $st -eq 2 && -z \"$out\" ]]; then command grep \"${orig[@]}\"; return; fi\n", "", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 mutate "eval: 補助のモデルもモデルの欄に並べる" "../tests/eval/score.py" "モデルの欄は主のモデルだけにする" \
   's = s.replace("\x27model\x27: max((d.get(\x27modelUsage\x27) or {}).items(), key=lambda kv: kv[1].get(\x27costUSD\x27) or 0, default=(\x27\x27, {}))[0],", "\x27model\x27: \x27,\x27.join(sorted((d.get(\x27modelUsage\x27) or {}).keys())),", 1)'

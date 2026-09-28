@@ -87,12 +87,14 @@ if grep -qF '止めている相手は、台帳にある ID（S-x・U-x）で書�
   ok "未確認事項が止めている相手を、台帳にある ID で書くと決めている"
 else ng "未確認事項が止めている相手を、台帳にある ID で書くと決めている" "SKILL.md の 4 か、04 の「影響する項目」から決まりが消えている"; fi
 
-# 値が埋め込まれていること自体を指摘するときに、値を写しやすい（実地の評価で、初期データのパスワード・設定の鍵・カード番号を写した）。
-# スクリプトを当てられない形で返すときは、読み直して確かめる
-if grep -qF '値が埋め込まれていること自体を指摘するときが、いちばん写しやすい' "$SKILL/SKILL.md" \
-   && grep -qF 'スクリプトを当てられない形で返すとき' "$SKILL/SKILL.md"; then
-  ok "埋め込まれた値の指摘で値を写さないこと、返す前の読み直しを決めている"
-else ng "埋め込まれた値の指摘で値を写さないこと、返す前の読み直しを決めている" "SKILL.md の 3 から決まりが消えている"; fi
+# 値が埋め込まれていること自体を指摘するときに、値を写しやすい（実地の評価で、初期データのパスワード・設定の鍵・カード番号を写した）
+if grep -qF '値が埋め込まれていること自体を指摘するときが、いちばん写しやすい' "$SKILL/SKILL.md"; then
+  ok "埋め込まれた値の指摘で値を写さないと決めている"
+else ng "埋め込まれた値の指摘で値を写さないと決めている" "SKILL.md の 3 から決まりが消えている"; fi
+# 成果物に攻撃の手順や動く攻撃の文字列を書かない（広く渡されるうえ、モデルの安全上の判定で出力が止められることがある）
+if grep -qF '攻撃の手順と、そのまま動く攻撃の文字列（ペイロード）も書かない' "$SKILL/SKILL.md"; then
+  ok "成果物に攻撃の手順と動く攻撃の文字列を書かないと決めている"
+else ng "成果物に攻撃の手順と動く攻撃の文字列を書かないと決めている" "SKILL.md の 3 から決まりが消えている"; fi
 
 # 題材の依存の定義ファイルは .fixture を付けて置く（fixture_cp の説明を参照）
 raw="$(git -C "$ROOT" ls-files tests/fixtures 2>/dev/null | grep -E '(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Gemfile|Gemfile\.lock|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|pom\.xml|Package\.swift)$' || true)"
@@ -221,6 +223,8 @@ check_reviewed "基準の版に最終確認日が書いてある" "$SKILL/refere
   'standards-reviewed:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}' "基準の版"
 check_reviewed "既知の勧告の判定表に照合日が書いてある" "$SKILL/scripts/audit_grep.sh" \
   '^ADVISORIES_REVIEWED="[0-9]{4}-[0-9]{2}-[0-9]{2}"' "audit_grep.sh 1b 節の勧告の判定表"
+check_reviewed "実地の評価で使うモデルに確認日が書いてある" "$ROOT/tests/eval/run-eval.sh" \
+  '^EVAL_MODEL_REVIEWED="[0-9]{4}-[0-9]{2}-[0-9]{2}"' "実地の評価で使うモデル（tests/eval/run-eval.sh）"
 
 # 「効」を動詞に使う言い回しは、何がどうなるかを言っていない。
 # 働く・適用される・防御になる・読み込まれる、のように具体的に書く（2.19.0 で全体から外した）。有効・無効は対象外
@@ -1765,6 +1769,20 @@ absent   "audit_grep[3b]: 種類と関係の無い名前（…Text）を拒否�
 absent   "audit_grep[3b]: 許可リストには ★ を付けない"                        "★ api/media.go"                "$S3B"
 contains "audit_grep[3b]: 受け取り口のあるファイルの種類の判定を並べる"       "api/media.go:9:"               "$S3B"
 contains "audit_grep[★一覧]: 3b 節の ★ も集める"                            "[3b.] ★ api/uploads.py:2:"     "$OUT3ALL"
+
+# rg があれば再帰の検索を rg で行う。grep と同じ結果になるか（並び順は除く）。
+# 正規表現の方言が違う書き方（角括弧の中の [）は rg が誤りで終わるので、grep でやり直していること
+if command -v rg >/dev/null 2>&1; then
+  for fx in client-authz output-and-upload size-param query-injection; do
+    RGT="$TMP/rgcmp-$fx"; fixture_cp "$ROOT/tests/fixtures/$fx" "$RGT"
+    ga="$(AUDIT_GREP_NO_RG=1 bash "$SKILL/scripts/audit_grep.sh" "$RGT" 2>&1 | sort)"
+    ra="$(bash "$SKILL/scripts/audit_grep.sh" "$RGT" 2>&1 | sort)"
+    if [[ "$ga" == "$ra" ]]; then ok "audit_grep[rg]: rg で検索しても grep と同じ結果になる（${fx}）"
+    else ng "audit_grep[rg]: rg で検索しても grep と同じ結果になる（${fx}）" "$(diff <(printf '%s\n' "$ga") <(printf '%s\n' "$ra") | grep '^[<>]' | head -2 | cut -c1-120 | tr '\n' ' ')"; fi
+  done
+else
+  skip "audit_grep[rg]: rg が無いので、rg で検索したときの結果は確かめていない"
+fi
 
 # ★ の一覧。節に散らばった ★ を最後に集め、節の番号を付ける。説明文の ★ は数えない
 contains "audit_grep[★一覧]: 最後に ★ を集めて出す"                "=== ★ の一覧"                   "$SSTAR"
