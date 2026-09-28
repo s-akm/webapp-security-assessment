@@ -287,6 +287,14 @@ mutate "資料: grep のパターンを引用符の中で改行する" "referenc
 
 mutate "資料: 未確認事項が止める相手を ID で書くと決めない" "references/04-findings-register.md" "台帳にある ID で書くと決めている" \
   's = s.replace("。**台帳にある ID（S-x・U-x）だけを書く**。相手がまだ指摘になっていなければ、先に「判断保留」の指摘として載せる", "", 1)'
+mutate "3 節: 固定の文字列も値として扱う" "scripts/audit_grep.sh" "固定の文字列だけの行には ★ を付けない（React）" \
+  's = s.replace("        return rest !~ /^(\\+|%|\\.format|\\.concat|\\|\\|)/\n", "        return 0\n", 1)'
+mutate "3 節: ERB の <%- を生の出力に数える" "scripts/audit_grep.sh" "ERB の空白詰めの記号" \
+  's = s.replace("if (c ~ /<%-/ && f !~ /\\.(erb|rhtml)$/) v = 1", "if (c ~ /<%-/) v = 1", 1)'
+mutate "3b 節: 名前の切れ目を見ずに拒否リストとする" "scripts/audit_grep.sh" "種類と関係の無い名前" \
+  's = s.replace("if (c ~ fwd || c ~ rev) print", "print", 1)'
+mutate "3b 節: Rails の入れ子の params を拾わない" "scripts/audit_grep.sh" "受け取り口（Rails の入れ子の params）" \
+  's = s.replace("params(\\[:[a-z_]+\\])*\\[:[a-z_]*(file", "params\\[:[a-z_]*(file", 1).replace("|\\.original_filename|UploadedFile", "", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 mutate "eval: run-eval.sh を少しずつ読む" "../tests/eval/run-eval.sh" "run-eval.sh を実行の前に最後まで読み切る" \
   's = s.replace("\n{\n\nROOT=", "\n\nROOT=", 1).replace("\nexit\n}\n", "\n", 1)'

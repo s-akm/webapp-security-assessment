@@ -1,0 +1,5 @@
+<%- if @comment %>
+<div class="body"><%= @comment.body.html_safe %></div>
+<p><%= "<br>".html_safe %></p>
+<p><%= raw @comment.signature %></p>
+<%- end %>

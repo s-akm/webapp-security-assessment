@@ -830,10 +830,74 @@ echo "  ※ ミドルウェアだけに頼る構成は、その仕組みに不�
 echo "    02 の A-5 を参照"
 
 hr "3. 危険な関数"
-echo "  --- 出力に HTML を直接流し込む ---"
+echo "  --- 出力に HTML を直接流し込む（★ は値を流し込む行。固定の文字列だけを出す行には付けない）---"
+# 枠組みごとの「エスケープを外す書き方」の表。1 つの枠組みの書き方しか持たないと、他の枠組みで素通りする。
+# 並べるだけだと、固定の文字列を出す行と値を流し込む行が混ざって読み流される（実地の評価で、DB に入った利用者の
+# 名前を流し込む行が一覧に出ていたのに、2 回とも台帳に載らなかった）。値を流し込む行に ★ を付けて 1 行ずつ判定させる
+UNESC='dangerouslySetInnerHTML|(^|[^A-Za-z0-9_-])v-html[[:space:]]*=|\[innerHTML\][[:space:]]*=|\.(inner|outer)HTML[[:space:]]*=|insertAdjacentHTML[[:space:]]*\(|document\.write(ln)?[[:space:]]*\('
+UNESC="$UNESC"'|bypassSecurityTrust(Html|Script|Url|ResourceUrl)[[:space:]]*\(|\{@html[[:space:]]|@Html\.Raw[[:space:]]*\(|\|[[:space:]]*(safe|raw)([^A-Za-z0-9_]|$)'
+UNESC="$UNESC"'|\.html_safe|<%=[[:space:]]*raw[[:space:](]|(^|[^.:A-Za-z0-9_])raw[[:space:]]*\(|<%-|\{!!|th:utext|mark_safe[[:space:]]*\(|Markup[[:space:]]*\(|SafeString[[:space:]]*\(|template\.HTML[[:space:]]*\(|\{\{\{|\{\{&'
 {
-  grep -rnE "${EXA[@]}" 'dangerouslySetInnerHTML|v-html|\.innerHTML[[:space:]]*=|@Html\.Raw|\|[[:space:]]*safe|html_safe|mark_safe|\{\{\{' . 2>/dev/null | lim 20
+  grep -rnE "${EXA[@]}" --exclude='*.lock' --exclude='*-lock.json' --exclude='*.lockb' "$UNESC" . 2>/dev/null | sed 's|^\./||' \
+    | LC_ALL=C awk '
+      # s が固定の文字列（式の埋め込みも連結も無い）で始まっていれば 1
+      function lit(s,   q, i, c, n, body, rest) {
+        sub(/^[ \t(]+/, "", s); q = substr(s, 1, 1); n = length(s)
+        if (q != "\"" && q != "\047" && q != "`") return 0
+        for (i = 2; i <= n; i++) { c = substr(s, i, 1); if (c == "\\") { i++; continue } if (c == q) break }
+        if (i > n) return 0
+        body = substr(s, 2, i - 2); if (body ~ /#\{|\$\{/) return 0
+        rest = substr(s, i + 1); sub(/^[ \t]+/, "", rest)
+        return rest !~ /^(\+|%|\.format|\.concat|\|\|)/
+      }
+      # .html_safe の手前が固定の文字列か
+      function lit_before(pre,   q, j) {
+        sub(/[ \t]+$/, "", pre); q = substr(pre, length(pre), 1)
+        if (q != "\"" && q != "\047") return 0
+        for (j = length(pre) - 1; j >= 1; j--) if (substr(pre, j, 1) == q && substr(pre, j - 1, 1) != "\\") break
+        if (j < 1 || substr(pre, j + 1, length(pre) - j - 1) ~ /#\{/) return 0
+        pre = substr(pre, 1, j - 1); sub(/[ \t]+$/, "", pre)
+        return pre !~ /(\+|<<)$/
+      }
+      # 属性の値（v-html="…" など）の中身が固定の文字列か
+      function lit_attr(s,   q, k) {
+        sub(/^[ \t]+/, "", s); q = substr(s, 1, 1)
+        if (q != "\"" && q != "\047") return 0
+        s = substr(s, 2); k = index(s, q); if (k == 0) return 0
+        return lit(substr(s, 1, k - 1))
+      }
+      function after(re) { return match(c, re) ? substr(c, RSTART + RLENGTH) : "" }
+      {
+        f = $0; sub(/:.*/, "", f); c = $0; sub(/^[^:]*:[0-9]+:/, "", c); v = 0
+        if (c ~ /\.html_safe/) { i = index(c, ".html_safe"); if (!lit_before(substr(c, 1, i - 1))) v = 1 }
+        if (c ~ /dangerouslySetInnerHTML/) { if (c !~ /__html[ \t]*:/ || !lit(after("__html[ \t]*:"))) v = 1 }
+        if (c ~ /(^|[^A-Za-z0-9_-])v-html[ \t]*=/ && !lit_attr(after("v-html[ \t]*="))) v = 1
+        if (c ~ /\[innerHTML\][ \t]*=/ && !lit_attr(after("\\[innerHTML\\][ \t]*="))) v = 1
+        if (c ~ /\.(inner|outer)HTML[ \t]*=/ && !lit(after("\\.(inner|outer)HTML[ \t]*=[ \t]*"))) v = 1
+        if (c ~ /insertAdjacentHTML[ \t]*\(/) { a = after("insertAdjacentHTML[ \t]*\\([^,]*,"); if (!lit(a)) v = 1 }
+        if (c ~ /document\.write(ln)?[ \t]*\(/ && !lit(after("document\\.write(ln)?[ \t]*\\("))) v = 1
+        if (c ~ /(bypassSecurityTrust[A-Za-z]+|@Html\.Raw|mark_safe|Markup|SafeString|template\.HTML)[ \t]*\(/ \
+            && !lit(after("(bypassSecurityTrust[A-Za-z]+|@Html\\.Raw|mark_safe|Markup|SafeString|template\\.HTML)[ \t]*\\("))) v = 1
+        if (c ~ /<%=[ \t]*raw[ \t(]/ && !lit(after("<%=[ \t]*raw[ \t]*"))) v = 1
+        if (c ~ /(^|[^.:A-Za-z0-9_])raw[ \t]*\(/ && c !~ /<%=[ \t]*raw/ && !lit(after("(^|[^.:A-Za-z0-9_])raw[ \t]*\\("))) v = 1
+        # テンプレートの式そのものを生で出す書き方は、固定の文字列を書くことがまず無いので、すべて値を流し込む側に数える
+        if (c ~ /\{@html[ \t]|\|[ \t]*(safe|raw)([^A-Za-z0-9_]|$)|\{!!|th:utext|\{\{\{|\{\{&/) v = 1
+        # <%- は EJS では生の出力、ERB では前の空白を詰める記号。ERB のファイルでは数えない
+        if (c ~ /<%-/ && f !~ /\.(erb|rhtml)$/) v = 1
+        # ERB で <%- にだけ一致した行（出力ではない）は出さない
+        if (!v && f ~ /\.(erb|rhtml)$/) { t = c; gsub(/<%-/, "", t); if (t !~ /\.html_safe|raw[ \t(]/) next }
+        if (v) star[++ns] = "  ★ " $0; else plain[++np] = "    " $0
+      }
+      END {
+        for (i = 1; i <= ns && i <= 20; i++) print star[i]
+        if (ns > 20) printf "  （★ はほか %d 件。全部は元のコマンドを直接実行して見る）\n", ns - 20
+        if (np) print "    （以下は固定の文字列だけを出す行）"
+        for (i = 1; i <= np && i <= 10; i++) print plain[i]
+        if (np > 10) printf "  （ほか %d 件）\n", np - 10
+      }'
 } | mask | show
+echo "  ※ ★ は、流し込む値の出どころを 1 行ずつたどる。リクエストの値だけでなく、利用者が登録して保存された値"
+echo "    （名前・プロフィール・投稿・ファイル名）も外部入力（格納型）。無害化の関数を通していなければ指摘になる（07 の 1 節）"
 
 echo "  --- コード・コマンドを組み立てて実行する ---"
 {
@@ -861,6 +925,46 @@ echo "  --- SQL を文字列連結で組み立てる ---"
   grep -rnE "${EXA[@]}" '\.raw\(|executeSql|jdbcTemplate\.(execute|query)|ExecuteSql|DB::(select|statement|raw)|db\.Query\(|connection\.execute' . 2>/dev/null | lim 15
 } | mask | sort -u | lim 30 | show
 echo "  ※ 連結が定数だけなら問題ない。外部入力が混ざる経路があるかを 1 件ずつ読む"
+
+hr "3b. ファイルの受け取り（07 の 6 節）"
+# 受け取り口は枠組みごとに書き方が違う。表で持ち、どの言語でも同じ見方で並べる。
+# 種類の判定は、許す種類を列挙する（許可リスト）のが基本。禁止する種類を列挙する（拒否リスト）と、
+# 一覧に無い種類（.html・.svg・.js・サーバーで実行される拡張子・二重拡張子・大文字）がすべて通る
+UPLOAD_IN='multer[[:space:]]*\(|fileFilter|busboy|formidable|express-fileupload|(req|request)\.files?([^A-Za-z0-9_]|$)|ctx\.request\.files|@UploadedFiles?\(|FileInterceptor'
+UPLOAD_IN="$UPLOAD_IN"'|UploadFile([^A-Za-z0-9_]|$)|request\.FILES|(File|Image)Field[[:space:]]*\(|FileStorage|has_(one|many)_attached|mount_uploader'
+UPLOAD_IN="$UPLOAD_IN"'|params(\[:[a-z_]+\])*\[:[a-z_]*(file|upload|avatar|image|attachment|document)[a-z_]*\]|\.original_filename|UploadedFile|MultipartFile|IFormFile|\$_FILES|->file\([[:space:]]*['"'"'"]|move_uploaded_file'
+UPLOAD_IN="$UPLOAD_IN"'|FormFile[[:space:]]*\(|ParseMultipartForm|MultipartForm'
+DENY_WORD='(block|blocked|deny|denied|forbid|forbidden|disallow|disallowed|black_?list|banned|reject|rejected|dangerous|prohibited|not_?allowed|excluded)'
+KIND_WORD='(ext|exts|extension|extensions|suffix|suffixes|mime|mimes|mime_?types?|content_?types?|file_?types?)'
+DENY_KIND="${DENY_WORD}[A-Za-z_]*${KIND_WORD}([^A-Za-z0-9]|$)|${KIND_WORD}[A-Za-z_]*${DENY_WORD}"
+KIND_CHECK='extname[[:space:]]*\(|splitext[[:space:]]*\(|File\.extname|getOriginalFilename|originalname|original_filename|\.suffix([^A-Za-z0-9_]|$)|PATHINFO_EXTENSION'
+KIND_CHECK="$KIND_CHECK"'|getClientOriginalExtension|getClientMimeType|filepath\.Ext[[:space:]]*\(|Path\.GetExtension|\.content_type|\.mimetype|getContentType\(|\.ContentType'
+UP_INCL=("${INCL[@]}" --include='*.tsx' --include='*.jsx' --include='*.cjs' --include='*.scala' --include='*.ex' --include='*.exs' --include='*.rs')
+UP_FILES="$(grep -rlE "${EXA[@]}" "$UPLOAD_IN" "${UP_INCL[@]}" . 2>/dev/null | sed 's|^\./||' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+$' || true)"
+echo "  --- 受け取り口（ここから、種類の判定・保存先・配信のしかたまでを 1 本ずつたどる）---"
+{ if [[ -n "$UP_FILES" ]]; then
+    printf '%s\n' "$UP_FILES" | while IFS= read -r f; do grep -nE "$UPLOAD_IN" "$f" 2>/dev/null | sed "s|^|  $f:|"; done
+  fi; } | mask | lim 25 | show
+echo "  --- 禁止する種類を列挙して判定している（一覧に無い種類はすべて通る）---"
+# 大小文字を区別せずに候補を拾い、名前の切れ目（_ か大文字）で語が始まるものだけを残す（blockedText を拾わない）
+{ grep -rnEi "${EXA[@]}" "$DENY_KIND" "${UP_INCL[@]}" . 2>/dev/null | sed 's|^\./||' \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+:' \
+    | LC_ALL=C awk '
+      BEGIN {
+        d = "([Bb]lock|BLOCK|[Dd]en[yi]|DEN[YI]|[Ff]orbid|FORBID|[Dd]isallow|DISALLOW|[Bb]lack_?[Ll]ist|BLACK_?LIST|[Bb]anned|BANNED|[Rr]eject|REJECT|[Dd]angerous|DANGEROUS|[Pp]rohibit|PROHIBIT|[Nn]ot_?[Aa]llowed|NOT_?ALLOWED|[Ee]xclud|EXCLUD)"
+        k = "(_(exts?|extensions?|suffix(es)?|mimes?|mime_?types?|content_?types?|file_?types?)|Exts?|Extensions?|Suffix(es)?|Mimes?|MimeTypes?|ContentTypes?|FileTypes?|_?(EXTS?|EXTENSIONS?|SUFFIX(ES)?|MIMES?|MIME_?TYPES?|CONTENT_?TYPES?|FILE_?TYPES?))"
+        r = "(^|[^A-Za-z])([Ee]xt(ension)?s?|EXT(ENSION)?S?|[Ss]uffix(es)?|SUFFIX(ES)?|[Mm]ime_?[Tt]ypes?|MIME_?TYPES?|[Mm]imes?|MIMES?|[Cc]ontent_?[Tt]ypes?|CONTENT_?TYPES?|[Ff]ile_?[Tt]ypes?|FILE_?TYPES?)"
+        rd = "(Block|BLOCK|Den[yi]|DEN[YI]|Forbid|FORBID|Disallow|DISALLOW|Black_?[Ll]ist|BLACK_?LIST|Banned|BANNED|Reject|REJECT|Dangerous|DANGEROUS|Prohibit|PROHIBIT|Not_?Allowed|NOT_?ALLOWED|Exclud|EXCLUD|_(block|den[yi]|forbid|disallow|black_?list|banned|reject|dangerous|prohibit|not_?allowed|exclud))"
+        fwd = d "[A-Za-z_]*" k "([^A-Za-z]|$)"; rev = r "_?" rd
+      }
+      { c = $0; sub(/^[^:]*:[0-9]+:/, "", c); if (c ~ fwd || c ~ rev) print "  ★ " $0 }' | lim 15; } | mask | show
+echo "  --- 受け取り口のあるファイルで、拡張子・種類を判定している行 ---"
+{ if [[ -n "$UP_FILES" ]]; then
+    printf '%s\n' "$UP_FILES" | while IFS= read -r f; do grep -nE "$KIND_CHECK" "$f" 2>/dev/null | sed "s|^|  $f:|"; done
+  fi; } | mask | lim 20 | show
+echo "  ※ ★ は、拒否リストで種類を判定している。許す種類の一覧（許可リスト）に変えるまで指摘になる"
+echo "    拡張子だけ・申告された Content-Type だけの判定は偽装できる。中身を確かめるか、保存先を公開の配信から外す"
+echo "    受け取り口があるのに判定の行が 1 つも無ければ、種類を確かめずに受け取っている"
 
 hr "4. 秘密情報のハードコード（値は伏字にして出力する）"
 # .env* はローカル専用の設定ファイルで、値が入っているのが正常。

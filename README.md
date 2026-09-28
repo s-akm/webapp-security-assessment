@@ -36,8 +36,8 @@ build/
   identifying-words.sh  公開してはいけない語の一覧を、手元の非公開のファイルから作る（案件語と、評価の題材の名前）
 .github/        CI（macOS と Linux）、Dependabot、secret scanning の設定
 tests/          スキルを直したときに壊れていないかを見る
-  run.sh        検査本体（732 件）
-  mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（149 件）
+  run.sh        検査本体（762 件）
+  mutations.sh  検査の検査。欠陥を入れて検査が落ちるかを見る（153 件）
   self-audit.sh 配布前の自己監査。上の 2 つに加え、方針の遵守と配布物を見る
   eval/         実地の評価。スキルを教材に当て、見つけた割合と方針の遵守を測る（費用がかかる。CI では回さない）
     local/      題材ごとの情報（.gitignore 済み。手元にだけ置く）
