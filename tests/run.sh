@@ -1991,6 +1991,8 @@ else ng "eval: 実行に失敗した回は採点も記録もしない" "失敗�
 # 答えの無い題材（実在の OSS）は、冒頭の「教材」の 1 行を差し替え、下の階層のエージェント向けの設定も消す
 contains "eval: 答えの無い題材には、教材と書かない指示を使う"   'このディレクトリは、オープンソースで公開されているソフトウェアのリポジトリを' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 contains "eval: 下の階層のエージェント向けの設定も消す"         '-name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md' "$(cat "$ROOT/tests/eval/run-eval.sh")"
+# 台帳が返らなかった回（安全上の判定で書き出しが止められ、指摘 0 件）は、同じモデルで当て直す
+contains "eval: 台帳が返らなかった回を同じモデルで当て直す"     'mv "$OUT/transcript.jsonl" "$OUT/transcript-止められた-$try.jsonl"' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 contains "eval: 当てるモデルを完全な ID で固定する"               'MODEL="claude-opus-5-5"'        "$(cat "$ROOT/tests/eval/run-eval.sh")"
 contains "eval: 前の版の skill/ を当てられる"                     'git -C "$ROOT" archive "$SKILL_REF" skill VERSION' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # audit_grep は、スキルを題材の中に置く前に回す（後だと、スキル自身のファイルが監査の対象に混ざる）

@@ -24,12 +24,13 @@ LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
 # モデルは更新されていくので、確認日から半年を過ぎたら tests/run.sh が知らせる。新しいモデルが出ていれば、知識と費用と
 # 出力が止められる頻度を比べて選び直し、--skill-ref で前の版の基準を作り直す
 EVAL_MODEL_REVIEWED="2026-09-28"
-MODEL="claude-opus-5-5"; SKILL_REF=""; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""
+MODEL="claude-opus-5-5"; SKILL_REF=""; RETRIES=1; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) MODEL="$2"; shift 2 ;;
     --skill-ref) SKILL_REF="$2"; shift 2 ;;
+    --retries) RETRIES="$2"; shift 2 ;;
     --budget) BUDGET="$2"; shift 2 ;;
     --record) RECORD=1; shift ;;
     --prep-only) PREP_ONLY=1; shift ;;
@@ -214,14 +215,25 @@ args=(-p "$prompt"
   --disallowedTools WebFetch WebSearch Write Edit NotebookEdit Agent)
 args+=(--model "$MODEL")
 # 実行の記録（stream-json）を残し、最後の result の行を採点に使う。記録からスキルの使われ方も数える
-( cd "$APP" && "$CLAUDE_BIN" "${args[@]}" ) > "$OUT/transcript.jsonl" 2> "$OUT/claude.log" || echo "claude が 0 以外で終わった（$OUT/claude.log）"
-python3 -c 'import json,sys
+# 指摘が 0 件で終わった回（モデル側の安全上の判定で台帳の書き出しが途中から止められた回）は、同じモデルで当て直す（--retries。既定 1 回）。
+# 止められるかは回ごとに揺れるので、多くは当て直しで通る。止められた回の記録は transcript-止められた-N.jsonl に残す
+try=0
+while :; do
+  ( cd "$APP" && "$CLAUDE_BIN" "${args[@]}" ) > "$OUT/transcript.jsonl" 2> "$OUT/claude.log" || echo "claude が 0 以外で終わった（$OUT/claude.log）"
+  python3 -c 'import json,sys
 r=[]
 for l in open(sys.argv[1], encoding="utf-8"):
     try: e=json.loads(l)
     except ValueError: continue
     if e.get("type")=="result": r.append(e)
 json.dump(r[-1] if r else {}, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False)' "$OUT/transcript.jsonl" "$OUT/result.json"
+  if python3 -c 'import json,sys
+r=json.load(open(sys.argv[1], encoding="utf-8"))
+sys.exit(0 if r and not r.get("is_error") and (r.get("structured_output") or {}).get("findings") else 1)' "$OUT/result.json" 2>/dev/null || [[ $try -ge $RETRIES ]]; then break; fi
+  try=$((try + 1))
+  mv "$OUT/transcript.jsonl" "$OUT/transcript-止められた-$try.jsonl"
+  echo "台帳が返らなかった（指摘 0 件か失敗）。同じモデルで当て直す（$try 回目）"
+done
 
 score_and_record "$OUT" "$TARGET" "$COMMIT" || { echo "出力: $OUT"; exit 1; }
 echo "出力: $OUT"
