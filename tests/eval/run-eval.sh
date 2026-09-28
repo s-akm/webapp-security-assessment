@@ -41,9 +41,10 @@ score_and_record() {
   local out="$1" target="$2" tcommit="$3"
   # 実行に失敗した回（結果の JSON が無い・エラーで終わった・台帳の中身が無い）は、採点も記録もしない。
   # 記録すると「見つけた 0・違反 1」の行が残り、版の比較を狂わせる（モデルの指定を CLI が知らず、12 回とも即座に失敗したのに記録していた）
+  # 指摘が 0 件の回も同じ扱い。モデル側の安全上の判定で台帳の JSON の書き出しが途中で止められ、指摘 0 件で終わった回があった
   if ! python3 -c 'import json,sys
 r=json.load(open(sys.argv[1], encoding="utf-8"))
-sys.exit(0 if r and not r.get("is_error") and r.get("structured_output") else 1)' "$out/result.json" 2>/dev/null; then
+sys.exit(0 if r and not r.get("is_error") and (r.get("structured_output") or {}).get("findings") else 1)' "$out/result.json" 2>/dev/null; then
     echo "実行が失敗した（結果が無いかエラー）。採点も記録もしない。$out/claude.log を見る" >&2
     tail -c 400 "$out/claude.log" 2>/dev/null >&2 || true
     return 1

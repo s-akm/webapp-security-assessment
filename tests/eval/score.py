@@ -33,7 +33,9 @@ def load_result(path):
             'cost_usd': round(float(d.get('total_cost_usd') or 0), 2),
             'turns': d.get('num_turns'),
             'minutes': round((d.get('duration_ms') or 0) / 60000, 1),
-            'model': ','.join(sorted((d.get('modelUsage') or {}).keys())),
+            # 主のモデル（費用のいちばん大きいもの）だけを残す。Claude Code は内部の処理に補助のモデルも使うので、
+            # 全部を並べると回ごとに欄が揺れ、同じモデルの回として比べられなくなる
+            'model': max((d.get('modelUsage') or {}).items(), key=lambda kv: kv[1].get('costUSD') or 0, default=('', {}))[0],
             'permission_denials': len(d.get('permission_denials') or []),
             # トークンはモデルごとの合計を足す。キャッシュの読み出しは別に数える（使う量の多くを占め、単価も違う）
             'tokens_input': sum((m.get('inputTokens') or 0) + (m.get('cacheCreationInputTokens') or 0)

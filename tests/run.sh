@@ -1837,6 +1837,16 @@ if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d[
   ok "eval[採点]: 集計を JSON に書き出す（history.tsv の元）"
 else ng "eval[採点]: 集計を JSON に書き出す（history.tsv の元）" "summary の数が合わない"; fi
 contains "eval[採点]: トークン数を出す"                         "トークン 入力 0"                "$SC"
+# モデルの欄は主のモデル（費用のいちばん大きいもの）だけにする。補助のモデルまで並べると、回ごとに欄が揺れて比べられない
+python3 - "$TMP/eval-sr.json" "$TMP/eval-sr2.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1])); d['modelUsage'] = {'helper-model': {'costUSD': 0.02}, 'main-model': {'costUSD': 2.5}}
+json.dump(d, open(sys.argv[2], 'w'))
+PY
+python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr2.json" --summary "$TMP/eval-sum2.json" >/dev/null 2>&1 || true
+if [[ "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["model"])' "$TMP/eval-sum2.json" 2>/dev/null)" == "main-model" ]]; then
+  ok "eval[採点]: モデルの欄は主のモデルだけにする"
+else ng "eval[採点]: モデルの欄は主のモデルだけにする" "補助のモデルも並べているか、費用の小さいほうを選んでいる"; fi
 # 範囲で持つ答え（処理の本文）。指摘の範囲が重なれば一致させる（装飾子から書いた指摘も拾う）。1 行なら前後 3 行まで
 cat > "$TMP/eval-ra.json" <<'EOF'
 {"items": [
@@ -1956,7 +1966,7 @@ contains "eval: 利用者の手元の設定を読まない"                    "
 # 実行に失敗した回（結果が無い・エラー）は、採点も記録もしない。記録すると、見つけた 0 の行が版の比較を狂わせる
 FAILD="$TMP/eval-failed-run"; mkdir -p "$FAILD/out" "$TMP/eval-failed-local"
 printf '{"items": [{"id": "A", "scope": "in", "locations": [{"file": "a.js", "line": 1}], "ranges": []}], "secrets": []}\n' > "$FAILD/out/answers.json"
-printf '{}\n' > "$FAILD/out/result.json"; printf 'x\n' > "$FAILD/out/target"
+printf '{"structured_output": {"findings": [], "unconfirmed": [{"id": "U-1", "text": "止められた", "blocks": []}], "maintain": []}}\n' > "$FAILD/out/result.json"; printf 'x\n' > "$FAILD/out/target"
 if ! WSA_EVAL_LOCAL="$TMP/eval-failed-local" bash "$ROOT/tests/eval/run-eval.sh" --score-only "$FAILD/out" --record >/dev/null 2>&1 \
    && [[ ! -f "$TMP/eval-failed-local/history.tsv" ]]; then ok "eval: 実行に失敗した回は採点も記録もしない"
 else ng "eval: 実行に失敗した回は採点も記録もしない" "失敗した回を history.tsv に記録した"; fi
