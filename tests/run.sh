@@ -902,6 +902,11 @@ cat > "$REP/code-quote.md" <<'EOF'
 const DB_PASSWORD = "fixtr9pw"
 全アカウントが同一パスワード'fixtjapw'で作成されている。初期の暗証番号は「fixt4pin」
 EOF
+# 設定ファイルを引用したときに残る鍵。Python の b'…' と、記号を含む値（どちらも以前は取りこぼした）
+cat > "$REP/settings-quote.md" <<'EOF'
+KEY = b'FIXTDUMMY910111212345678910111212'
+SECRET_KEY = 'fixT#DUMMY-qd(mq0pdn9ma*ls!h+4'
+EOF
 printf '%%PDF-1.4 fixture\n' > "$REP/報告書.pdf"
 # LC_ALL=C で走らせる。伏字の前に残す部分はバイト単位で切るため、日本語の途中で切れる。
 # 不完全なバイト列を落とす処理が働いているかは、この条件でないと確かめられない。
@@ -955,6 +960,8 @@ Google・Supabase の鍵|./sa.json:1|GCP のサービスアカウント
 key/secret への値の代入|./.env:1|引用符なしの API_KEY=
 key/secret への値の代入|./.env:2|引用符なしの aws_secret_access_key =
 key/secret への値の代入|./.env:3|大文字の PASSWORD=
+key/secret への値の代入|./settings-quote.md:1|Python の b'…' で書いた KEY
+key/secret への値の代入|./settings-quote.md:2|記号を含む値の SECRET_KEY
 Authorization ヘッダの値|./req.har:1|HAR の Authorization: Bearer
 秘密鍵ブロック|./pgp.log:1|PGP の秘密鍵ブロック
 select * の使用|./NOTES.MD:1|大文字の SELECT * FROM
@@ -998,6 +1005,7 @@ UUID 550e8400-e29b-41d4-a716-446655440000 / 550e8400-e29b-41d4-a716-123456789012
 版 v1.2.3 / 10.0.19045.3803 / 2.17.3 / 1.0.123456789012 / 小数 1.0312345678
 task-management-system-overview-for-the-assessment-document
 API_KEY=process.env.API_KEY / password: string / token = getToken()
+secret: "${SESSION_SECRET_FROM_ENV}" / key: "{{ vault_lookup_key_name }}" / SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY_VALUE") / token: "process.env.GITHUB_TOKEN_VALUE"
 区分 1-2 を参照。3 区分の 1-2-3 節。市区町村まではマスクする
 sb_publishable_... という鍵、sk_live_ で始まる鍵、Bearer <トークン>
 接続先は postgresql://<伏字>@db.example.com
@@ -1808,6 +1816,25 @@ if python3 -c "import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d[
   ok "eval[採点]: 集計を JSON に書き出す（history.tsv の元）"
 else ng "eval[採点]: 集計を JSON に書き出す（history.tsv の元）" "summary の数が合わない"; fi
 contains "eval[採点]: トークン数を出す"                         "トークン 入力 0"                "$SC"
+# 範囲で持つ答え（処理の本文）。指摘の範囲が重なれば一致させる（装飾子から書いた指摘も拾う）。1 行なら前後 3 行まで
+cat > "$TMP/eval-ra.json" <<'EOF'
+{"items": [
+  {"id": "R1", "scope": "in", "category": "x", "locations": [], "ranges": [{"file": "api/h.py", "start": 20, "end": 30}]},
+  {"id": "R2", "scope": "in", "category": "x", "locations": [], "ranges": [{"file": "api/h.py", "start": 40, "end": 50}]},
+  {"id": "R3", "scope": "in", "category": "x", "locations": [], "ranges": [{"file": "api/h.py", "start": 60, "end": 70}]}
+]}
+EOF
+cat > "$TMP/eval-rr.json" <<'EOF'
+{"findings": [
+  {"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y", "locations": [{"file": "api/h.py", "line": 18, "end_line": 25}]},
+  {"id": "S-02", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y", "locations": [{"file": "api/h.py", "line": 52}]},
+  {"id": "S-03", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y", "locations": [{"file": "api/h.py", "line": 71, "end_line": 80}]}
+ ], "unconfirmed": [{"id": "U-1", "text": "a", "blocks": []}], "maintain": []}
+EOF
+SRG="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-ra.json" "$TMP/eval-rr.json" 2>&1 || true)"
+contains "eval[採点]: 範囲の答えは、指摘の範囲が重なれば一致させる"   "見つけた 2 / 3"                 "$SRG"
+if printf '%s\n' "$SRG" | grep -E '見落とし +in +R3' >/dev/null; then ok "eval[採点]: 範囲の答えに重ならない指摘は一致させない"
+else ng "eval[採点]: 範囲の答えに重ならない指摘は一致させない" "R3 が見落としになっていない"; fi
 # 未確認事項が止めている相手は、指摘（S-）でも別の未確認事項（U-）でもよい。実在しない ID だけを咎める
 cat > "$TMP/eval-su.json" <<'EOF'
 {"findings": [{"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y",

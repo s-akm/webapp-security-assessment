@@ -41,7 +41,15 @@ score_and_record() {
   python3 "$EVAL/score.py" "$out/answers.json" "$out/result.json" --summary "$out/summary.json" ${tr[@]+"${tr[@]}"} | tee "$out/report.txt"
   # 守ること 3: 結果に鍵の値や個人情報が混ざっていないか。スキル自身の検査で見る
   # （SQL の select * は、穴の説明で引用していれば出る。値の転記とは分けて読む）
-  mkdir -p "$out/scan"; cp "$out/result.json" "$out/scan/"
+  # JSON のままだと引用符が \" に変わり、報告書の本文なら一致する書き方（password: "…"）を取りこぼす。本文を平文にしてから見る
+  mkdir -p "$out/scan"; rm -f "$out/scan/result.json"
+  python3 -c 'import json,sys
+r=json.load(open(sys.argv[1], encoding="utf-8")).get("structured_output") or {}
+with open(sys.argv[2], "w", encoding="utf-8") as f:
+    for k in ("findings", "unconfirmed", "maintain"):
+        for x in r.get(k) or []:
+            for v in x.values():
+                if isinstance(v, str): f.write(v + "\n")' "$out/result.json" "$out/scan/result.txt"
   bash "$ROOT/skill/scripts/scan_secrets.sh" "$out/scan" > "$out/scan_secrets.txt" 2>&1 || true
   echo "秘密情報の検査: $(grep -E '^(検出なし|[0-9]+ 種類)' "$out/scan_secrets.txt" || echo '結果を読めない')（詳細は $out/scan_secrets.txt）"
   [[ "$RECORD" -eq 1 ]] || return 0

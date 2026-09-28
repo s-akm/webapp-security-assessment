@@ -247,11 +247,14 @@ check "秘密鍵ブロック" '-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----'
 check "Authorization ヘッダの値" \
       '(authorization["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"']?(bearer|basic|token)[[:space:]]+|bearer[[:space:]]+)[A-Za-z0-9._~+/-]{16,}=*' \
       "" i
-# 引用符で囲んだ値は形を問わず見る。引用符なし（.env、HAR、ログ）は、説明文の
+# 引用符で囲んだ値は形を問わず見る（記号を含む値も。Python の b'…' のような接頭辞も許す）。引用符なし（.env、HAR、ログ）は、説明文の
 # 「API_KEY=process.env.X」に当たらないよう、数字を含む 16 文字以上の並びだけを見る。
+# 名前は KEY・SALT 単独も見る（実地の評価で、設定ファイルの KEY = b'…' と SECRET_KEY = '記号を含む値' を報告書に写したのを取りこぼした）。
+# 差し込みの書き方と環境変数の読み出し（${…}・{{…}}・process.env・os.environ など）は値ではないので外す
 check "key/secret への値の代入" \
-      '(api[_-]?key|secret|password|passwd|token|access[_-]?key|client[_-]?secret)[A-Za-z0-9_]*["'"'"']?[[:space:]]*[:=][[:space:]]*(["'"'"'`][A-Za-z0-9_/+=-]{16,}|[A-Za-z0-9_/+=-]{6,}[0-9][A-Za-z0-9_/+=-]{6,})' \
-      "※ 説明文の中の変数名は誤検出。値が書かれていないか確認する" i
+      '(api[_-]?key|secret|password|passwd|token|access[_-]?key|client[_-]?secret|salt|(^|[^A-Za-z0-9])key)[A-Za-z0-9_]*["'"'"']?[[:space:]]*[:=][[:space:]]*([bruf]?["'"'"'`][^"'"'"'`<…[:space:]]{16,}|[A-Za-z0-9_/+=-]{6,}[0-9][A-Za-z0-9_/+=-]{6,})' \
+      "※ 説明文の中の変数名は誤検出。値が書かれていないか確認する" i \
+      '["'"'"'`](\$\{|#\{|\{\{|%\(|%s)|process\.env|os\.environ|getenv|ENV\[|import\.meta\.env'
 
 # コードを引用したときや、文の中に書いたときに残る値。上の「代入」は 16 文字以上か数字の混ざった並びしか見ないので、
 # bcrypt.hash('短い値', 10) や password: '短い値'、「同一のパスワード'短い値'で作成」を取りこぼす（実地の評価で、サンプルデータの共通パスワードを

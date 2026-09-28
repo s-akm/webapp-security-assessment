@@ -301,7 +301,13 @@ mutate "2h 節: 経路の無いファイルの引数も拾う" "scripts/audit_gr
   's = s.replace("\x27 \"$f\" 2>/dev/null; then continue; fi", "\x27 \"$f\" 2>/dev/null; then :; fi", 1)'
 mutate "2h 節: NestJS の @Query を読まない" "scripts/audit_grep.sh" "上限の無い件数に ★（NestJS" \
   's = s.replace("SIZE_IN=\"$SIZE_IN|@(Query|Param|Body)", "SIZE_IN=\"$SIZE_IN|@(Xuery|Param|Body)", 1)'
+mutate "scan_secrets: 記号を含む値を見ない" "scripts/scan_secrets.sh" "記号を含む値の SECRET_KEY" \
+  's = s.replace("([bruf]?[\"\x27\"\x27\"\x27`][^\"\x27\"\x27\"\x27`<…[:space:]]{16,}|", "([bruf]?[\"\x27\"\x27\"\x27`][A-Za-z0-9_/+=-]{16,}|", 1)'
+mutate "scan_secrets: 差し込みの書き方を値とみなす" "scripts/scan_secrets.sh" "誤検出しない" \
+  's = s.replace("|process\\.env|os", "|os", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
+mutate "eval: 範囲の答えを書き始めの行だけで見る" "../tests/eval/score.py" "範囲の答えは、指摘の範囲が重なれば一致させる" \
+  's = s.replace("(lo <= r[\x27end\x27] and hi >= r[\x27start\x27] if hi > lo", "(r[\x27start\x27] <= lo <= r[\x27end\x27] if hi > lo", 1)'
 mutate "eval: run-eval.sh を少しずつ読む" "../tests/eval/run-eval.sh" "run-eval.sh を実行の前に最後まで読み切る" \
   's = s.replace("\n{\n\nROOT=", "\n\nROOT=", 1).replace("\nexit\n}\n", "\n", 1)'
 mutate "eval: 比較で違反を劣後としない" "../tests/eval/compare.py" "新で違反があれば劣後とする" \

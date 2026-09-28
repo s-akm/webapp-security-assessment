@@ -107,10 +107,16 @@ def matching_locs(item, finding, tol, wide=False):
                                                                else lo - tol <= al['line'] <= hi + tol):
                 out.append(fl)
                 break
-        # 穴の行が無い答えは範囲で見る
+        # 穴の行が無い答えは範囲で見る。指摘の範囲が答えの範囲と重なれば一致させる。
+        # 書き始めの行だけで見ると、装飾子やコメントから範囲を書いた指摘が外れる（実測で、関数の定義の行から始まる答えに対し、
+        # 1 行前の装飾子から書いた指摘がすべて見落としになっていた）。1 行で指したものは前後 tol 行まで許す
         if not item['locations']:
             for r in item.get('ranges') or []:
-                if same_file(r['file'], fl.get('file', '')) and r['start'] <= (fl.get('line') or 0) <= r['end']:
+                if not same_file(r['file'], fl.get('file', '')):
+                    continue
+                if (wide and hi - lo > WIDE and lo - tol <= r['end'] and hi + tol >= r['start']) or \
+                   (not wide and hi - lo <= WIDE and (lo <= r['end'] and hi >= r['start'] if hi > lo
+                                                     else r['start'] - tol <= lo <= r['end'] + tol)):
                     out.append(fl)
                     break
     return out
