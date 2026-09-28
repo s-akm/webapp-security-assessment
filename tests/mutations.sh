@@ -321,6 +321,12 @@ mutate "audit_grep: grep に対象の指定を後で渡す" "scripts/audit_grep.
   's = s.replace("    orig=(\"$fl\" ${incs[@]+\"${incs[@]}\"} ${rest[@]+\"${rest[@]}\"})", "    orig=(\"$fl\" ${rest[@]+\"${rest[@]}\"} ${incs[@]+\"${incs[@]}\"})", 1)'
 mutate "audit_grep: 勧告の表に 2026-09-08 の行が無い" "scripts/audit_grep.sh" "16.3.0 に 2026-09-08 の critical の勧告" \
   's = s.replace("if { [[ \"$major\" -eq 15 ]] && verlt \"$pure\" 15.5.24; } || inrange \"$pure\" 16.0.0 16.3.3; then", "if false; then", 1)'
+mutate "2i 節: 分岐の範囲を次の分岐で区切らない" "scripts/audit_grep.sh" "認可の無い分岐に ★（switch の case）" \
+  's = s.replace("if (i < nb && b[i + 1] - 1 < e) e = b[i + 1] - 1", "if (0) e = 0", 1)'
+mutate "browser_probe: 画面の切り替えを起こさない" "scripts/browser_probe.mjs" "画面の切り替えのあとの第三者への送信を数える" \
+  's = s.replace("      history.pushState({}, \"\", u.toString());\n", "", 1)'
+mutate "browser_probe: 同意管理の表から OneTrust を外す" "scripts/browser_probe.mjs" "既知タグと同意管理のラベル付け" \
+  's = s.replace("  [/(^|\\.)(cookielaw\\.org|onetrust\\.com)$/, \"同意管理（OneTrust）\"],\n", "", 1)'
 # ---- 実地の評価の道具（tests/eval/。mutate の対象は skill/ からの相対パスで渡す）----
 mutate "eval: 補助のモデルもモデルの欄に並べる" "../tests/eval/score.py" "モデルの欄は主のモデルだけにする" \
   's = s.replace("\x27model\x27: max((d.get(\x27modelUsage\x27) or {}).items(), key=lambda kv: kv[1].get(\x27costUSD\x27) or 0, default=(\x27\x27, {}))[0],", "\x27model\x27: \x27,\x27.join(sorted((d.get(\x27modelUsage\x27) or {}).keys())),", 1)'

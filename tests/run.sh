@@ -1366,11 +1366,21 @@ for (const host of ["example.com", "cdn.example.com", "notgoogle.example.com",
   const hit = TAGS.find(([re]) => re.test(host));
   if (hit) { console.log(`NG ${host} を ${hit[1]} と誤判定した`); bad++; }
 }
+const { CMP } = await import(pathToFileURL(process.argv[2]).href);
+for (const [host, want] of [["cdn.cookielaw.org", "同意管理（OneTrust）"], ["consent.cookiebot.com", "同意管理（Cookiebot）"],
+                            ["app.usercentrics.eu", "同意管理（Usercentrics）"], ["sdk.privacy-center.org", "同意管理（Didomi）"]]) {
+  const hit = CMP.find(([re]) => re.test(host));
+  if (!hit || hit[1] !== want) { console.log(`NG ${host} -> ${hit ? hit[1] : "(未検出)"} / 期待 ${want}`); bad++; }
+  if (TAGS.find(([re]) => re.test(host))) { console.log(`NG ${host} を計測・広告と誤判定した`); bad++; }
+}
+for (const host of ["cookielaw.org.example.com", "notcookiebot.com"]) {
+  if (CMP.find(([re]) => re.test(host))) { console.log(`NG ${host} を同意管理と誤判定した`); bad++; }
+}
 console.log(bad === 0 ? "ALL OK" : `${bad} 件失敗`);
 NODE
 )"
-  if printf '%s' "$T" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: 既知タグのラベル付け（21 例・誤判定 9 例）"
-  else ng "browser_probe: 既知タグのラベル付け" "$T"; fi
+  if printf '%s' "$T" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: 既知タグと同意管理のラベル付け（25 例・誤判定 11 例）"
+  else ng "browser_probe: 既知タグと同意管理のラベル付け" "$T"; fi
 
   # recon.sh の TAGS と browser_probe.mjs の TAGS が同じ内容であること。
   # 片方だけ直すと、同じ送信先が一方では計測タグ、もう一方では無名になる。
@@ -1596,6 +1606,16 @@ else
     contains "browser_probe[実地]: セキュリティヘッダの欠如を検出" "[無] x-frame-options" "$P"
     contains "browser_probe[実地]: x-powered-by の露出を検出"      "x-powered-by" "$P"
     contains "browser_probe[実地]: 追加パスの応答を出す"           "403" "$P"
+    # 外部の同意管理サービスを使う構成。同意管理の配信元だけが並び、計測タグ（127.0.0.1）は並ばない
+    PCMP="$(node "$SKILL/scripts/browser_probe.mjs" "http://site.localhost:$PORT/cmp-external" 2>&1 || true)"
+    PCMP1="$(printf '%s\n' "$PCMP" | sed -n '/1\. 同意前の第三者送信/,/1b\./p')"
+    contains "browser_probe[実地]: 外部の同意管理の配信元を並べる"               "cmp.localhost" "$PCMP1"
+    absent   "browser_probe[実地]: 同意の前に止めている計測タグを並べない"       "127.0.0.1"     "$PCMP1"
+    # 画面遷移を JavaScript で行う構成。最初の読み込みでは送らず、画面の切り替えのたびに送るものを別に数える
+    PSPA="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/spa" 2>&1 || true)"
+    if printf '%s\n' "$PSPA" | sed -n '/画面の切り替え（history.pushState）のあとに送られたもの/,/^$/p' | grep -F '127.0.0.1' >/dev/null; then
+      ok "browser_probe[実地]: 画面の切り替えのあとの第三者への送信を数える（SPA）"
+    else ng "browser_probe[実地]: 画面の切り替えのあとの第三者への送信を数える（SPA）" "切り替えのあとの節に 127.0.0.1 が無い"; fi
 
     # ここがいちばん大事。値を出力に混ぜていないこと。
     leaked=""
@@ -1808,6 +1828,14 @@ for mode in rg grep; do
   absent   "audit_grep[除外・${mode}]: .wasm と対の読み込み用スクリプトを並べない" "public/lib/engine.js" "$NZO"
   absent   "audit_grep[除外・${mode}]: *.min.js を並べない"                      "other.min.js"        "$NZO"
 done
+
+# 2i 節。単一の入口の中でパスを比べる分岐を並べ、分岐の中に認可の語が無ければ ★ を付ける（Workers・Lambda・Deno）
+SE="$TMP/single-entry"; cp -R "$ROOT/tests/fixtures/single-entry" "$SE"
+S2I="$(bash "$SKILL/scripts/audit_grep.sh" "$SE" 2>&1 | LC_ALL=C awk 'index($0, "=== 2i.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2i]: 認可のある分岐は ★ なしで並べる（Lambda の routeKey）" "    lambda.js:2:"  "$S2I"
+contains "audit_grep[2i]: 認可の無い分岐に ★（Lambda の event.path）"           "★ lambda.js:7:"   "$S2I"
+contains "audit_grep[2i]: 認可の無い分岐に ★（switch の case）"                 "★ deno.ts:4:"     "$S2I"
+contains "audit_grep[2i]: 認可のある case は ★ なしで並べる"                     "    deno.ts:6:"    "$S2I"
 
 # ★ の一覧。節に散らばった ★ を最後に集め、節の番号を付ける。説明文の ★ は数えない
 contains "audit_grep[★一覧]: 最後に ★ を集めて出す"                "=== ★ の一覧"                   "$SSTAR"

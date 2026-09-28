@@ -124,6 +124,41 @@ const PAGES = {
   }),
 
   // 塞がれている想定のパス
+  // 外部の同意管理サービスを使う構成。ページは site.localhost、同意管理は cmp.localhost、計測タグは 127.0.0.1 から配信する
+  // （Chromium は *.localhost を常に自分の端末として扱う）。同意が無い間は計測タグを読み込まない
+  "/cmp-external": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>CMP</title>
+<script src="http://cmp.localhost:${port}/cmp.js"></script></head><body>
+<h1>外部の同意管理</h1>
+<script>
+  if (window.__cmp && window.__cmp.granted()) {
+    const s = document.createElement("script"); s.src = "${THIRD("/tag.js")}"; document.head.appendChild(s);
+  }
+</script>
+</body></html>`,
+  }),
+  "/cmp.js": () => ({
+    status: 200,
+    headers: { "content-type": "application/javascript" },
+    body: "window.__cmp = { granted: function () { return false; } };",
+  }),
+  // 画面遷移を JavaScript で行う構成。最初の読み込みでは第三者へ送らず、画面の切り替え（pushState）のたびに送る
+  "/spa": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>SPA</title></head><body>
+<div id="root">一覧</div>
+<script>
+  const push = history.pushState;
+  history.pushState = function () {
+    push.apply(history, arguments);
+    new Image().src = "${THIRD("/pixel.gif")}?ev=route";
+  };
+</script>
+</body></html>`,
+  }),
   "/admin": () => ({ status: 403, headers: { "content-type": "text/plain" }, body: "forbidden" }),
 
   // --- ここから下は「正しく作られている」側 ---

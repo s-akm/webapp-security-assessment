@@ -729,6 +729,35 @@ fi
 echo "  ※ 行に認可の語が無くても、ハンドラの中や、前段の app.use / ミドルウェア（2d）で見ている場合がある。"
 echo "    公開してよいルートかどうかを 1 本ずつ確かめる。★ は、ほぼ確実に指摘になるもの"
 
+hr "2i. 単一の入口の中での分岐（Workers の fetch・Deno.serve・Lambda のプロキシ統合など。ルートの登録が無い構成）"
+# 入口が 1 つで、中でパスを比べて処理を分ける構成は、ルートの登録の行が無いので 2・2b では数えられない。
+# パスを比べる行を分岐として並べ、その分岐の中（次の分岐の手前まで。最大 8 行）に認可の語が無ければ ★ を付ける
+ENTRY='export[[:space:]]+default[[:space:]]*\{|async[[:space:]]+fetch[[:space:]]*\(|addEventListener\([[:space:]]*["'"'"']fetch|Deno\.serve|exports\.handler[[:space:]]*=|export[[:space:]]+(const|async[[:space:]]+function|function)[[:space:]]+handler'
+BRANCH='(pathname|rawPath|event\.path|routeKey|event\.resource)[[:space:]]*(===|==|!==|!=)|(pathname|rawPath|event\.path)\.(startsWith|match|includes|test)\(|case[[:space:]]+["'"'"'`]/|(new[[:space:]]+URLPattern)\('
+{
+  grep -rlE "${EXA[@]}" "$ENTRY" --include='*.ts' --include='*.js' --include='*.mjs' . 2>/dev/null | sed 's|^\./||' \
+    | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+$' | sort \
+    | while IFS= read -r f; do
+        grep -nE "$BRANCH" "$f" 2>/dev/null | cut -d: -f1 | tr '\n' ' ' > "$HF_LIST.br"
+        [[ -s "$HF_LIST.br" ]] || continue
+        # 認可の語のある行の番号は grep で求める（表の正規表現は awk では解釈が違う）
+        gl="$(grep -nE "$GUARD" "$f" 2>/dev/null | cut -d: -f1 | tr '\n' ' ')"
+        LC_ALL=C awk -v f="$f" -v gls="$gl" -v brs="$(cat "$HF_LIST.br")" '
+          BEGIN { nb = split(brs, b, " "); ng = split(gls, gg, " "); for (k = 1; k <= ng; k++) isg[gg[k] + 0] = 1 }
+          { line[NR] = $0 }
+          END {
+            for (i = 1; i <= nb; i++) {
+              s = b[i] + 0; e = s + 8; if (i < nb && b[i + 1] - 1 < e) e = b[i + 1] - 1
+              ok = 0; for (j = s; j <= e && j <= NR; j++) if (j in isg) ok = 1
+              t = line[s]; sub(/^[ \t]+/, "", t); if (length(t) > 140) t = substr(t, 1, 140) "…"
+              printf "  %s%s:%d: %s\n", (ok ? "  " : "★ "), f, s, t
+            }
+          }' "$f"
+      done
+} | mask | lim 30 | show
+echo "  ※ ★ は、分岐の中に認可の語が見当たらない。入口の前段（共通の関数や、入口の先頭）で認可していないかを 1 本ずつ読む"
+echo "    入口の先頭で一律に認可し、公開の分岐だけを先に返す書き方なら問題ない。分岐の数そのものが、この構成のハンドラの数になる"
+
 hr "2e. ディレクトリ一覧の公開（枠組み・サーバーの設定を問わず）"
 # 一覧の公開は、アプリのコードにも、Web サーバーやコンテナの設定にも書かれる。書き方の表で横断して拾う。
 # 置いてあるファイルの一覧がそのまま見えるので、鍵・ログ・バックアップが並んでいれば、それだけで露出になる

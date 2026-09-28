@@ -61,6 +61,19 @@ export const TAG_SOURCES = [
 // ラベル付けを単体で検査できるよう export している。形は [正規表現, ラベル]。
 export const TAGS = TAG_SOURCES.map(([label, re]) => [new RegExp(re), label]);
 
+// 外部の同意管理サービス（CMP）の配信元。同意の前に読み込むのが正常なので、計測・広告の送信と分けて名前を付ける
+export const CMP = [
+  [/(^|\.)(cookielaw\.org|onetrust\.com)$/, "同意管理（OneTrust）"],
+  [/(^|\.)cookiebot\.(com|eu)$/, "同意管理（Cookiebot）"],
+  [/(^|\.)usercentrics\.(eu|com)$/, "同意管理（Usercentrics）"],
+  [/(^|\.)privacy-center\.org$/, "同意管理（Didomi）"],
+  [/(^|\.)osano\.com$/, "同意管理（Osano）"],
+  [/(^|\.)privacy-mgmt\.com$/, "同意管理（Sourcepoint）"],
+  [/(^|\.)(trustarc\.com|truste\.com)$/, "同意管理（TrustArc）"],
+  [/(^|\.)(cdn-cookieyes\.com|cookieyes\.com)$/, "同意管理（CookieYes）"],
+  [/(^|\.)axept\.io$/, "同意管理（Axeptio）"],
+];
+
 // リアルタイム通信の既知の接続先（計測・広告に当たらないもの）
 export const REALTIME = [
   [/(^|\.)supabase\.co$/, "Supabase Realtime"],
@@ -178,6 +191,7 @@ async function main() {
   // コンソールの文言には URL が載り、クエリに鍵や識別子が入りうる（?key=…）。クエリと断片を伏せて残す
   const maskUrls = (t) => t.replace(/(https?:\/\/[^\s?#"')]+)[?#][^\s"')]*/g, "$1?…（伏字）");
   const tagOf = (h) => { const t = TAGS.find(([re]) => re.test(h)); return t ? t[1] : ""; };
+  const cmpOf = (h) => { const t = CMP.find(([re]) => re.test(h)); return t ? t[1] : ""; };
 
   const browser = await chromium.launch();
   // 素の訪問を作る。保存された同意状態を持ち込まないため、毎回新しいコンテキストを使う。
@@ -241,6 +255,21 @@ async function main() {
   }
   // 遅延して発火するタグを拾う。同意バナー表示後に飛ぶものがここに出る。
   await page.waitForTimeout(3000);
+  // 画面遷移を JavaScript で行う構成（SPA）では、画面を切り替えるたびに計測を送るタグが多い（history.pushState を見張る）。
+  // 最初の読み込みだけでは見えないので、履歴の操作で画面の切り替えを 1 回だけ起こし、そのあとに増えた送信を別に数える。
+  // クリックもフォームの送信もしない。URL に印の問い合わせを足すだけで、サーバーへの要求は起こさない
+  const beforeRoute = new Map(seen);
+  let routeProbed = false;
+  try {
+    routeProbed = await page.evaluate(() => {
+      const u = new URL(location.href);
+      u.searchParams.set("wsa_route_probe", "1");
+      history.pushState({}, "", u.toString());
+      window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
+      return true;
+    });
+    if (routeProbed) await page.waitForTimeout(2000);
+  } catch { routeProbed = false; }
   // 転送された先のホストも自サイトとして、第三者の一覧を作る
   try { own.add(new URL(page.url()).hostname); } catch { /* 同上 */ }
   for (const [h, n] of seen) if (!isOwn(h)) thirdParty.set(h, n);
@@ -263,7 +292,11 @@ async function main() {
       const b = blocked.get(h) || 0;
       const note = b > 0 ? `（うち ${b} 件は成立せず）` : "";
       const ws = wsThird.has(h) ? "（WebSocket を含む）" : "";
-      console.log(`  ${String(n).padStart(3)} 件  ${h.padEnd(30)} ${tagOf(h)}${ws}${note}`);
+      console.log(`  ${String(n).padStart(3)} 件  ${h.padEnd(30)} ${tagOf(h) || cmpOf(h)}${ws}${note}`);
+    }
+    if (sorted.some(([h]) => cmpOf(h))) {
+      console.log("");
+      console.log("  ※ 同意管理（CMP）の配信元は、同意の前に読み込むのが正常。計測・広告のホストが並んでいなければ、同意の前に止められている");
     }
     const totalBlocked = [...blocked.values()].reduce((a, b) => a + b, 0);
     if (totalBlocked > 0) {
@@ -279,6 +312,20 @@ async function main() {
       console.log("    references/08-privacy-compliance.md の 2 節・3 節で扱う事実になる。");
       console.log("    セッションリプレイ（Clarity・Hotjar・LogRocket・FullStory・PostHog・Datadog・Mouseflow・Sentry）なら、");
       console.log("    画面の表示と操作まで送っている可能性がある。何が記録されるかは 08 の 1-2 で確かめる");
+    }
+  }
+
+  if (routeProbed) {
+    const afterRoute = [...seen.entries()]
+      .filter(([h, n]) => !isOwn(h) && n > (beforeRoute.get(h) || 0))
+      .map(([h, n]) => [h, n - (beforeRoute.get(h) || 0)]);
+    console.log("");
+    console.log("  --- 画面の切り替え（history.pushState）のあとに送られたもの ---");
+    if (afterRoute.length === 0) {
+      console.log("  切り替えのあとの第三者への送信は観測されなかった");
+    } else {
+      for (const [h, n] of afterRoute) console.log(`  ${String(n).padStart(3)} 件  ${h.padEnd(30)} ${tagOf(h)}`);
+      console.log("  ※ 画面を切り替えるたびに送っている。同意前なら、利用者が画面を移るごとに第三者へ送信が続く（08 の 2・3 節）");
     }
   }
 
