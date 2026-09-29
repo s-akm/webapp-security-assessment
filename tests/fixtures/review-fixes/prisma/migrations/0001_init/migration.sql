@@ -1,0 +1,1 @@
+CREATE TABLE "Note" ("id" TEXT PRIMARY KEY);

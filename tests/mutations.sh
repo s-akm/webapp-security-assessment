@@ -315,6 +315,56 @@ mutate "13b 節: 別の項目の規則もパスワードの規則とする" "scr
   's = s.replace("if grep -qE \"$PW_FIELD\" <<<\"$t\"; then break; fi", ":", 1)'
 mutate "13b 節: 前の行をさかのぼらない" "scripts/audit_grep.sh" "複数行の規則の下限に ★（Rails）" \
   's = s.replace("while (( j >= 1 && j >= n - 5 ))", "while (( j >= 1 && j >= n ))", 1)'
+mutate "伏字: 鍵らしい名前に続く値を伏せない" "scripts/audit_grep.sh" "公開の設定のブロックの値を出さない" \
+  's = s.replace("if (!match(t, /(secret|passw|pwd|token|api_?key", "if (!match(t, /(secretX|passwX|pwdX|tokenX|api_?keyX", 1)'
+mutate "伏字: 接続文字列の Password= を伏せない" "scripts/audit_grep.sh" "接続文字列の Password= を伏せる" \
+  's = s.replace("(password|pwd|accountkey|sharedaccesskey|client_?secret|api_?key|secret|token)=", "(passwordX)=", 1)'
+mutate "伏字: 検証の呼び出しの引数を伏せない" "scripts/audit_grep.sh" "検証の呼び出しに直書きした鍵を出さない" \
+  's = s.replace("(\\.verify|\\.sign|jwt\\.(decode|encode)|createhmac", "(\\.verifyX|\\.signX|jwtX\\.(decode|encode)|createhmacX", 1)'
+mutate "伏字: 設定のキーまで伏せる" "scripts/audit_grep.sh" "設定のキーは伏せない" \
+  's = s.replace("&& body !~ /^[A-Za-z_][A-Za-z_-]*$/ ", "", 1)'
+mutate "写し: 対象の ★ を置き換えない" "scripts/audit_grep.sh" "対象のコメントの ★ を ☆ に変える" \
+  's = s.replace("gsub(/★/, \"☆\", b);", "", 1)'
+mutate "写し: 制御文字を落とさない" "scripts/audit_grep.sh" "対象の制御文字を出力に残さない" \
+  's = s.replace("    | LC_ALL=C tr -d \x27\\000-\\010\\013-\\037\\177\x27 \\\n", "", 1)'
+mutate "0 節: 依存の定義を package.json だけで見る" "scripts/audit_grep.sh" "stripe でカード決済を有と判定する" \
+  's = s.replace("DEPF=(--include=\x27package.json\x27 --include=\x27requirements*.txt\x27", "DEPF=(--include=\x27package.json\x27 --include=\x27requirementsX*.txt\x27", 1)'
+mutate "0 節: タグをテンプレートで探さない" "scripts/audit_grep.sh" "Handlebars のタグで計測・広告タグを有と判定する" \
+  's = s.replace("--include=\x27*.hbs\x27 ", "", 1)'
+mutate "1 節: リンク先の .. を解決しない" "scripts/audit_grep.sh" "リポジトリの外を指すリンクを知らせる" \
+  's = s.replace("if [[ -d \"$ab\" ]]; then r=\"$(cd \"$ab\" 2>/dev/null && pwd -P)\"; else", "if false; then :; else", 1)'
+mutate "2b: 受け手の左に語の切れ目を置かない" "scripts/audit_grep.sh" "cache.get" \
+  's = s.replace("ROUTE_REG=\x27(^|[^A-Za-z0-9_$.]|this\\.)(app|router|r|e|", "ROUTE_REG=\x27(app|router|r|e|", 1)'
+mutate "2b: 大文字のメソッドを受け手を問わずに読まない" "scripts/audit_grep.sh" "Gin の大文字のメソッドを登録に数える" \
+  's = s.replace("|[A-Za-z_][A-Za-z0-9_]*\\.(GET|POST|PUT|PATCH|DELETE|Map(Get|Post|Put|Patch|Delete|Methods))\\(", "", 1)'
+mutate "2b: exports.x = をすべて登録に数える" "scripts/audit_grep.sh" "exports.formatDate = を登録に数えない" \
+  's = s.replace("SLS_EXPORT=\x27exports\\.handler[[:space:]]*=|", "SLS_EXPORT=\x27exports\\.[a-zA-Z_]+[[:space:]]*=|", 1)'
+mutate "2 節: コメントの行のガードの語を数える" "scripts/audit_grep.sh" "コメントの unauthenticated をガードに数えない" \
+  's = s.replace("if (f == \"\" || t ~ /^[ \\t]*(\\/\\/|#|\\*|\\/\\*|<!--)/) next", "if (f == \"\") next", 1)'
+mutate "2 節: 単語の途中のガードの語を数える" "scripts/audit_grep.sh" "コメントの unauthenticated をガードに数えない" \
+  's = s.replace("if (b ~ /[A-Za-z0-9_]/ && m ~ /^[a-z]/) continue", "", 1)'
+mutate "2 節: 再エクスポートだけの index も並べる" "scripts/audit_grep.sh" "再エクスポートだけの index を並べない" \
+  's = s.replace("case \"$f\" in */index.*|index.*)", "case \"$f\" in NOMATCH)", 1)'
+mutate "2c: lib/ の Server Actions を除く" "scripts/audit_grep.sh" "lib/actions の Server Actions も関数ごとに見る" \
+  's = s.replace("    | grep -vE \x27\\.(test|spec|stories)\\.[a-z]+$\x27 | sort | while IFS= read -r f; do", "    | grep -vE \x27^\\./(src/)?(components|lib|utils)/\x27 | sort | while IFS= read -r f; do", 1)'
+mutate "2e: 一覧を止める設定にも ★ を付ける" "scripts/audit_grep.sh" "一覧を止める設定（Options -Indexes）に ★ を付けない" \
+  's = s.replace("    | grep -vE \x27Options[[:space:]]+([^#]*[[:space:]])?-Indexes|autoindex[[:space:]]+off\x27 | sed", "    | sed", 1)'
+mutate "3: jQuery の .append(要素) にも ★ を付ける" "scripts/audit_grep.sh" "jQuery の .append" \
+  's = s.replace("(append|prepend|after|before|replaceWith)[ \\t]*\\([ \\t]*[\"\\047`][^\"\\047`]*</) {", "(append|prepend|after|before|replaceWith)[ \\t]*\\(/) {", 1)'
+mutate "3: 1 ファイルの ★ を打ち切らない" "scripts/audit_grep.sh" "1 ファイルの ★ は 3 件までにし" \
+  's = s.replace("if (++nf[f] > 3) { more[f]++; next }", "", 1)'
+mutate "19: IFS を改行のまま除外の式を展開する" "scripts/audit_grep.sh" "Prisma のマイグレーションの表の RLS も見る" \
+  's = s.replace("sqlfiles=\"$(IFS=\x27 \x27; find", "sqlfiles=\"$(find", 1)'
+mutate "19: 読み取りの true にも ★ を付ける" "scripts/audit_grep.sh" "読み取りの条件が true のポリシーには" \
+  's = s.replace("|| ! grep -qiE \x27 for \x27 <<<\"$st\"; then printf \x27  ★ %s\\n\x27 \"$st\"", "|| true; then printf \x27  ★ %s\\n\x27 \"$st\"", 1)'
+mutate "10: 検証付きの PyJWT も検証なしに並べる" "scripts/audit_grep.sh" "検証付きの PyJWT の decode" \
+  's = s.replace("      | grep -vE \x27jwt\\.decode\\([^)]*algorithms[[:space:]]*=\x27 | grep -vE", "      | grep -vE", 1)'
+mutate "4: 環境変数の読み込みも直書きに数える" "scripts/audit_grep.sh" "環境変数からの読み込みを直書きに数えない" \
+  's = s.replace("    | grep -vE \x27[:=][[:space:]]*(process\\.env|", "    | grep -vE \x27[:=][[:space:]]*(processX\\.env|", 1)'
+mutate "2m: 文字列の埋め込みを経路と取り違える" "scripts/audit_grep.sh" "Ruby の文字列の埋め込み" \
+  's = s.replace("|/\\{[a-z_]*[iI]d\\}|", "|\\{[a-z_]*[iI]d\\}|", 1)'
+mutate "中断: 途中で止まっても知らせない" "scripts/audit_grep.sh" "途中で止まったら、出力が途中までであること" \
+  's = s.replace("printf \x27\\n=== 中断 ===\\n", "printf \x27\\n=== X ===\\n", 1)'
 mutate "scan_secrets: 記号を含む値を見ない" "scripts/scan_secrets.sh" "記号を含む値の SECRET_KEY" \
   's = s.replace("([bruf]?[\"\x27\"\x27\"\x27`][^\"\x27\"\x27\"\x27`<…[:space:]]{16,}|", "([bruf]?[\"\x27\"\x27\"\x27`][A-Za-z0-9_/+=-]{16,}|", 1)'
 mutate "scan_secrets: 差し込みの書き方を値とみなす" "scripts/scan_secrets.sh" "誤検出しない" \

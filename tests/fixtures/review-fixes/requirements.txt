@@ -1,0 +1,2 @@
+stripe==7.0.0
+google-genai==1.0.0

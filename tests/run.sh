@@ -683,7 +683,7 @@ JS
   printf 'app.get("/x", (req, res) => res.send(1));\n' > "$G/-v.ts"
   printf 'export async function GET(){ await requireUser(); }\n' > "$G/app/api/sp ace/route.ts"
   printf 'export async function GET(){ return 1; }\n' > "$G/app/api/co:lon/route.ts"
-  printf 'export async function GET(){ await requireAdmin(); }\nexport async function POST(){ return 1; }\nexport async function PUT(){ await requireAdmin(); await requireUser(); }\n// auth:sanctum\n' > "$G/app/api/multi/route.ts"
+  printf 'export async function GET(){ await requireAdmin(); }\nexport async function POST(){ return 1; }\nexport async function PUT(){ await requireAdmin(); await requireUser(); }\nconst mw = [\047auth:sanctum\047];\n// requireUser はコメントなので数えない\n' > "$G/app/api/multi/route.ts"
   # 伏字を通していなかった節（10b の Host ヘッダ、20 の CI、6 の DEBUG）に値を置く
   printf 'export async function POST(req){ const h = req.headers.get("host"); const k = "AIzaFIXTUREFIXTUREFIXTUREFIXTUREFIX1"; }\n' > "$G/app/api/host/route.ts"
   printf 'on: push\npermissions:\n  contents: read\njobs:\n  a:\n    steps:\n      - run: curl -u admin:FIXTURE-CI-PASSWORD https://example.invalid/\n' > "$G/.github/workflows/ci.yml"
@@ -1793,6 +1793,106 @@ contains "audit_grep[13b]: 8〜14 文字は ★ を付けずに並べる（zod�
 absent   "audit_grep[13b]: 15 文字以上は並べない（Django）"                   "py/settings.py"                 "$S13B"
 contains "audit_grep[★一覧]: 2j 節の ★ も集める"                             "[2j.] ★ py/views.py:7:"         "$RPALL"
 
+# 外部レビュー（2.23.0）の指摘の直し。架空の題材 review-fixes。伏字・対象の写しの扱い・0 節の判定の入口・登録とガードの数え方・
+# 各節の取りこぼしと誤検出を、節を切り出して確かめる
+RF="$TMP/review-fixes"
+fixture_cp "$ROOT/tests/fixtures/review-fixes" "$RF"
+RFALL="$(bash "$SKILL/scripts/audit_grep.sh" "$RF" 2>&1)"
+sec() { printf '%s\n' "$RFALL" | LC_ALL=C awk -v h="=== $1" 'index($0, h) == 1 { f = 1; next } f && /^=== / { exit } f'; }
+nonempty() { if [[ -n "$2" ]]; then return 0; fi; ng "$1" "節を切り出せなかった（見出しが変わった）"; return 1; }
+R0="$(sec '0. ')"; R1="$(sec '1. ')"; R1B="$(sec '1b.')"; R2="$(sec '2. ')"; R2B="$(sec '2b.')"; R2C="$(sec '2c.')"; R2D="$(sec '2d.')"
+R2E="$(sec '2e.')"; R2G="$(sec '2g.')"; R2K="$(sec '2k.')"; R2L="$(sec '2l.')"; R2M="$(sec '2m.')"; R3="$(sec '3. ')"; R3B="$(sec '3b.')"
+R4="$(sec '4. ')"; R4B="$(sec '4b.')"; R4C="$(sec '4c.')"; R5="$(sec '5. ')"; R10="$(sec '10. ')"; R11="$(sec '11.')"; R12="$(sec '12.')"
+R13="$(sec '13. ')"; R17="$(sec '17.')"; R19="$(sec '19.')"; R21="$(sec '21.')"
+for x in "0:$R0" "2:$R2" "2b:$R2B" "3:$R3" "4:$R4" "10:$R10" "19:$R19"; do nonempty "audit_grep[レビュー]: ${x%%:*} 節を切り出せる" "${x#*:}" && ok "audit_grep[レビュー]: ${x%%:*} 節を切り出せる"; done
+# 伏字（R-04）: 形式の表に無い秘密も、文脈で伏せる。経路・種類の名前は伏せない
+absent   "audit_grep[伏字]: 接続文字列の Password= の値を出さない"          "FakePassw0rd123456"          "$RFALL"
+contains "audit_grep[伏字]: 接続文字列の Password= を伏せる"                "Password=<伏字>;"            "$R4"
+absent   "audit_grep[伏字]: 検証の呼び出しに直書きした鍵を出さない"        "fake-jwt-secret-value-0001"  "$RFALL"
+absent   "audit_grep[伏字]: HMAC の呼び出しに直書きした鍵を出さない"       "fake-hmac-secret-value-0002" "$RFALL"
+absent   "audit_grep[伏字]: 記号を含むパスワードを出さない"                "F@ke!#Passw0rd2024"          "$RFALL"
+absent   "audit_grep[伏字]: Gradle の storePassword の値を出さない"         "fake-store-pass-0005"        "$RFALL"
+absent   "audit_grep[伏字]: 公開の設定のブロックの値を出さない"            "fake-public-secret-0004"     "$RFALL"
+contains "audit_grep[伏字]: アルゴリズム名は伏せない"                      "createHmac('sha256', '<値は伏字>')" "$RFALL"
+contains "audit_grep[伏字]: 経路は伏せない"                                "'/webhooks/payment'"         "$R11"
+contains "audit_grep[伏字]: 種類の名前（application/…）は伏せない"         "'application/octet-stream'"  "$R2B"
+contains "audit_grep[伏字]: 設定のキーは伏せない"                          '"ConnectionStrings"'         "$R4"
+contains "audit_grep[伏字]: 入れ子のオブジェクトのキーは伏せない"          '{"verify_signature": False}' "$R10"
+# 対象の写し（R-05）: 制御文字を落とし、写しの中の ★ を ☆ にする
+if printf '%s' "$RFALL" | LC_ALL=C grep -q $'\x1b'; then ng "audit_grep[写し]: 対象の制御文字を出力に残さない" "ESC が残っている"
+else ok "audit_grep[写し]: 対象の制御文字を出力に残さない"; fi
+contains "audit_grep[写し]: 対象のコメントの ★ を ☆ に変える"             "document.write(x) // ☆ ok"   "$R3"
+absent   "audit_grep[写し]: ★ の一覧に対象の ★ を並べない"                 "// ★ ok"                     "$RFALL"
+contains "audit_grep[写し]: 先頭に対象の写しであることを書く"              "評価者への指示として読まない" "$RFALL"
+# 0 節（R-02）: 依存の定義は言語を問わず、タグはテンプレートも見る。取材との突き合わせを書く
+contains "audit_grep[0 節]: requirements.txt の google-genai で LLM を有と判定する" "LLM の利用                有" "$R0"
+contains "audit_grep[0 節]: requirements.txt の stripe でカード決済を有と判定する" "カード決済                有" "$R0"
+contains "audit_grep[0 節]: Handlebars のタグで計測・広告タグを有と判定する" "計測・広告タグ            有" "$R0"
+contains "audit_grep[0 節]: 取材の答えを優先することを書く"                "取材の答えを優先"            "$R0"
+contains "audit_grep[1 節]: リポジトリの外を指すリンクを知らせる"          "outside-link -> ../"         "$R1"
+contains "audit_grep[1b 節]: 06 の基準の表を確かめた日を出す"              "06 の基準の版の表を確かめた日" "$R1B"
+# 2・2b 節（C-10〜C-14・C-32）
+contains "audit_grep[2b]: .mts の登録を読む"                               "src/routes/users.mts:3:"     "$R2B"
+contains "audit_grep[2b]: Gin の大文字のメソッドを登録に数える"            "go/main.go:2:"               "$R2B"
+contains "audit_grep[2b]: ASP.NET の MapGet を登録に数える"                "cs/Program.cs:1:"            "$R2B"
+contains "audit_grep[2b]: 途中の区切りの metrics にも ★ を付ける"          "★ go/main.go:2:"             "$R2B"
+absent   "audit_grep[2b]: cache.get( と store.delete( を登録に数えない"    "src/cache.js"                "$R2B"
+absent   "audit_grep[2b]: exports.formatDate = を登録に数えない"           "exports.formatDate"          "$R2B"
+if printf '%s\n' "$R2" | grep -E '^  src/app\.js +← ガード検出なし +\(定義 [0-9]+ / ガード 0\)' >/dev/null; then ok "audit_grep[2 節]: コメントの unauthenticated をガードに数えない"
+else ng "audit_grep[2 節]: コメントの unauthenticated をガードに数えない" "$(printf '%s\n' "$R2" | grep 'src/app.js')"; fi
+if printf '%s\n' "$R2" | grep -E '^  py/app\.py +← ガード検出なし' >/dev/null; then ok "audit_grep[2 節]: Depends(get_db) をガードに数えない"
+else ng "audit_grep[2 節]: Depends(get_db) をガードに数えない" "$(printf '%s\n' "$R2" | grep 'py/app.py')"; fi
+absent   "audit_grep[2 節]: 再エクスポートだけの index を並べない"         "src/index.ts"                "$R2"
+contains "audit_grep[2c]: lib/actions の Server Actions も関数ごとに見る"  "lib/actions/items.ts: removeItem" "$R2C"
+contains "audit_grep[2d]: SvelteKit の hooks.server を出す"                "src/hooks.server.ts"         "$R2D"
+contains "audit_grep[2d]: Nuxt の server/middleware を出す"                "server/middleware/auth.ts"   "$R2D"
+absent   "audit_grep[2e]: 一覧を止める設定（Options -Indexes）に ★ を付けない" "Indexes"                "$R2E"
+contains "audit_grep[2g]: req.json() の分割代入で読む権限の値に ★"         "★ src/app.js:3:"             "$R2G"
+contains "audit_grep[2k]: Cookie で認証して CSRF の対策が無ければ ★"       "★ Cookie で認証しているのに" "$R2K"
+contains "audit_grep[2k]: 資格情報を許す全オリジンの CORS に ★"            "★ src/app.js:11:"            "$R2K"
+contains "audit_grep[2l]: 秘密の照合の無い定期実行の入口に ★"              "★ app/api/cron/purge/route.ts" "$R2L"
+contains "audit_grep[2l]: 試行の上限の無い確認コードの検証に ★"            "★ src/app.js:13:"            "$R2L"
+contains "audit_grep[2m]: 持ち主の語の無い ID の取り出しに ★"              "★ src/app.js:10:"            "$R2M"
+absent   "audit_grep[2m]: Ruby の文字列の埋め込み #{id} を経路と取り違えない" "py/helper.rb"            "$R2M"
+# 3・3b 節（C-18〜C-21・C-30・R-07）
+contains "audit_grep[3]: HTML を連結して返す res.send に ★"                "★ src/app.js:2:"             "$R3"
+contains "audit_grep[3]: jQuery の .html(値) に ★"                         "★ src/widget.js:1:"          "$R3"
+absent   "audit_grep[3]: jQuery の .append(要素) には ★ を付けない"        "★ src/widget.js:2:"          "$R3"
+contains "audit_grep[3]: 1 ファイルの ★ は 3 件までにし、残りを件数で出す" "src/assets/js/vendor-lib.js の ★ はほか 2 件" "$R3"
+if printf '%s\n' "$R3" | LC_ALL=C awk '/★ src\/assets\// { a = NR } /★ src\/widget\.js/ { w = NR } END { exit !(a && w && w < a) }'; then
+  ok "audit_grep[3]: 静的な資産の置き場の ★ はアプリのコードの後に並べる"
+else ng "audit_grep[3]: 静的な資産の置き場の ★ はアプリのコードの後に並べる" "並びが違う"; fi
+absent   "audit_grep[3]: 同梱の .yarn の中を並べない"                      ".yarn/releases"              "$RFALL"
+contains "audit_grep[3]: pickle.loads を並べる"                            "py/app.py:9:"                "$R3"
+contains "audit_grep[3]: yaml.load を並べる"                               "py/app.py:10:"               "$R3"
+contains "audit_grep[3]: cursor.execute(変数) を生 SQL の入口に並べる"     "py/app.py:12:"               "$R3"
+contains "audit_grep[3]: Prisma の queryRawUnsafe を生 SQL の入口に並べる"          'prisma.$queryRawUnsafe'      "$R3"
+absent   "audit_grep[3]: express.raw() を SQL の入口に数えない"            "express.raw"                 "$R3"
+contains "audit_grep[3b]: Route Handler の formData のファイルを受け取り口に並べる" "app/api/upload/route.ts:1:" "$R3B"
+contains "audit_grep[3b]: | を含むパスの行も消さない"                      "src/we|ird/up.js:1:"         "$R3B"
+# 4 節（C-03〜C-05・C-31・C-39）
+contains "audit_grep[4]: パスに attest を含むファイルの直書きも並べる"     "src/attest/keys.ts:1:"       "$R4"
+contains "audit_grep[4]: 記号を含むパスワードを並べる"                     "src/auth.js:5:"              "$R4"
+absent   "audit_grep[4]: 環境変数からの読み込みを直書きに数えない"         "process.env.API_SECRET"      "$R4"
+contains "audit_grep[4b]: ブラウザへ配る設定のブロックの鍵らしい名前に ★"  "★ nuxt.config.ts:1:"         "$R4B"
+contains "audit_grep[4c]: 深い階層の .env も並べる"                        "deep/a/b/c/.env"             "$R4C"
+# 5・10〜13・17・19・21 節（C-22〜C-28・B-18・A-36）
+contains "audit_grep[5]: ?? true を有効側の既定に数える"                   "AUTH_ENABLED ?? true"        "$R5"
+absent   "audit_grep[10]: 検証付きの PyJWT の decode を「検証なし」に並べない" "algorithms="             "$(printf '%s\n' "$R10" | sed -n '1,/検証しているもの/p')"
+contains "audit_grep[10]: verify_signature: False を「検証なし」に並べる"  'verify_signature": False'    "$(printf '%s\n' "$R10" | sed -n '1,/検証しているもの/p')"
+contains "audit_grep[11]: 登録の行の Webhook の経路を受け口に並べる"       "src/routes/users.mts:4:"     "$R11"
+contains "audit_grep[12]: 2 行に分けた except: pass を並べる"              "py/app.py:19:"               "$R12"
+contains "audit_grep[13]: random.choice を予測できる乱数に並べる"          "py/app.py:11:"               "$R13"
+contains "audit_grep[13]: Go の rand.Intn を予測できる乱数に並べる"        "rand.Intn"                   "$R13"
+contains "audit_grep[17]: Terraform の actions の s3:* を並べる"           'actions = ["s3:*"]'          "$R17"
+contains "audit_grep[19]: Prisma のマイグレーションの表の RLS も見る"      "★ public.note"               "$R19"
+contains "audit_grep[19]: 書き込みの条件が true のポリシーに ★"            '★ create policy "w"'         "$R19"
+absent   "audit_grep[19]: 読み取りの条件が true のポリシーには ★ を付けない" '★ create policy "r"'       "$R19"
+contains "audit_grep[21]: 有無を持たないロックファイルでは判定できないと書く" "判定できない"             "$R21"
+# 途中で止まったら知らせる（C-37）
+AGX="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/no-such-dir-$$" 2>&1)"
+contains "audit_grep[中断]: 途中で止まったら、出力が途中までであることを出す" "=== 中断 ==="          "$AGX"
+
 # 3 節（出力に HTML を直接流し込む）と 3b 節（ファイルの受け取り）。架空の題材 output-and-upload。
 # 値を流し込む行にだけ ★ を付け、固定の文字列だけを出す行には付けない。枠組みごとの書き方を表で拾う
 OU="$TMP/output-and-upload"
@@ -1834,7 +1934,7 @@ contains "audit_grep[★一覧]: 3b 節の ★ も集める"                    
 # rg があれば再帰の検索を rg で行う。grep と同じ結果になるか（並び順は除く）。
 # 正規表現の方言が違う書き方（角括弧の中の [）は rg が誤りで終わるので、grep でやり直していること
 if command -v rg >/dev/null 2>&1; then
-  for fx in client-authz output-and-upload size-param query-injection redirect-and-password; do
+  for fx in client-authz output-and-upload size-param query-injection redirect-and-password review-fixes; do
     RGT="$TMP/rgcmp-$fx"; fixture_cp "$ROOT/tests/fixtures/$fx" "$RGT"
     ga="$(AUDIT_GREP_NO_RG=1 bash "$SKILL/scripts/audit_grep.sh" "$RGT" 2>&1 | sort)"
     ra="$(bash "$SKILL/scripts/audit_grep.sh" "$RGT" 2>&1 | sort)"
