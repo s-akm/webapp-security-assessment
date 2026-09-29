@@ -42,16 +42,34 @@ Privacy）に沿って並べてある。**該当しない項目は飛ばす。**
 ### 1. 埋め込まれた秘密情報（MASVS-CRYPTO / CODE）
 
 ```bash
-# ソースと設定に埋まっている鍵
-grep -rnE '(api[_-]?key|secret|token|password)[[:space:]]*[:=][[:space:]]*["'"'"'][A-Za-z0-9_/+-]{16,}' \
-  --include='*.swift' --include='*.kt' --include='*.java' --include='*.dart' \
-  --include='*.ts' --include='*.js' --include='*.plist' --include='*.xml' . 2>/dev/null
+# ソースと設定に埋まっている鍵。Gradle の storePassword "…" のように区切りの記号が無い書き方も拾う。
+# 値は画面に出さず、名前と行番号だけを出す
+grep -rnoiE --exclude-dir=node_modules \
+  '(api[_-]?key|secret|token|password|storePassword|keyPassword)["'"'"']?[[:space:]]*[:=]?[[:space:]]*["'"'"'][^"'"'"'[:space:]]{8,}' \
+  --include='*.swift' --include='*.kt' --include='*.kts' --include='*.java' --include='*.dart' \
+  --include='*.ts' --include='*.tsx' --include='*.js' --include='*.plist' --include='*.xml' \
+  --include='*.gradle' --include='*.properties' --include='app.json' --include='app.config.*' --include='eas.json' . 2>/dev/null \
+  | sed -E 's/(["'"'"'])[^"'"'"']{4,}$/\1…/'
+# 引用符を使わない .properties と .env は、名前だけ出す
+grep -rnoiE --exclude-dir=node_modules '^[[:space:]]*[A-Za-z0-9_.]*(password|secret|token|api[_-]?key)[A-Za-z0-9_.]*[[:space:]]*=' \
+  --include='*.properties' --include='.env*' . 2>/dev/null
 
-# 設定ファイル。配布物に入る
+# アプリに焼き込まれる公開用の環境変数（名前だけ。Expo・React Native・Capacitor の構成）。
+# 接頭辞は scripts/audit_grep.sh の公開用の環境変数の節と同じ
+grep -rhoE --exclude-dir=node_modules \
+  '(NEXT_PUBLIC|NUXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|GATSBY|STORYBOOK|ASTRO_PUBLIC|PUBLIC|VUE_APP|NG_APP|SVELTE_PUBLIC|REMIX_PUBLIC)_[A-Z0-9_]+' \
+  . 2>/dev/null | sort -u
+
+# 設定ファイル。配布物に入るもの、入らないが署名の情報を持つもの
 find . \( -name 'google-services.json' -o -name 'GoogleService-Info.plist' \
-       -o -name '*.jks' -o -name '*.keystore' -o -name '*.p12' -o -name '*.mobileprovision' \) \
+       -o -name '*.jks' -o -name '*.keystore' -o -name '*.p12' -o -name '*.mobileprovision' \
+       -o -name 'keystore.properties' -o -name 'key.properties' -o -name 'local.properties' -o -name '.env*' \) \
   -not -path '*/node_modules/*' 2>/dev/null
 ```
+
+**`EXPO_PUBLIC_` などの接頭辞が付いた変数は、ビルドのときにアプリの中へ文字列として入る。** 名前に KEY・SECRET・TOKEN が
+入っていれば、その値は配布物から取り出せる（下の表で用途を分ける）。`keystore.properties` や `key.properties` に
+署名鍵のパスワードが書かれ、リポジトリに入っていれば、署名鍵のファイルと合わせて偽アプリを作れる。
 
 **すべての鍵が問題なわけではない。** 用途で分ける。
 
@@ -68,7 +86,7 @@ Firebase の設定ファイルは公開前提で、守るのは**サーバー側
 **ただし、公開前提の鍵でも呼べる API が増えることがある。** Google の `AIza…` の鍵は、同じ GCP プロジェクトで
 Generative Language API（Gemini）を有効にすると、**配布済みの鍵のまま Gemini を呼べる**状態になる
 （2026-02 に公表。公開 Web 上で使える鍵が数千件見つかった）。**その鍵に API の制限が掛かっているか**を、
-依頼者に GCP のコンソールで確かめてもらう。確かめられなければ未確認事項に残す。
+依頼者に GCP のコンソールで確かめてもらう（渡す文面は `templates/client-console-checklist.md` の 11）。確かめられなければ未確認事項に残す。
 
 ### 2. 端末に保存しているもの（MASVS-STORAGE）
 
@@ -82,7 +100,10 @@ grep -rnE -e 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|localSt
 **保存先で判定が変わる。**
 
 - **`Keychain`（iOS）/ Android Keystore を使った保存 / `SecureStore`** —
-  資格情報の置き場として意図されたもの。問題なし
+  資格情報の置き場として意図されたもの。問題なし。ただし Keychain は**いつ読めるか**と**どこへ同期されるか**を属性で決める。
+  `kSecAttrAccessible` が `kSecAttrAccessibleAlways` 系（非推奨）なら端末のロック中も読める。`ThisDeviceOnly` の付かない値や
+  `kSecAttrSynchronizable` が true なら、iCloud キーチェーンやバックアップを通じて別の端末へ移る。トークンは
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` などの端末に閉じた値にしているかを見る
 - **`EncryptedSharedPreferences`** — 置き場としては今も安全側で、判定は**問題なし**。ただし**ライブラリ
   （`androidx.security:security-crypto`）全体が 2025 年に非推奨になった**ので、`references/08-privacy-compliance.md` の
   6 節と同じく「気づいたこと」として渡す（指摘には数えない）
@@ -96,9 +117,9 @@ grep -rnE -e 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|localSt
 ### 3. 通信（MASVS-NETWORK）
 
 ```bash
-# 平文通信の許可
+# 平文通信の許可と、利用者が入れた証明書を信頼する設定
 grep -rnE -e 'usesCleartextTraffic|cleartextTrafficPermitted|NSAllowsArbitraryLoads' \
-  -e 'NSExceptionAllowsInsecureHTTPLoads' --include='*.xml' --include='*.plist' . 2>/dev/null
+  -e 'NSExceptionAllowsInsecureHTTPLoads|certificates src="user"' --include='*.xml' --include='*.plist' . 2>/dev/null
 # 証明書の検証を切っている
 grep -rnE -e 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509TrustManager' \
   -e 'setHostnameVerifier|badCertificateCallback|rejectUnauthorized' . 2>/dev/null | head
@@ -108,6 +129,8 @@ grep -rnE -e 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509Trus
   「一部のドメインだけ」の例外指定なら、その範囲を確かめる
 - **証明書の検証を切っていないか。** Web の O 節と同じだが、モバイルでは
   **開発中に入れた回避策がそのまま出荷される**ことが多い
+- **Android の `network_security_config` で `<certificates src="user" />` を信頼していないか。** 利用者（や端末に入り込んだ
+  第三者）が入れた証明書で、通信を中継して読める。`<debug-overrides>` の中だけなら、配布するビルドには作用しない
 - **証明書のピン留めをしているか。** 無いこと自体は直ちに指摘ではない。
   扱う情報の重さで決める。**入れる場合は更新の手順まで決まっているか**を見る
   （鍵の更新でアプリが一斉に通信できなくなる事故が起きる）
@@ -130,21 +153,39 @@ grep -rnE -e 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509Trus
 **他のアプリや外部から入ってくる経路。**
 
 ```bash
-# ディープリンク・URL スキームの定義
-grep -rnE 'intent-filter|CFBundleURLSchemes|associatedDomains|android:scheme|deepLink' \
-  --include='*.xml' --include='*.plist' --include='*.json' . 2>/dev/null | head -15
-# WebView
-grep -rnE -e 'WebView|WKWebView|InAppBrowser|addJavascriptInterface|evaluateJavascript' \
-  -e 'javaScriptEnabled|allowFileAccess' . 2>/dev/null | head -15
+# ディープリンク・URL スキームの定義。検証済みのリンク（App Links の autoVerify、Universal Links の applinks:）かも見る
+grep -rnE 'intent-filter|CFBundleURLSchemes|associatedDomains|applinks:|autoVerify|android:scheme|deepLink|"scheme"' \
+  --include='*.xml' --include='*.plist' --include='*.json' --include='*.entitlements' . 2>/dev/null | head -15
+# WebView。Android の evaluateJavascript と iOS の evaluateJavaScript は大文字小文字が違うので -i で両方拾う
+grep -rniE --exclude-dir=node_modules \
+  -e 'WebView|WKWebView|InAppBrowser|addJavascriptInterface|evaluateJavascript|WKScriptMessageHandler|addScriptMessageHandler' \
+  -e 'javaScriptEnabled|allowFileAccess|AllowUniversalAccessFromFileURLs|AllowFileAccessFromFileURLs|MixedContentMode|MIXED_CONTENT_ALWAYS_ALLOW' \
+  . 2>/dev/null | head -20
 ```
 
 - **ディープリンクで受け取った値を検証しているか。** 他のアプリから任意の値で呼べる。
   これで画面遷移や操作ができるなら、**認可の判定がアプリ側にしかない**ことになる
+- **ログインの戻り（OAuth のリダイレクト、マジックリンク）をカスタム URL スキーム（`myapp://`）で受けていないか。**
+  カスタム URL スキームは他のアプリも同じ名前で登録でき、どちらが受け取るかをアプリ側で決められない。認可コードや
+  トークンが別のアプリに渡ることがある。**検証済みのリンク（Android の App Links、iOS の Universal Links）で受けているか**、
+  OAuth なら **PKCE**（`S256`）を使っているかを見る（RFC 8252）
+- **ログイン画面をアプリ内の WebView で開いていないか。** WebView ではアプリが入力を読めるうえ、利用者は正規の画面かを
+  確かめられない。OS のブラウザを使う仕組み（iOS の `ASWebAuthenticationSession`、Android の Custom Tabs）を使う（RFC 8252）
 - **WebView に任意の URL を読み込ませていないか。** 読み込む URL を外部入力から
   組み立てていれば、アプリの文脈で攻撃者のページが動く
-- **JavaScript ブリッジ**（`addJavascriptInterface` 等）で、端末側の機能を
-  Web 側に渡していないか。WebView に外部のページを表示するなら、その組み合わせは危険
+- **JavaScript ブリッジ**（Android の `addJavascriptInterface`、iOS の `WKScriptMessageHandler` 等）で、端末側の機能を
+  Web 側に渡していないか。WebView に外部のページを表示するなら、その組み合わせは危険。受け取る側でメッセージの送り元
+  （表示中のページのオリジン）を確かめているかも見る
+- **WebView の緩い設定。** `setAllowUniversalAccessFromFileURLs(true)`・`setAllowFileAccessFromFileURLs(true)` は、
+  端末内のファイルとして開いたページから他のファイルや任意のオリジンへ届く。`MIXED_CONTENT_ALWAYS_ALLOW` は
+  HTTPS のページに HTTP の読み込みを混ぜる
 - **他アプリへ公開している入口**（Android の `exported="true"`）が意図したものか
+- **個人情報を表示する画面で、画面の記録を止めているか。** Android は `FLAG_SECURE` でスクリーンショットと
+  最近使ったアプリの一覧のサムネイルを止められる。iOS はアプリが背景に回るときのサムネイルに画面が写るので、覆う処理があるかを見る
+- **クリップボードに秘密の値を置いていないか。** 確認コードや口座番号をコピーさせる機能は、他のアプリから読まれる
+  ことがある。Android 13 以降は、機微な内容として印を付ける指定（`ClipDescription.EXTRA_IS_SENSITIVE`）がある
+- **プッシュ通知の本文に個人情報を入れていないか。** ロック画面に表示され、通知を配る事業者（APNs・FCM）も通る。
+  本文は「新しいメッセージがあります」のようにし、内容はアプリを開いてから取りに行く形にする
 
 ### 6. 権限（MASVS-PRIVACY）
 
