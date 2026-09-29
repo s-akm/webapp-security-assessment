@@ -8,6 +8,10 @@
 - 網羅性を確認したい（見落とした領域が無いか）
 - 現状の水準を、事業として求められる水準と比較したい
 
+**省くときは、台帳を作る `scripts/make_register.py` に `--frameworks none` を渡す。** 既定は `--frameworks owasp` で、
+渡さないと OWASP の当てはめのシートが空のまま台帳に入る。空の当てはめ表は、確かめたように見えて何も確かめていない
+（`references/04-findings-register.md` の「台帳の構成」）。
+
 **カード決済を扱うときは、対外説明が無くても「カード決済を扱う場合」の節だけは読む。**
 ガイドラインの要求に、この評価で見るべき観点（管理画面・クレジットマスター・決済ページのスクリプト）が入っている。
 
@@ -70,6 +74,8 @@ Benchmark を選ぶ**。
 このスキルの `references/02-code-audit.md` は ASVS の章立てとおおむね対応している。
 認可 = V8、認証 = V6、セッション = V7、トークン = V9、OAuth = V10、入出力 = V1 / V2、
 Webhook と外部連携 = V4、暗号 = V11、通信 = V12、設定 = V13、データ保護 = V14、ログ = V16。
+02 の外にある資料で扱う章もある。Web のフロントエンド = V3（`references/07-web-vulnerabilities.md` の 1-6・2・3 節）、
+ファイルの扱い = V5（07 の 6 節）、安全なコーディングと依存 = V15（`references/10-dependencies.md`）。
 **対応しない章もある**（WebRTC など）。対象に無い技術の章は飛ばしてよい。
 
 上の行にある `standards-reviewed` の日付が、この表を最後に確認した日になる。
@@ -94,10 +100,10 @@ Webhook と外部連携 = V4、暗号 = V11、通信 = V12、設定 = V13、デ�
 | No | カテゴリ | 主に見るもの |
 |---|---|---|
 | A01 | Broken Access Control | 認可のガード、IDOR、ロール判定の根拠（監査 A 群）。**SSRF もここに含む**（07 の 5 節） |
-| A02 | Security Misconfiguration | セキュリティヘッダ、既定値、開発用の残骸（監査 I ／ 実機確認） |
+| A02 | Security Misconfiguration | セキュリティヘッダ、既定値、開発用の残骸（監査 I ／ 実機確認。`references/03-runtime-verification.md` の 10 節、`references/13-infrastructure.md`） |
 | A03 | Software Supply Chain Failures | 依存・ビルド系・配布基盤（`references/10-dependencies.md`） |
-| A04 | Cryptographic Failures | パスワードの保存方式、通信の暗号化、鍵の管理（監査 B-1 / C） |
-| A05 | Injection | SQL・コマンド・テンプレート、XSS（監査 D-1 / D-2） |
+| A04 | Cryptographic Failures | パスワードの保存方式、通信の暗号化、鍵の管理、乱数（監査 B-1 / C / N / O） |
+| A05 | Injection | SQL・コマンド・テンプレート、XSS、出力の無害化（監査 D-1 / D-2 / D-3、`references/07-web-vulnerabilities.md` の 0 節） |
 | A06 | Insecure Design | 濫用対策の欠落、レート制限、設計上の前提（監査 F） |
 | A07 | Authentication Failures | 認証の強度、セッション、多要素認証（監査 B ／ 実機確認） |
 | A08 | Software or Data Integrity Failures | Webhook の署名検証、ビルドの完全性、依存の取得元（監査 M） |
@@ -163,16 +169,16 @@ Webhook と外部連携 = V4、暗号 = V11、通信 = V12、設定 = V13、デ�
 
 | No | カテゴリ | 監査での対応箇所 |
 |---|---|---|
-| API1 | Broken Object Level Authorization | A-3（IDOR）。**API 攻撃の 4 割前後を占めるとされる。ここが本丸** |
+| API1 | Broken Object Level Authorization | A-3（IDOR）。**ここが本丸** |
 | API2 | Broken Authentication | B 群 |
-| API3 | Broken Object Property Level Authorization | **受け取ったオブジェクトをそのまま更新に渡していないか**（07 の 9 節、マスアサインメント）。応答に不要な項目を含めていないか |
+| API3 | Broken Object Property Level Authorization | **受け取ったオブジェクトをそのまま更新に渡していないか**（07 の 9 節、マスアサインメント）。応答に不要な項目を含めていないか（07 の 9-2 節） |
 | API4 | Unrestricted Resource Consumption | F-2（レート制限）、件数の上限（07 の 9-1 節・`audit_grep.sh` の 2h 節）、ページングの強制 |
 | API5 | Broken Function Level Authorization | A-1（ハンドラごとのガード）。**管理用の操作を一般利用者が呼べないか** |
 | API6 | Unrestricted Access to Sensitive Business Flows | F-1。**自動化されると困る流れ**（予約の買い占め、大量申込）に対策があるか |
 | API7 | Server Side Request Forgery | 07 の 5 節 |
 | API8 | Security Misconfiguration | I 節、実機確認 |
 | API9 | Improper Inventory Management | **使われていない旧版の API が生きていないか**（J 節）。`/v1` が残っていないか |
-| API10 | Unsafe Consumption of APIs | **呼び出している外部 API の応答を検証しているか。** 信頼して流し込んでいないか |
+| API10 | Unsafe Consumption of APIs | **呼び出している外部 API の応答を検証しているか。** 信頼して流し込んでいないか（07 の 9-2 節。取り込んだ値を画面に出す経路は 07 の 1-4） |
 
 **API3 と API9 は、一般の Top 10 では拾いにくい。** この 2 つのために当てはめる価値がある。
 
@@ -237,6 +243,13 @@ EMV 3-D セキュアの導入を求める」とし、根拠に割賦販売法 35
 | 脆弱性診断またはペネトレーションテストの定期実施（自社開発ならソースコードレビューも） | **このスキルは診断の代わりにならない**（下の段落） |
 | ウイルス対策 | 範囲外（取材で聞く） |
 | クレジットマスター対策 | 02 の F-5 |
+
+上の一覧の外で、ガイドラインが EC 加盟店に求めるもの（この節の最初の表の 1 行目）も、見るところを決めておく。空欄のままにしない。
+
+| 求めていること | このスキルで見るところ |
+|---|---|
+| 不正ログイン対策 | 02 の B-3（認証の周辺経路）、03 の 3 節（認証基盤の設定）、02 の F-2（レート制限） |
+| EMV 3-D セキュアの導入 | 範囲外（決済代行の管理画面か契約で分かるので、依頼者に確かめてもらう。上の「EMV 3-D セキュアには期限があった」の段落） |
 
 **この評価は「脆弱性診断」の代わりにならない。** ガイドラインの診断・ペネトレーションテストは
 動的な検査を含む。報告書では「本評価はコード監査と設定確認であり、ガイドラインが求める
@@ -308,9 +321,12 @@ EMV 3-D セキュアの導入を求める」とし、根拠に割賦販売法 35
 ### 書き方
 
 ```markdown
-| 越境移転 | 【一部確定】DB は東京リージョンで国内保存。
-            他の <n> サービスは保存リージョン・契約形態ともに未確認（U-x）。
-            プライバシーポリシーへの記載要否は法務確認が必要 |
+| 越境移転 | 判断保留 | 確かめた事実: DB は東京リージョンで国内保存（実機）。
+                      事業側が決めること: プライバシーポリシーへの記載の要否（法務）。
+                      未確認: 他の <n> サービスの保存リージョンと契約形態（U-x） |
 ```
+
+**判定の列には、この表の値（適合／不適合／判断保留。コードから見えない区分は 範囲外）だけを書く**（`references/04-findings-register.md` の「指摘の判定とは別の軸」）。
+確かめた範囲の広さは根拠の列に書き、【】の印を判定の代わりに使わない。【】は 04 が決めた根拠の印（【実機確認で確定】など）に限る。
 
 **未確認と、確認したうえでの判断保留を区別する。** 前者は調べれば分かる。後者は事業側が決める。

@@ -1,6 +1,7 @@
 # 依存関係とサプライチェーン
 
 `references/02-code-audit.md` の H 節を深掘りするための資料。**依存の数が多い案件**、**スキャンで high 以上が出た案件**、**CI から本番へ自動で出る構成**で読む。
+**AI で作ったアプリ（このスキルの主な対象）では、依存が少なく high が出ていなくても、3-2（名前の紛らわしい依存）と 3-5（エージェントの設定）は見る。**
 
 ## この観点の位置づけ
 
@@ -21,18 +22,37 @@
 **まずスキャンを実行する。**
 
 ```bash
-npm audit --omit=dev            # 本番依存だけに絞る
-pip-audit                        # Python
-bundle audit                     # Ruby
-govulncheck ./...                # Go。到達性まで見てくれる
+npm audit --omit=dev                  # 本番依存だけに絞る
+pip-audit -r requirements.txt         # Python。-r を付けないと、評価者のシェルの Python 環境を監査して 0 件を出す
+bundle-audit check --update           # Ruby。--update で勧告の一覧を取り直す（古い一覧のままだと新しい勧告が出ない）
+govulncheck ./...                     # Go。到達性まで見てくれる
 ```
 
 `--omit=dev` を付けるかどうかで件数が大きく変わる。**両方取って、差を書く。**
 
+**ロックファイルからエコシステムを決め、それに合う道具で見る。** npm の道具だけで見ると、他のロックファイルの依存は 1 件も照合されない。
+
+| ロックファイル | エコシステム | スキャン |
+|---|---|---|
+| `package-lock.json` | npm | `npm audit` |
+| `pnpm-lock.yaml` | pnpm | `pnpm audit` |
+| `yarn.lock` | yarn | `yarn audit`（1 系）・`yarn npm audit`（2 系以降） |
+| `bun.lock` / `bun.lockb` | bun | OSV の照合（`osv-scanner`）でその形式を読めるかを確かめる。読めなければ未確認事項に残す |
+| `requirements.txt`・`uv.lock`・`poetry.lock`・`Pipfile.lock` | Python | `pip-audit -r <requirements 形式のファイル>`。uv なら `uv export --format requirements-txt` で書き出してから渡す |
+| `Gemfile.lock` | Ruby | `bundle-audit check --update` |
+| `go.sum` | Go | `govulncheck ./...` |
+| `composer.lock` | PHP | `composer audit` |
+| `Cargo.lock` | Rust | `cargo audit` |
+| `packages.lock.json` | .NET | `dotnet list package --vulnerable --include-transitive` |
+| `gradle.lockfile`・`pom.xml` | Java / Kotlin | OSV の照合か、組織で使っている SCA の道具 |
+
+**npm の `package-lock.json` が無いことを、ロックファイルが無いことと読まない**（2 節）。bun・pnpm・yarn のロックファイルがあれば、それが正になる。
+
 | 出たもの | どう扱うか |
 |---|---|
 | 本番依存に high 以上 | **経路を確かめてから起票する。** その関数を実際に呼んでいるか |
-| 開発依存だけに high | 優先度を落とす。ただしビルド環境が汚染される経路は別途見る（3 節） |
+| 開発依存だけに high | 本番には入らないので、`references/04-findings-register.md` の問い 1〜3 には該当しない。CI や開発機で動き、そこにある秘密情報に届く経路（3 節）を 3 行で書ければ問い 5 で P1、他の条件と組み合わせて成立するなら問い 6 で P2、どちらも無ければ P4 |
+| moderate 以下 | 1 件ずつは起票しない。到達する経路を具体的に書けるものだけを、04 の問いで優先度を引いて起票する。残りは件数を「仕組み」の行（下の「指摘の書き方」）に添える |
 | 修正版が出ていない | 見送りの候補。**代替の緩和策があるかを書く** |
 
 **「呼んでいるか」を確かめずに起票しない。** 脆弱な関数を含むライブラリを入れていても、その関数を使っていなければ到達しない。逆に、使っていれば優先度は一段上がる。
@@ -56,6 +76,10 @@ npm ls <lib>
 ```
 
 `npm ls` の結果は指摘の書き方を変える。**直接依存なら上げるだけ**、**他の依存が連れてきたものなら親を上げる必要がある**（あるいは上げられない）。
+
+**他の依存が連れてきたもの（間接依存）は、上の grep では到達を判定できない。** アプリは間接依存を直接 import しないので、
+grep が 0 件でも「呼んでいない」にはならない。勧告に書かれた「影響する機能・関数」を、**親の依存がその機能を使っているか**、
+アプリが親のその機能を呼んでいるかで判定する。**判定できなければ、到達するものとして扱う。**
 
 ### 1-2. 「実際に悪用されているか」で優先度を分ける
 
@@ -94,6 +118,20 @@ for a in json.load(sys.stdin).get("vulnerabilities",{}).values():
 ```
 
 **開発依存も含めて照合する**（`--omit=dev` を付けない）。開発依存は本番には入らないが、CI と開発機で動く（3-3）。
+
+**npm 以外も同じく CVE に引き直して照合する。** Python なら `pip-audit` の JSON に、勧告の別名として CVE が入る。
+
+```bash
+pip-audit -r requirements.txt -f json 2>/dev/null | python3 -c '
+import json,sys
+for d in json.load(sys.stdin).get("dependencies",[]):
+    for v in d.get("vulns",[]):
+        for c in [v.get("id","")] + v.get("aliases",[]):
+            if c.startswith("CVE-"): print(c, d["name"])' | sort -u \
+  | while read -r cve name; do grep -xF "$cve" /tmp/kev.txt >/dev/null && echo "KEV $cve $name"; done
+```
+
+他のエコシステムは、1 節の表の道具の JSON 出力から CVE を取り出して、同じ `/tmp/kev.txt` と突き合わせる。
 
 **先頭に `KEV` が出た行から見る**（04 の規則で少なくとも P1）。次に EPSS（今後 30 日に悪用される確率の推定。2026-06 から v5）が
 高いものを見る。**判定の順は KEV → EPSS → CVSS。** CVE が `-` の勧告（マルウェアの勧告など、
@@ -135,9 +173,12 @@ grep -nE '"resolved": "' package-lock.json 2>/dev/null | grep -v 'registry.npmjs
 **ロックファイルが無い場合は、それ自体が指摘になる。** ビルドのたびに解決される版が変わり、「動いていたものが動かなくなる」「監査した版と本番の版が違う」が起きる。何を監査したのかが言えなくなる。
 
 ```bash
-ls package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Gemfile.lock 2>/dev/null
-git log -1 --format=%cr -- package-lock.json    # 最後に更新されたのはいつか
+ls package-lock.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb poetry.lock uv.lock Pipfile.lock Gemfile.lock \
+  go.sum composer.lock Cargo.lock packages.lock.json gradle.lockfile 2>/dev/null
+git log -1 --format=%cr -- <見つかったロックファイル>    # 最後に更新されたのはいつか
 ```
+
+どれか 1 つがあれば、そのエコシステムのロックファイルはある（1 節の表）。**`package-lock.json` だけを探して「無い」と書かない。**
 
 ## 3. 他人のコードが本番に入る経路
 
@@ -172,12 +213,54 @@ grep -nE 'minimumReleaseAge|allowBuilds|onlyBuiltDependencies|dangerouslyAllowAl
 grep -n 'cooldown' .github/dependabot.yml 2>/dev/null
 ```
 
+**`overrides` / `resolutions` があれば、中身を読む。** 間接依存の版を強制する仕組みで、脆弱性の回避に使うのが普通だが、
+逆向きにも使える。**古い版への固定**（修正版より前の版に留めている。上げた後で外し忘れたものも含む）と、
+**取得元の差し替え**（フォークの git リポジトリや任意の URL の tarball を指す）を探す。どちらも、なぜそうしたかがコミットや
+コメントに無ければ、依頼者に聞く。
+
 `scripts/audit_grep.sh` の 21 節が、スクリプトの走る依存の数と名前、公式レジストリ以外の取得元、防御の設定を出す。
 
 **既知の乗っ取られた版がロックファイルに入っていないか**も見る。入っていたら、
 **その版が入ったビルド環境と開発機の秘密情報はすべて漏れたものとして扱う**（入れ替えと、露出していた期間の悪用の調査までを是正に書く。タスクの型は `references/05-remediation-plan.md` の「秘密情報の入れ替え」）。
 
 見つかったこと自体は指摘ではない（ビルドに必要なものも多い）。**書くのは、この経路が存在することと、CI で本番の秘密情報が同じ環境にあるかどうか。** 両方が揃うと、依存 1 つの汚染で秘密情報が抜ける経路になる。
+
+**`hasInstallScript` は npm のロックファイル（lockfile v2 以降）にしか入らない。** pnpm・yarn・bun と、npm の lockfile v1 では上の数が 0 になる。
+**0 を「無い」と読まない。** pnpm は版によって `pnpm-lock.yaml` に `requiresBuild: true` が入るので、まずそれを数える。
+入っていなければ、既に入っている `node_modules` の各 `package.json` を数える（pnpm の実体は `node_modules/.pnpm` の下にある）。
+
+```bash
+grep -c 'requiresBuild: true' pnpm-lock.yaml 2>/dev/null
+# node_modules が既にあるときだけ。スクリプト（preinstall / install / postinstall）か binding.gyp を持つ依存の名前
+find node_modules -name package.json -type f 2>/dev/null | python3 -c '
+import json, os, sys
+names = set()
+for f in sys.stdin.read().split("\n"):
+    try: j = json.load(open(f))
+    except Exception: continue
+    s = j.get("scripts") if isinstance(j.get("scripts"), dict) else {}
+    if j.get("name") and (any(k in s for k in ("preinstall", "install", "postinstall"))
+                          or os.path.exists(os.path.join(os.path.dirname(f), "binding.gyp"))):
+        names.add(j["name"])
+print(len(names)); print("\n".join(sorted(names)[:30]))'
+```
+
+**数えるために依存を入れない。** 入れた時点でスクリプトが走る。`node_modules` が無く、ロックファイルからも数えられなければ、
+「判定不能」と書いて未確認事項に残す。
+
+**リポジトリ自身のスクリプトも、全開発者の端末と CI で走る。** 依存のスクリプトと別に見る。
+
+- `package.json` の `scripts` の `preinstall`・`install`・`postinstall`・`prepare`。`npm install` のたびに走る
+- `.husky/` などの Git のフック。コミットや push のたびに走る
+- `.devcontainer/devcontainer.json` の `initializeCommand`（ホストの側で走る）・`onCreateCommand`・`postCreateCommand`・`postStartCommand`
+
+```bash
+grep -nE '"(preinstall|install|postinstall|prepare)"[[:space:]]*:' package.json 2>/dev/null
+ls -d .husky .githooks .devcontainer 2>/dev/null
+grep -rnE '"(initializeCommand|onCreateCommand|updateContentCommand|postCreateCommand|postStartCommand|postAttachCommand)"' .devcontainer 2>/dev/null
+```
+
+中身が、外から取ってきたものを実行していないか（外から取った内容をそのままシェルに渡す形、版を固定しない `npx`）を読む。
 
 ### 3-2. 名前の紛らわしい依存
 
@@ -187,6 +270,15 @@ grep -n 'cooldown' .github/dependabot.yml 2>/dev/null
 # 直接依存の一覧を出して、見慣れないものを目で確かめる
 node -e "const p=require('./package.json');console.log(Object.keys({...p.dependencies,...p.devDependencies}).join('\n'))"
 ```
+
+**npm 以外にも同じ経路がある。** `requirements.txt`・`pyproject.toml`・`Gemfile`・`composer.json` の直接依存も同じように目で見る。
+レジストリに実在するか、いつから公開されているかは、それぞれ次で確かめられる。
+
+| 定義のファイル | 確かめ方 |
+|---|---|
+| `requirements.txt`・`pyproject.toml` | `pip index versions <名前>`（公開されている版の一覧） |
+| `Gemfile` | `gem info -r <名前>` |
+| `composer.json` | `composer show -a <名前>` |
 
 **判定は目でやる。** 機械的には落とせない。週あたりのダウンロード数と、リポジトリの所在を見れば大抵は分かる。
 
@@ -202,9 +294,15 @@ node -e "const p=require('./package.json');console.log(Object.keys({...p.depende
 
 ```bash
 # 直接依存のうち、素性を確かめる価値があるもの（週あたりのダウンロード数が桁違いに小さい等）
+# 非公開のスコープ（@<自社のスコープ>/…）は外して渡す。下の段落を見る
 node -e "const p=require('./package.json');console.log(Object.keys({...p.dependencies,...p.devDependencies}).join('\n'))" \
+  | grep -vE '^@<非公開のスコープ>/' \
   | while read -r m; do printf '%-40s ' "$m"; npm view "$m" time.created 2>/dev/null || echo '（レジストリに無い）'; done
 ```
+
+**非公開のパッケージの名前を、公開のレジストリへ送らない。** `npm view`・`pip index`・`gem info -r` は名前を公開のレジストリに問い合わせる。
+非公開のスコープや社内の名前を渡すと「レジストリに無い」と出るだけでなく、その名前を外へ知らせることになる。
+知られた名前は、同じ名前を公開して取り違えを狙う材料になる。**`.npmrc` にスコープごとの取得元（`@<スコープ>:registry=`）があれば、そのスコープは非公開なので先に外す。**
 
 `npm view <名前> dist.attestations repository.url` で、出所の証明（provenance）とリポジトリの所在も見られる。
 
@@ -258,6 +356,16 @@ grep -rnE '(echo|printf|cat|tee).*\$\{\{[[:space:]]*secrets\.|toJSON\(secrets\)|
 **これも他人のコードが入る経路。** 02 の L 節・08 の 1 節で扱うが、サプライチェーンとしても数える。配信元が差し替えられれば、そのまま利用者のブラウザで動く。
 
 `integrity` 属性（SRI）が付いているか。付いていなければ、配信元を信頼しているだけの状態になる。**タグマネージャを使っている場合は SRI を付けられない**ので、指摘は「SRI が無い」ではなく「コンテナの変更を誰が承認するか」になる。
+
+- **版を付けない CDN の参照**（`unpkg.com/<名前>`、`@latest`、版の範囲だけの指定）は、中身が予告なく変わるので SRI を付けられない。
+  付けても、新しい版が出た時点で読み込みが止まる。**版を完全に固定し、SRI を付ける**か、自分の配信物に取り込む
+- **配信元のドメインの持ち主が変わることがある。** 2024 年には、広く使われていた polyfill の配信ドメインが売却され、
+  読み込んでいたサイトに悪性のコードが配られた。無名の配信元や、既に保守されていないライブラリの配信元を読み込んでいないかを見る
+
+```bash
+grep -rnE 'unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|@latest|polyfill' \
+  --include='*.html' --include='*.tsx' --include='*.jsx' --include='*.vue' --include='*.svelte' --include='*.astro' --include='*.erb' --include='*.php' . | grep -v node_modules | head -30
+```
 
 ### 3-5. AI コーディングエージェントの設定ファイル
 
