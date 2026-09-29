@@ -1124,6 +1124,7 @@ SQL の引用: WHERE email = '${email}' AND password = '${hash(password)}' / pas
 コミットの作者は noreply@github.com、取得元は git@github.com:fixture/app.git
 パスワードは 12 文字以上 / パスワードは bcrypt で保存 / パスワードを 2026-09-29 に変更 / パスワードは SHA-256 でハッシュ化
 パスワードを v2.1.0 で見直し / 暗証番号は 4 桁 / パスワード：PBKDF2 を使う
+差し込みの引用: password = '${userPassword}' / password: "{{vaultPassword}}" / password = '#{pw_value}'
 EOF
 C="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$CLEAN" 2>&1)"; C_RC=$?
 if printf '%s' "$C" | grep '^検出なし。$' >/dev/null; then
