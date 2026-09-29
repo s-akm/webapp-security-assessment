@@ -129,8 +129,10 @@ mb="$(LC_ALL=C grep -nE '\$[A-Za-z_][A-Za-z0-9_]*[^ -~[:space:]]' "$SKILL"/scrip
 # pipefail のもとで「… | grep -q」と書くと、grep -q が見つけた時点で終わり、書き手が SIGPIPE で落ちて
 # パイプライン全体が失敗扱いになる。見つかったのに「無い」と判定することが確率的に起きる（Linux で 200 回に 1 回）。
 # 検査の absent では、本当は出ている文字列を「出ていない」として素通りさせる。grep にはヒアストリングで渡す（下の検査も参照）。
-# -iq・-Eq・-E -q・--quiet のように、オプションの並びの中に q があるものも同じ（以前は -q で始まる形しか見ていなかった）
-gq="$(grep -nE '(^|[^|])\|[[:space:]]*grep[[:space:]]+((-[A-Za-z]+|--[a-z-]+)[[:space:]]+)*(-[A-Za-z]*q|--quiet|--silent)' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
+# -iq・-Eq・-E -q・--quiet のように、オプションの並びの中に q があるものも同じ（以前は -q で始まる形しか見ていなかった）。
+# grep の前に環境変数の指定（| LC_ALL=C grep -q）を挟んだものも同じ。挟んだ形を見ておらず、制御文字の検査がこの形のまま残り、
+# 検査の検査が CI の Linux でだけ「生きていない」と出続けた
+gq="$(grep -nE '(^|[^|])\|[[:space:]]*([A-Za-z_]+=[^[:space:]]*[[:space:]]+)*grep[[:space:]]+((-[A-Za-z]+|--[a-z-]+)[[:space:]]+)*(-[A-Za-z]*q|--quiet|--silent)' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
       | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#|s = s\.replace\(' || true)"
 if [[ -z "$gq" ]]; then ok "パイプで grep -q に渡していない（pipefail のもとで確率的に誤る書き方）"
 else ng "パイプで grep -q に渡していない（pipefail のもとで確率的に誤る書き方）" "$(printf '%s' "$gq" | head -3 | cut -c1-120)"; fi
@@ -138,7 +140,7 @@ else ng "パイプで grep -q に渡していない（pipefail のもとで確�
 # （macOS と Linux の両方で起きた）、書き手が SIGPIPE で終わって同じ誤りになる。検査の検査では、検査が失敗しているのに
 # 「生きていない」と判定し、分担や OS によって結果が変わっていた。検査の道具の中では、grep にはパイプで渡さず
 # ヒアストリング（grep … <<<"$x"）で渡す。スキルのスクリプトも同じ（評価者の手元で pipefail のもとで動く）
-gn="$(grep -nE '(^|[^|])\|[[:space:]]*grep[^|)]*[^2&]>[[:space:]]*/dev/null' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/tests/eval/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
+gn="$(grep -nE '(^|[^|])\|[[:space:]]*([A-Za-z_]+=[^[:space:]]*[[:space:]]+)*grep[^|)]*[^2&]>[[:space:]]*/dev/null' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/tests/eval/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
       | grep -vE "^[^:]+:[0-9]+:[[:space:]]*#|s = s\.replace\(|printf '' \|" || true)"
 if [[ -z "$gn" ]]; then ok "スクリプトと検査の道具で、パイプで grep に渡して出力を捨てていない（pipefail のもとで確率的に誤る書き方）"
 else ng "スクリプトと検査の道具で、パイプで grep に渡して出力を捨てていない（pipefail のもとで確率的に誤る書き方）" "$(printf '%s' "$gn" | head -3 | cut -c1-120)"; fi
@@ -2102,7 +2104,7 @@ contains "audit_grep[伏字]: 入れ子のオブジェクトのキーは伏せ�
 # 対象の写し（R-05）: 制御文字を落とし、写しの中の ★ を ☆ にする
 # 制御文字を含む行が出力に出ていなければ、下の検査は何も確かめずに通る（8 分担の手動の実行の Linux で、変異を入れても成功した回があった）
 contains "audit_grep[写し]: 制御文字を含む行も、制御文字を落として並べる"  "src/ansi.js:1:eval(y) // [2Kline" "$RFALL"
-if printf '%s' "$RFALL" | LC_ALL=C grep -q $'\x1b'; then ng "audit_grep[写し]: 対象の制御文字を出力に残さない" "ESC が残っている"
+if LC_ALL=C grep $'\x1b' <<<"$RFALL" >/dev/null; then ng "audit_grep[写し]: 対象の制御文字を出力に残さない" "ESC が残っている"
 else ok "audit_grep[写し]: 対象の制御文字を出力に残さない"; fi
 contains "audit_grep[写し]: 対象のコメントの ★ を ☆ に変える"             "document.write(x) // ☆ ok"   "$R3"
 absent   "audit_grep[写し]: ★ の一覧に対象の ★ を並べない"                 "// ★ ok"                     "$RFALL"

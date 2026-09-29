@@ -359,6 +359,8 @@ mutate "資料: コマンド例でスクリプトの中の変数を使う" "refe
   's = s.replace("grep -rnE --exclude-dir=node_modules --exclude-dir=vendor \x27Math", "grep -rnE \"${EX}\" \x27Math", 1)'
 mutate "道具: パイプで grep に渡して出力を捨てる" "../tests/self-audit.sh" "検査の道具で、パイプで grep に渡して出力を捨てていない" \
   's = s.replace("if grep -E \x27生きていない 0\x27 <<<\"$mres\" >/dev/null; then", "if printf \x27%s\x27 \"$mres\" | grep -E \x27生きていない 0\x27 >/dev/null; then", 1)'
+mutate "道具: 環境変数を挟んで grep -q に渡す" "../tests/self-audit.sh" "パイプで grep -q に渡していない" \
+  's = s.replace("if grep -E \x27生きていない 0\x27 <<<\"$mres\" >/dev/null; then", "if printf \x27%s\x27 \"$mres\" | LC_ALL=C grep -qE \x27生きていない 0\x27; then", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("grep -rnE \x27intent-filter|CFBundleURLSchemes|associatedDomains|", "grep -rnE \x27intent-filter|CFBundleURLSchemes|\nassociatedDomains|", 1)'
 
