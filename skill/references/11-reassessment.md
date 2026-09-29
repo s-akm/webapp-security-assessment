@@ -39,13 +39,14 @@ P=<前回のコミット>
 git log --oneline $P..HEAD | wc -l
 git diff --stat $P..HEAD
 
-# 入口が増えたか・変わったか。route.ts だけを見ない（02 の「全数を見る」の 4 通りの置き方すべて）
-git diff --name-only $P..HEAD | grep -iE 'auth|middleware|proxy|route|policy|guard|controller|handler|resolver|router|views?\.py'
-git diff -G"['\"]use server['\"]" --name-only $P..HEAD          # Server Actions を足した・変えたファイル
+# 入口が増えたか・変わったか。route.ts だけを見ない（02 の「全数を見る」の 4 通りの置き方すべて。ファイル名とディレクトリで決まるもの）
+git diff --name-only $P..HEAD | grep -iE 'auth|middleware|proxy|route|policy|guard|controller|handler|resolver|router|views?\.py|urls\.py|(^|/)(pages|src/pages)/api/|(^|/)server/(api|routes)/|(^|/)app/routes/|\+server\.|Resource\.java|Program\.cs|Routing\.kt|worker\.|main\.go|app\.rb|index\.php'
+# Server Actions のファイル。変更行に 'use server' が無くても、既存のファイルに関数を足しただけのものを拾う
+git diff --name-only --diff-filter=d $P..HEAD | xargs grep -lE "^[[:space:]]*['\"]use server['\"]" 2>/dev/null
 
-# 認可の設定そのもの
+# 認可の設定そのもの（DB のポリシーとルール、スキーマの定義、BaaS の関数の定義）
 git diff --name-only $P..HEAD -- 'supabase/migrations' '*.sql' '*.rules' 'firestore.rules' 'storage.rules' \
-  'database.rules.json' 'supabase/config.toml'
+  'database.rules.json' 'supabase/config.toml' 'firebase.json' 'prisma/schema.prisma' 'drizzle' 'convex'
 git diff $P..HEAD -- 'next.config.*' 'middleware.*' 'proxy.*' 'src/middleware.*' 'src/proxy.*' | grep -nE '^[+-].*(matcher|i18n|rewrites|redirects|serverActions|allowedOrigins)'
 
 # 他人のコードと設定が入る経路（10 の 3 節）
@@ -55,15 +56,21 @@ git diff --name-only $P..HEAD -- 'AGENTS.md' 'CLAUDE.md' '.cursorrules' '.cursor
 
 **新しく増えた入口は、初回と同じ密度で見る。** 差分評価でいちばん漏れるのがここになる。Route Handler だけでなく、
 Server Actions の関数、マイグレーションで足したテーブルとポリシー、ルールのファイルの変更も「入口が増えた」として扱う。
+**コード中の登録で決まる入口**（`app.get(` や `@app.get` のように、ファイル名に現れないもの）は上のファイル名の絞り込みでは拾えない。
+下の `scripts/audit_grep.sh` の 2 節・2b 節・2f 節の出力を前回と比べ、増えた行を入口の増加として読む。
 
-**スクリプトを回し直し、前回の出力と比べる。** 差分のファイル一覧では、設定の既定値やホスティング側の変化が見えない。
+**スクリプトを実行し直し、前回の出力と比べる。** 差分のファイル一覧では、設定の既定値やホスティング側の変化が見えない。
 
 ```bash
 bash scripts/audit_grep.sh <repo> > audit-grep-<今回の日付>.txt
 bash scripts/recon.sh https://<domain> > recon-<今回の日付>.txt
 NODE_PATH="$HOME/.cache/wsa-playwright/node_modules" node scripts/browser_probe.mjs https://<domain> > browser-<今回の日付>.txt   # 09 の「自動化」の手順で入れた Playwright
-diff audit-grep-<前回の日付>.txt audit-grep-<今回の日付>.txt | grep -E '^[<>]' | head -80
+# 比べる前に、経過日数と行番号を落とす。落とさないと、コードが 1 行ずれただけで全行が差分になり、本当の変化が埋もれる
+norm() { sed -E 's/（[0-9]+ 日前）//g; s/^([[:space:]★]*[^[:space:]:]+):[0-9]+:/\1:/' "$1"; }
+diff <(norm audit-grep-<前回の日付>.txt) <(norm audit-grep-<今回の日付>.txt) | grep -E '^[<>]'
 ```
+
+差分は途中で切らずに全部読む。多ければ、節ごと（`=== ` の見出しごと）に分けて読む。
 
 **増えた行も消えた行も読む。** 「ガード検出なし」が増えていれば新しい入口、第三者オリジンが増えていれば新しいタグ、
 ヘッダが消えていれば設定の後退になる。前回の出力が残っていなければ、今回の出力を根拠の記録に残し、次回のために比べられる形にする。
@@ -106,6 +113,9 @@ diff audit-grep-<前回の日付>.txt audit-grep-<今回の日付>.txt | grep -E
 - 新しく見つかったものは、**前回の続きから採番する**（前回が S-<n> まで使っていれば S-<n+1> から）
 - 解消したものは台帳から消さず、状態を**「クローズ（解消）」にして残す**。いつ、何で確かめたかを書く
 - 前回「クローズ（該当なし）」だったものも消さない。前提（構成・扱う情報）が変わっていれば、判定し直す
+- **クローズ（該当なし）の行のうち、根拠にしたファイル（台帳の該当箇所の列）が `git diff --name-only $P..HEAD` に含まれるものは、
+  前提が変わったかどうかによらず判定し直す。** 初回に「DB アクセスは全て ORM 経由」で問題なしにした行は、改修で生 SQL が入っても
+  そのままでは問題なしのまま残る
 
 消すと、次の回で同じものを新規として起票してしまう。**台帳は履歴として積む。**
 
@@ -138,12 +148,17 @@ diff audit-grep-<前回の日付>.txt audit-grep-<今回の日付>.txt | grep -E
 
 ## 取材のしかた
 
-初回の `references/01-scoping.md` を全部やり直す必要はない。**次の 4 つだけ聞く。**
+初回の `references/01-scoping.md` を全部やり直す必要はない。**次の 5 つだけ聞く。**
 
 1. 前回から、**扱う情報**が増えたか（新しいフォーム、新しい連携先）
 2. 前回から、**ログインする人**が増えたか（役割の追加、人数の桁の変化）
 3. 前回の指摘のうち、**対応したと認識しているもの**はどれか（後で自分で確かめる前提で聞く）
 4. 前回の未確認事項（U-x）のうち、**分かったもの**はあるか
+5. 前回の判断保留のうち、**決まったもの**はあるか（誰が、いつ、どちらに決めたか）
+
+5 番で決まったものは、判定を 問題あり か 問題なし に書き換え、いつ誰が決めたかを残す（`references/04-findings-register.md`）。
+問題ありに決まったものは優先度を問いで引き直して 未対応 に、問題なしに決まったものは クローズ（該当なし）にする。
+決まっていないものは判断保留のまま残し、**前回から決まっていないこと**をサマリに書く。判断保留は放っておくと積み上がる。
 
 3 番は「確認のため」と断って聞く。**依頼者の認識と実態がずれていること自体が指摘になる。** ずれていた場合は、対応状況の管理に穴があるという話になり、個別の指摘より重いことがある。
 
