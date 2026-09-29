@@ -239,7 +239,7 @@ check() {
       core="$(printf '%s' "$v" | grep -oE "${gopt[@]:1}" -e "$pattern" | head -1)"
       [[ -n "$core" ]] && v="$core"
     fi
-    if [[ -n "$excl" && -n "$v" ]] && printf '%s' "$v" | grep -E -e "$excl" >/dev/null; then
+    if [[ -n "$excl" && -n "$v" ]] && grep -E -e "$excl" <<<"$v" >/dev/null; then
       continue
     fi
     if [[ "$opts" == *L* && -n "$v" ]] && ! luhn_ok "$(printf '%s' "$v" | tr -cd '0-9')"; then

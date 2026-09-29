@@ -137,11 +137,11 @@ else ng "パイプで grep -q に渡していない（pipefail のもとで確�
 # 「grep ... >/dev/null で読み切らせる」も成り立たない。grep は出力先が /dev/null だと最初の一致で読むのを止めることがあり
 # （macOS と Linux の両方で起きた）、書き手が SIGPIPE で終わって同じ誤りになる。検査の検査では、検査が失敗しているのに
 # 「生きていない」と判定し、分担や OS によって結果が変わっていた。検査の道具の中では、grep にはパイプで渡さず
-# ヒアストリング（grep … <<<"$x"）で渡す。スキルのスクリプトの小さな入力（ヘッダ 1 行・値 1 つ）の 3 か所は、ここでは見ていない
-gn="$(grep -nE '(^|[^|])\|[[:space:]]*grep[^|)]*>[[:space:]]*/dev/null' "$ROOT"/tests/*.sh "$ROOT"/tests/eval/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
+# ヒアストリング（grep … <<<"$x"）で渡す。スキルのスクリプトも同じ（評価者の手元で pipefail のもとで動く）
+gn="$(grep -nE '(^|[^|])\|[[:space:]]*grep[^|)]*[^2&]>[[:space:]]*/dev/null' "$SKILL"/scripts/*.sh "$ROOT"/tests/*.sh "$ROOT"/tests/eval/*.sh "$ROOT"/build/*.sh "$ROOT"/build/hooks/* 2>/dev/null \
       | grep -vE "^[^:]+:[0-9]+:[[:space:]]*#|s = s\.replace\(|printf '' \|" || true)"
-if [[ -z "$gn" ]]; then ok "検査の道具で、パイプで grep に渡して出力を捨てていない（pipefail のもとで確率的に誤る書き方）"
-else ng "検査の道具で、パイプで grep に渡して出力を捨てていない（pipefail のもとで確率的に誤る書き方）" "$(printf '%s' "$gn" | head -3 | cut -c1-120)"; fi
+if [[ -z "$gn" ]]; then ok "スクリプトと検査の道具で、パイプで grep に渡して出力を捨てていない（pipefail のもとで確率的に誤る書き方）"
+else ng "スクリプトと検査の道具で、パイプで grep に渡して出力を捨てていない（pipefail のもとで確率的に誤る書き方）" "$(printf '%s' "$gn" | head -3 | cut -c1-120)"; fi
 # 資料のコード例で、grep のパターンを単引用符の中で改行しているもの。grep は改行を「別のパターン」の区切りとして
 # 扱うので、行末の | は空の選択肢になり、GNU では全行に一致し、macOS ではエラーになる（08 の例が実際にそうだった）。
 # 単引用符の数が奇数の行（引用符が閉じないまま次の行へ続く）で、末尾が | か |\ のものを捕まえる。-e で分けて書く。

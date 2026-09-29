@@ -361,7 +361,7 @@ if [[ $REACH -eq 1 ]]; then
     line="$(printf '%s\n' "$HEADERS" | grep -i "^$h:" || true)"
     if [[ -n "$line" ]]; then printf '  [有] %s\n' "$line"; else printf '  [無] %s\n' "$h"; fi
   done
-  if printf '%s\n' "$HEADERS" | grep -i '^x-powered-by:' >/dev/null; then
+  if grep -i '^x-powered-by:' <<<"$HEADERS" >/dev/null; then
     printf '  [要確認] %s （実装情報が露出）\n' "$(printf '%s\n' "$HEADERS" | grep -i '^x-powered-by:')"
   else
     printf '  [良] x-powered-by は出ていない\n'
@@ -401,7 +401,7 @@ if [[ $REACH -eq 1 ]]; then
     elif [[ "$code" == "200" ]]; then
       head_="$(curl -s --max-time 10 "$ORIGIN$p" 2>/dev/null | head -c 1024 | tr -d '\0')"
       is_html=""; printf '%s' "$head_" | grep -iE '<(!doctype|html|head|body)' >/dev/null && is_html=1
-      if printf '%s\n' "$head_" | grep -vE '^[[:space:]]*[#;]' | grep -E "$sig" >/dev/null; then
+      if grep -E "$sig" <<<"$(grep -vE '^[[:space:]]*[#;]' <<<"$head_")" >/dev/null; then
         case "$kind" in
           p0)   note="$P0NOTE" ;;
           info) note="← 中身が返っている。内部の設定や状態が見える（優先度は 04 で引く）" ;;
