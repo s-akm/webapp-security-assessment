@@ -30,7 +30,17 @@ fi
 # 検査を通ってからでないと固めない。機微情報の混入検査もここに含まれる。
 if [[ $SKIP_TESTS -eq 0 ]]; then
   echo "=== 検査 ==="
-  "$ROOT/tests/run.sh"
+  TLOG="$(mktemp)"
+  set +e; "$ROOT/tests/run.sh" 2>&1 | tee "$TLOG"; tst="${PIPESTATUS[0]}"; set -e
+  # 省略があれば固めない。省略は「道具が無くて確かめていない」で、失敗 0 でも確かめた範囲が README の件数より狭い
+  n_skip="$(sed 's/\x1b\[[0-9;]*m//g' "$TLOG" | grep -oE '省略 [0-9]+' | tail -1 | grep -oE '[0-9]+' || echo 0)"
+  rm -f "$TLOG"
+  [[ "$tst" -eq 0 ]] || { echo "検査が失敗した。固めない" >&2; exit 1; }
+  if [[ "${n_skip:-0}" -gt 0 && -z "${WSA_ALLOW_SKIP:-}" ]]; then
+    echo "検査で ${n_skip} 件を省略した。道具（node・playwright・dig・openpyxl・rg）を入れて省略 0 にしてから固める" >&2
+    echo "（省略したまま固めてよいと確かめたときだけ WSA_ALLOW_SKIP=1）" >&2
+    exit 1
+  fi
   echo
 else
   echo "※ --skip-tests が指定された。検査を飛ばして固める"
@@ -79,7 +89,9 @@ find "$WORK/scripts" -type f -exec chmod 755 {} +
 
 # 同じ入力からは同じ zip ができるようにする。ファイルの時刻を最後のコミットの時刻に揃え、
 # 並び順を固定し、余計な属性を入れない。時刻が変わるだけで中身の同じ配布物のハッシュが変わっていた。
-epoch="$(git -C "$ROOT" log -1 --format=%ct)"
+# 時刻は、配布物に入るもの（skill/・LICENSE・VERSION）を最後に変えたコミットのもの。CHANGELOG だけのコミットでは変わらない。
+# 同じ中身から同じ zip ができるのは、同じ zip の版と圧縮の実装の範囲（OS が違えば圧縮の結果が変わりうる）
+epoch="$(git -C "$ROOT" log -1 --format=%ct -- skill LICENSE VERSION)"
 stamp="$(TZ=UTC python3 -c 'import sys,time; print(time.strftime("%Y%m%d%H%M.%S", time.gmtime(int(sys.argv[1]))))' "$epoch")"
 find "$WORK" -exec env TZ=UTC touch -t "$stamp" {} +
 

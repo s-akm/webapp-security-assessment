@@ -112,6 +112,10 @@ def main():
     same_as_old = bool(old_keys) and old_keys <= new_keys
     old_keys -= new_keys
     print(f'新: {a.new}　旧: {old_sel or "（タグが無い）"}')
+    # 未コミットの skill/ で当てた回は、どの版の中身か決まらないので比べない。黙って落とすと回数が足りない理由が分からない
+    n_dirty = sum(1 for r in hist if group_key(r) is None)
+    if n_dirty:
+        print(f'  ※ 未コミットの skill/ で当てた回が {n_dirty} 回あり、比較から外した（コミットしてから当て直す）')
 
     targets = list(OrderedDict.fromkeys(r['題材'] for r in hist))
     regress, recheck, unevaluated, mixed, uncompared = [], [], [], [], []
@@ -149,6 +153,11 @@ def main():
         if old:
             print(line('旧', old))
         print(line('新', new))
+        # 答えの数（分母）が旧と新で違えば、答えの一覧か下拵えが変わっている。見つけた数をそのまま比べない
+        dens = {r['範囲内'] for r in old} | {r['範囲内'] for r in new}
+        if old and len(dens) > 1:
+            print(f'  注意: 答えの数が旧と新で違う（{"・".join(sorted(dens))}）。答えの一覧を揃えて当て直すまで判定しない')
+            return 'recheck', False
 
         doubts = []
         if any(num(r['違反']) for r in new):

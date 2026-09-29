@@ -38,7 +38,8 @@ res="$(printf '%s' "$out" | grep -oE '成功 [0-9]+ / 失敗 [0-9]+( / 省略 [0
 n_skip="$(printf '%s' "$res" | grep -oE '省略 [0-9]+' | grep -oE '[0-9]+' || echo 0)"
 [[ "${n_skip:-0}" -gt 0 ]] && warn "tests/run.sh で ${n_skip} 件を省略した" "道具（node・playwright・dig・openpyxl）が足りない。README の件数とも合わなくなる"
 if printf '%s' "$res" | grep -E '失敗 0( |$)' >/dev/null; then ok "tests/run.sh: $res"
-else ng "tests/run.sh: $res" "$(printf '%s' "$out" | grep -E '✗' | head -5 | tr '\n' ' ')"; fi
+# 失敗した検査は、詳細の行まで全部出す（以前は 5 件を 1 行につないでいて、CI のログから何が無かったかが読めなかった）
+else ng "tests/run.sh: $res" "$(printf '%s' "$out" | grep -A1 -E '✗' | grep -vE '^--$' | head -60)"; fi
 
 # ==========================================================================
 head_ "2. 検査が生きているか"
@@ -121,6 +122,15 @@ else ng "README の数値が実態とずれている" "${mism}"; fi
 
 # ==========================================================================
 head_ "4. 配布物が正しいか"
+
+# 公開の前の最後の関門（build/hooks/pre-push）が有効か。手元の設定なので、CI では見ない
+if [[ -z "${CI:-}" ]]; then
+  hp="$(git -C "$ROOT" config core.hooksPath 2>/dev/null || true)"
+  case "$hp" in
+    build/hooks|"$ROOT/build/hooks") ok "pre-push フックが有効（core.hooksPath = ${hp}）" ;;
+    *) ng "pre-push フックが有効になっていない（core.hooksPath = ${hp:-未設定}）" "git config core.hooksPath build/hooks" ;;
+  esac
+fi
 
 ver="$(tr -d ' \n' < "$ROOT/VERSION")"
 chlog="$(grep -m1 -oE '^## \[[0-9.]+\]' "$ROOT/CHANGELOG.md" | tr -d '#[] ')"

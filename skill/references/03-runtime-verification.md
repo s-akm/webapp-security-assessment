@@ -78,6 +78,10 @@
 
 ### 例: PostgreSQL + 行レベルセキュリティ
 
+下の問い合わせは `public` だけを見る。Supabase の API に出るスキーマは既定で `public` で、設定（Exposed schemas）に
+別のスキーマを足していれば、そのスキーマも API に出る。**足しているなら、`public` の所をそのスキーマに替えて同じ問い合わせをする。**
+依頼者に渡す `templates/client-sql-request.md` の Q1・Q2 は、はじめから全スキーマを見る形にしてある。
+
 ```sql
 -- 1. 全テーブルの行レベルセキュリティ有効状態（false が 1 つでもあれば要強調）
 select schemaname, tablename, rowsecurity
@@ -324,6 +328,12 @@ curl -s -o /dev/null -w "%{http_code}\n" \
 - 認証系のレート制限の値
 - セッションの有効期限、無操作タイムアウト
 - 誰でもサインアップできる状態になっていないか
+- **確認コード（メール・SMS・TOTP）の検証に試行の上限があるか**（`references/02-code-audit.md` の B-3）
+- リフレッシュトークンの再利用を検知して失効させる設定か。登録・ログインに CAPTCHA を掛けているか
+- **認証が終わったあとの戻り先の許可一覧**（Supabase の Site URL と Redirect URLs、Firebase の承認済みドメイン、Auth0・Clerk などの
+  Allowed Callback URLs）。第三者も作れるドメインのワイルドカード（プレビュー環境の `*.vercel.app` など）・`localhost` の残り・
+  パスの `/**` があれば、マジックリンクや OAuth のトークンが他人の用意した先へ届く（`references/07-web-vulnerabilities.md` の 4 節。
+  依頼者に渡すときは `templates/client-console-checklist.md` の 1-5・2-4・9）
 
 **基準は NIST SP 800-63B-4**（`references/02-code-audit.md` の B-1）。パスワードだけで認証するなら最小 15 文字、
 文字種の強制と定期変更の強制はしない、漏えい済みパスワードとの照合はする。**設定画面の最小長が 6 や 8 のままなら、

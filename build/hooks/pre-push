@@ -17,7 +17,13 @@ bad=0
 # 語の一覧を作る道具は、フックと同じリポジトリの build/ にある（push するリポジトリの根からではなく、フックの場所から探す）
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 words="$(bash "$HOOK_DIR/../identifying-words.sh" "$ROOT" 2>/dev/null | paste -sd '|' -)"
-[[ -n "$words" ]] || echo "pre-push: 注意: tests/ngwords.local も tests/eval/local/ も無いので、案件語と題材の語の照合をしていない" >&2
+# 語の一覧が空なら止める。以前は注意を出すだけで通していて、手元の非公開のファイルが消えた環境（作業ツリーを作り直した直後など）で
+# 照合をせずに公開しうる状態だった。意図して照合なしで push するときだけ、WSA_ALLOW_NO_WORDS=1 を付ける
+if [[ -z "$words" && -z "${WSA_ALLOW_NO_WORDS:-}" ]]; then
+  echo "pre-push: tests/ngwords.local も tests/eval/local/ も無く、案件語と題材の語の照合ができない。止める" >&2
+  echo "          （照合なしで push してよいと確かめたときだけ WSA_ALLOW_NO_WORDS=1 git push）" >&2
+  exit 1
+fi
 
 while read -r lref lsha rref rsha; do
   [[ -z "${lref:-}" ]] && continue
