@@ -23,6 +23,13 @@
 //     LLM の鍵を載せた JS を読み込む
 //   - /vendor は、第三者（127.0.0.1）のスクリプトの中身に計測タグの送信先の文字列を持つ
 //     （中身まで見て数えると誤検出になる）。自前のインラインスクリプトには GTM の URL を書く
+//   - /.git/config・/actuator/env の中身が外から取れる。/server-status は 403 を返す
+//   - /waf は、curl の既定の名乗りとヘッドレスのブラウザを 403 で止める（WAF・ボット対策を模す）
+//   - /links は、読み込まないリンク（<a>・canonical）と、読み込む参照（stylesheet・img）と、
+//     認証部に鍵を載せた URL（Sentry の DSN の形）を並べる。どれも外へは取りに行かない
+//   - /ctrl-header は、ヘッダの値に端末の表示を書き換える制御文字を入れる（生のソケットで返す）
+//   - /keys は、鍵の形の見本を 1 行に 1 つ並べた JS を読み込む（recon.sh と scan_secrets.sh が同じ種類を拾うかを見る）
+//   - /longpoll は、読み込みの後も一定の間隔で送り続け、通信が途切れない
 //
 // 正しく作られている側:
 //   - /clean       同意まで第三者へ送らず、ヘッダを揃える
@@ -65,6 +72,8 @@ const PAGES = {
   // 同意を取る前に保存している。ボタンは押されていない。
   localStorage.setItem('authToken', 'dummy-token-value-should-not-be-printed');
   localStorage.setItem('theme', 'dark');
+  // キー名に端末の表示を書き換える並び（ESC [2J）を入れる。出力にそのまま出てはいけない
+  localStorage.setItem('\u001b[2Jfixture_ctl_key', 'x');
   sessionStorage.setItem('csrf_token', 'dummy-csrf-should-not-be-printed');
   document.getElementById('ok').addEventListener('click', function () {
     document.getElementById('consent').style.display = 'none';
@@ -317,6 +326,56 @@ const PAGES = {
     body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>ピクセル</title></head>
 <body><noscript><img height="1" width="1" src="https://www.facebook.com/tr?id=0&ev=PageView&noscript=1"></noscript></body></html>`,
   }),
+  // 外から設定の中身が取れる（値は架空）。/server-status は塞がれている
+  "/.git/config": () => ({
+    status: 200, headers: { "content-type": "text/plain" },
+    body: "[core]\n\trepositoryformatversion = 0\n",
+  }),
+  "/actuator/env": () => ({
+    status: 200, headers: { "content-type": "application/json" },
+    body: '{"activeProfiles":[],"propertySources":[]}',
+  }),
+  "/server-status": () => ({ status: 403, headers: { "content-type": "text/plain" }, body: "forbidden" }),
+  // curl の既定の名乗り（curl/…）とヘッドレスのブラウザ（HeadlessChrome）を止める。WAF・ボット対策を模す
+  "/waf": (req) => {
+    const ua = String(req.headers["user-agent"] || "");
+    if (/^curl\//.test(ua) || /HeadlessChrome/.test(ua)) return { status: 403, headers: { "content-type": "text/plain" }, body: "blocked" };
+    return { status: 200, headers: { "content-type": "text/html; charset=utf-8" }, body: "<!doctype html><html><body>ok</body></html>" };
+  },
+  // 読み込まないリンクと、読み込む参照。recon.sh は JS 以外を取りに行かないので、ここに書いた外のホストへは出ない。
+  // Sentry の DSN は、URL の認証部に鍵を載せる形（https://<鍵>@<ホスト>/<番号>）。値は架空
+  "/links": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>リンク</title>
+<link rel="canonical" href="https://canonical.example.invalid/links">
+<link rel="stylesheet" href="https://cdn.example.invalid/style.css">
+<script>Sentry.init({ dsn: "https://FIXTUREDSNKEY0123@o0.ingest.sentry.io/0" });</script>
+</head><body>
+<a href="https://sns.example.invalid/fixture">SNS</a>
+<img src="https://FIXTUREDSNKEY0123@px.example.invalid/p.gif" alt="">
+</body></html>`,
+  }),
+  // 通信が途切れないページ（ロングポーリングや定期的な送信を模す）。networkidle に達しない
+  "/longpoll": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8", "set-cookie": "lp_session=dummyvalue789; Path=/; HttpOnly" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>ロングポーリング</title></head><body>
+<script>setInterval(function () { fetch("/collect").catch(function () {}); }, 200);</script>
+</body></html>`,
+  }),
+  // 鍵の見本を並べた JS を読み込むページ
+  "/keys": () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=utf-8" },
+    body: `<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>鍵の見本</title>
+<script src="/keys/keys.js"></script></head><body></body></html>`,
+  }),
+  "/keys/keys.js": () => ({
+    status: 200,
+    headers: { "content-type": "application/javascript" },
+    body: KEY_SAMPLES.map(([a, b], i) => `const K${String(i).padStart(2, "0")} = "${a}${b}";`).join("\n") + "\n",
+  }),
   "/vendor.js": () => ({
     status: 200,
     headers: { "content-type": "application/javascript" },
@@ -327,19 +386,45 @@ const PAGES = {
   }),
 };
 
+// 鍵の形の見本。recon.sh（KEYS・LLM_KEYS）と scan_secrets.sh の鍵の検査の両方が、同じ種類を拾うかを見る。
+// 値はすべて架空。リポジトリの中では鍵の形にならないよう、接頭辞と本体を分けて書く（秘密情報の検査や、
+// ホスティング側の鍵の検出に引っかからないように）。先頭 10 文字は見本ごとに違うものにする（伏字の形で見分けるため）
+const H32 = "0123456789abcdef0123456789abcdef";
+const B = "PARITYDUMMY0123456789abcdefXYZ";
+export const KEY_SAMPLES = [
+  ["sk-" + "proj-", B], ["sk-", "PARITYDUMMY012345678" + "T3Blbk" + "FJ" + "PARITYDUMMY012345678"],
+  ["sk-" + "ant-" + "api03-", B], ["sk-" + "or-" + "v1-", B], ["gs" + "k_", B], ["xa" + "i-", B],
+  ["h" + "f_", B + "abcd"], ["r" + "8_", B + "abcd"], ["pp" + "lx-", B + "abcd"],
+  ["sb_" + "secret_", B], ["sb_" + "publishable_", B], ["AI" + "za", B],
+  ["pk_" + "live_", B], ["sk_" + "live_", B], ["rk_" + "live_", B], ["sk_" + "test_", B], ["wh" + "sec_", B],
+  ["AK" + "IA", "PARITYDUMMY01234"], ["AS" + "IA", "PARITYDUMMY56789"],
+  ["Account" + "Key=", B + B.slice(0, 14) + "=="],
+  ["gh" + "p_", B], ["gh" + "o_", B], ["github" + "_pat_", B],
+  ["np" + "m_", B + "abcd"], ["xo" + "xb-", B], ["xo" + "xe-", B], ["xa" + "pp-1-", B],
+  ["A" + "C", H32], ["S" + "K", H32.split("").reverse().join("")],
+  ["S" + "G.", "PARITYDUMMY0123456789.PARITYDUMMY0123456789"], ["ke" + "y-", H32.slice(16) + H32.slice(0, 16)],
+  ["ey" + "J", "hbGciOiJIUzI1NiJ9.eyJyb2xlIjoicGFyaXR5In0.PARITYDUMMYsig"],
+];
+
 // WebSocket の受け口（標準ライブラリだけで握手だけ行う）。受け取ったメッセージは読み捨てる。
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const sockets = new Set();
 
 const server = createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
+  // ヘッダに制御文字を入れた応答。Node の http は不正な文字のヘッダを書かせないので、生のソケットに書く
+  if (url.pathname === "/ctrl-header") {
+    req.socket.end("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nServer: fixture\x1b[2Jserver\r\n" +
+                   "X-Fixture-Note: \x1b]0;fixture\x07note\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    return;
+  }
   const page = PAGES[url.pathname];
   if (!page) {
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
     return;
   }
-  const { status, headers, body } = page();
+  const { status, headers, body } = page(req);
   res.writeHead(status, headers);
   res.end(body);
 });
