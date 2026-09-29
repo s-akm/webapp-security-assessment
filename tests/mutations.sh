@@ -319,6 +319,8 @@ mutate "audit_grep: 出力全体の伏字を外す" "scripts/audit_grep.sh" "Hos
   's = s.replace("2>&1 | out_filter", "2>&1 | cat")'
 mutate "audit_grep: 切り捨てを黙る" "scripts/audit_grep.sh" "切ったことと残りの件数を示す" \
   's = s.replace("END { if (NR > n) printf", "END { if (0) printf")'
+mutate "3: ★ を全体で切っても黙る" "scripts/audit_grep.sh" "3 節の ★ を全体で切った件数を示す" \
+  's = s.replace("if (ns > 25) printf", "if (0) printf", 1)'
 mutate "audit_grep: messages.create を Twilio に限らない" "scripts/audit_grep.sh" "Anthropic の messages.create を SMS と言わない" \
   's = s.replace("do grep -lE \"twilio|Twilio\" \"$f\" 2>/dev/null; done", "do echo \"$f\"; done")'
 mutate "audit_grep: React2Shell の修正版を取り違える" "scripts/audit_grep.sh" "React2Shell の修正前を判定" \

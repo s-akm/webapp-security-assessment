@@ -725,6 +725,12 @@ JS
   printf '<script>ytag({ type: "yss_conversion" });</script>\n' > "$G/theme/yahoo-ads.html"
   # 切り捨て: 同じ危険な関数を 25 か所に置く（3 節の一覧は 20 件で切る）
   for i in $(seq 1 25); do printf 'export function GET(){ el.innerHTML = x%s; }\n' "$i"; done > "$G/app/api/many/route.ts"
+  # 一覧の切り捨て（lim）は、件数が題材だけで決まる一覧で確かめる。以前は「（ほか 」を出力全体で探していて、3 節の ★ を
+  # 1 ファイル 3 件までにしてからは、題材の置き場を含むこのリポジトリの git 履歴を 7 節が読んだ件数で成功していた
+  # （.git の無い写しで実行すると失敗した）。eval の一覧は 15 件、★ は全体で 25 件で切る
+  mkdir -p "$G/web"
+  for i in $(seq 1 20); do printf 'module.exports = (x) => eval(x%s);\n' "$i" > "$G/web/e$i.js"; done
+  for i in $(seq 1 30); do printf 'export const show = (el, v) => { el.innerHTML = v%s; };\n' "$i" > "$G/web/h$i.js"; done
   # 大文字の変数名と新しい鍵の形式（4 節）
   printf 'API_KEY = "FIXTUREFIXTUREFIXTUREFIXTURE12"\nconst k = "sk-proj-FIXTUREFIXTUREFIXTUREFIXTURE"\n' > "$G/config.py"
   # minify された長い 1 行
@@ -766,7 +772,10 @@ JS
   printf 'const a = keytag(1); const intercompanyTotal = 0; const img = "https://s.yimg.jp/images/top/logo.png";\n' > "$T2/index.js"
   if bash "$SKILL/scripts/audit_grep.sh" "$T2" 2>&1 | grep -E '^  計測・広告タグ +無' >/dev/null; then ok "audit_grep[タグ]: 紛らわしい語だけならタグを無と言う"
   else ng "audit_grep[タグ]: 紛らわしい語だけならタグを無と言う" "keytag・intercompanyTotal・画像の URL で「有」と言った"; fi
-  contains "audit_grep[切り捨て]: 切ったことと残りの件数を示す"       "（ほか "                        "$GD"
+  S3G="$(printf '%s\n' "$GD" | LC_ALL=C awk 'index($0, "=== 3. ") == 1 { f = 1; next } f && /^=== / { exit } f')"
+  contains "audit_grep[切り捨て]: 切ったことと残りの件数を示す"       "（ほか 5 件。全部は元のコマンド"   "$S3G"
+  contains "audit_grep[切り捨て]: 3 節の ★ を全体で切った件数を示す"  "（★ はほか "                     "$S3G"
+  contains "audit_grep[切り捨て]: 3 節の ★ を 1 ファイルで切った件数を示す" "（app/api/many/route.ts の ★ はほか 22 件）" "$S3G"
   contains "audit_grep[長い行]: 長い行を切る"                         "（長い行を省略）"               "$GD"
   if printf '%s\n' "$GD" | LC_ALL=C awk 'length($0) > 700 { bad = 1 } END { exit bad ? 0 : 1 }'; then
     ng "audit_grep[長い行]: 700 バイトを超える行を出さない" "長い行がそのまま出ている"
