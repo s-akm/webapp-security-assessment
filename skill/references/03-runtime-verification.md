@@ -627,7 +627,9 @@ curl -s https://<domain>/<管理画面のログインパス> \
 **本文は保存しない。ステータスコードだけを取る**（3 本目のエラーページの確認だけは、該当する行を画面に出す）。
 
 ```bash
-for p in /.git/HEAD /.env /.env.local /.env.production /.DS_Store /server.js.map; do
+# scripts/recon.sh の 1c が同じ一覧（有無の確認だけ）を持つ。手で確かめるときもこの一覧に揃える
+for p in /.git/HEAD /.git/config /.env /.env.local /.env.production /.env.bak /.aws/credentials /.npmrc \
+         /actuator/env /server-status /phpinfo.php /.DS_Store /server.js.map; do
   printf '%-22s ' "$p"; curl -s -o /dev/null -w '%{http_code}\n' "https://<domain>$p"
 done
 # 配信している JS にソースマップの参照があり、その .map が取れるか

@@ -1382,6 +1382,15 @@ for label, wb, fname in (("owasp", owasp, "3_指摘事項一覧"), ("full", full
     f6 = find("集計の範囲")
     check(f"整合の確認: 集計の範囲の外に書いた行を数える（{label}）",
           f"'{fname}'!${heads['ID']}${last + 1}:" in f6, f6)
+    # 観点の一覧（04）: 02 の A〜O と 07 の 0〜11 節の行があり、結果は 4 つの値から選び、空欄の数を整合の確認が数える
+    obs = [r for r in range(1, sm.max_row + 1) if isinstance(sm.cell(r, 1).value, str) and sm.cell(r, 1).value[:3] in ("02 ", "07 ")]
+    check(f"観点の一覧: 02 の A〜O と 07 の 0〜11 節の 27 行がある（{label}）", len(obs) == 27, str(len(obs)))
+    dvs = [(str(d.sqref), d.formula1) for d in sm.data_validations.dataValidation]
+    want_sq = f"B{obs[0]}:B{obs[-1]}" if obs else "?"
+    check(f"観点の一覧: 結果の列を 4 つの値から選ばせる（{label}）",
+          (want_sq, '"問題なし,指摘あり,未確認,対象外"') in dvs, str(dvs))
+    f7 = find("観点の一覧で、結果が空欄")
+    check(f"整合の確認: 観点の一覧の結果の空欄を数える（{label}）", f7 == f"=COUNTBLANK($B${obs[0]}:$B${obs[-1]})" if obs else False, f7)
     # 雛形の例示行どうしが食い違わない（U-1 の影響する項目が、指摘事項一覧の例示行の ID を指す）
     us = wb[un]
     check(f"未確認事項の例示行が指摘事項一覧の例示行の ID を指す（{label}）", us["E5"].value == fs["A4"].value, f"{us['E5'].value} / {fs['A4'].value}")
@@ -2110,6 +2119,19 @@ absent   "audit_grep[2m]: 模擬のサーバーを並べない"                 
 absent   "audit_grep[2m]: 設定の読み出しの :id と配列の添字を ID の受け取りと取り違えない" "src/cfg.js"      "$R2M"
 absent   "audit_grep[3]: TSX の {!!…} と renderToStaticMarkup を生の出力と取り違えない" "src/toggle.tsx"   "$R3"
 contains "audit_grep[9]: LINE Tag を計測タグに数える"                        "web/line.html:1:"            "$R9"
+# 台帳の観点の一覧の行は、02 の A〜O と 07 の節の見出しと揃える（節を足したのに一覧に無いと、その観点が記録から漏れる）
+obs_miss=""
+while IFS= read -r h; do k="${h%%.*}"; grep -qF "\"02 ${k}. " "$SKILL/scripts/make_register.py" || obs_miss="$obs_miss 02-$k"; done \
+  < <(grep -oE '^## [A-Z]\. ' "$SKILL/references/02-code-audit.md" | sed 's/^## //')
+while IFS= read -r h; do k="${h%%.*}"; grep -qF "\"07 ${k}. " "$SKILL/scripts/make_register.py" || obs_miss="$obs_miss 07-$k"; done \
+  < <(grep -oE '^## [0-9]+\. ' "$SKILL/references/07-web-vulnerabilities.md" | sed 's/^## //')
+if [[ -z "$obs_miss" ]]; then ok "台帳の観点の一覧が、02 と 07 の節の見出しをすべて持つ"
+else ng "台帳の観点の一覧が、02 と 07 の節の見出しをすべて持つ" "足りない:$obs_miss"; fi
+# 語の一覧に正規表現として読めない行があれば、語の道具が止まる（手元の一覧はすべて読める行なので、壊れた一覧を作って確かめる）
+IWB="$TMP/idw-broken"; mkdir -p "$IWB/tests"; printf 'goodword\nbad[word\n' > "$IWB/tests/ngwords.local"
+bash "$ROOT/build/identifying-words.sh" "$IWB" >/dev/null 2>&1; iwrc=$?
+if [[ $iwrc -eq 2 ]]; then ok "語の道具: 正規表現として読めない行があれば止まる"
+else ng "語の道具: 正規表現として読めない行があれば止まる" "終了コード $iwrc"; fi
 # 途中で止まったら知らせる（C-37）
 AGX="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/no-such-dir-$$" 2>&1)"
 contains "audit_grep[中断]: 途中で止まったら、出力が途中までであることを出す" "=== 中断 ==="          "$AGX"

@@ -449,7 +449,8 @@ done
 [[ -e cdk.json ]] && iac="$iac CDK"
 [[ -e Pulumi.yaml ]] && iac="$iac Pulumi"
 [[ -n "$(find . -maxdepth 3 \( -name 'Chart.yaml' -o -name 'kustomization.y*ml' \) 2>/dev/null | head -1)" ]] && iac="$iac Kubernetes"
-[[ -n "$(grep -rl '^kind:[[:space:]]*\(Deployment\|Service\|Ingress\)' --include='*.yaml' --include='*.yml' . 2>/dev/null | head -1)" ]] && iac="$iac Kubernetesマニフェスト"
+# 依存の下（node_modules の中の YAML）まで読まない
+[[ -n "$(grep -rlE "${EXA[@]}" '^kind:[[:space:]]*(Deployment|Service|Ingress)' --include='*.yaml' --include='*.yml' . 2>/dev/null | head -1)" ]] && iac="$iac Kubernetesマニフェスト"
 for f in serverless.yml serverless.yaml template.yaml wrangler.toml; do
   [[ -e "$f" ]] && iac="$iac サーバーレス($f)"
 done
@@ -1836,7 +1837,7 @@ if [[ -n "$iac" ]]; then
     echo "  ※ 履歴に一度でも入っていれば、そこに書かれた鍵は失効が要る"
   fi
 
-  if [[ -n "$(grep -rlE '^kind:[[:space:]]*(Deployment|Service|Ingress|Secret)' --include='*.y*ml' . 2>/dev/null | head -1)" ]]; then
+  if [[ -n "$(grep -rlE "${EXA[@]}" '^kind:[[:space:]]*(Deployment|Service|Ingress|Secret)' --include='*.y*ml' . 2>/dev/null | head -1)" ]]; then
     echo "  --- Kubernetes ---"
     {
       grep -rnE "${EXA[@]}" '^kind:[[:space:]]*Secret|privileged:[[:space:]]*true|hostNetwork:[[:space:]]*true|runAsUser:[[:space:]]*0' \

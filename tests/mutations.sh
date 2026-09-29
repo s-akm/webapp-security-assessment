@@ -438,6 +438,35 @@ mutate "2m: 文字列の埋め込みを経路と取り違える" "scripts/audit_
   's = s.replace("|/\\{[a-z_]*[iI]d\\}|", "|\\{[a-z_]*[iI]d\\}|", 1)'
 mutate "中断: 途中で止まっても知らせない" "scripts/audit_grep.sh" "途中で止まったら、出力が途中までであること" \
   's = s.replace("printf \x27\\n=== 中断 ===\\n", "printf \x27\\n=== X ===\\n", 1)'
+# 正規表現を緩める・節を丸ごと消す（「1 語を置き換える」形だけでは、検査が表の中身まで確かめているかが分からない）
+mutate "2 節: ガードの語の表を何にでも一致させる" "scripts/audit_grep.sh" "ガードの無いハンドラを" \
+  's = s.replace("GUARD=\x27require[A-Z][A-Za-z]+|", "GUARD=\x27.|require[A-Z][A-Za-z]+|", 1)'
+mutate "2 節: 節の見出しを消す" "scripts/audit_grep.sh" "2 節を切り出せる" \
+  's = s.replace("hr \"2. ハンドラ × 認可ガード（空欄は「本当に公開してよいか」を 1 本ずつ確認する）\"", "", 1)'
+mutate "2 節: Firebase の verifyIdToken をガードに数えない" "scripts/audit_grep.sh" "ガードを読み取る" \
+  's = s.replace("GUARD=\"$GUARD\"\x27|verifyIdToken|", "GUARD=\"$GUARD\"\x27|verifyIdTokenX|", 1)'
+mutate "2 節: onRequest をどこでもガードに数える" "scripts/audit_grep.sh" "firebase-functions]: ガードの無いハンドラを" \
+  's = s.replace("|preHandler|onRequest[[:space:]]*:|", "|preHandler|onRequest|", 1)'
+mutate "2g: 括弧の直後に渡す形を拾わない" "scripts/audit_grep.sh" "受け取ったものを括弧の直後に更新へ渡す形" \
+  's = s.replace("fill|forceFill)\\(([^)]{0,40}[^.A-Za-z_])?\x27", "fill|forceFill)\\([^)]{0,40}([^.A-Za-z_]|^)\x27", 1)'
+mutate "11: 秘密が未設定のとき検証を飛ばす形を見ない" "scripts/audit_grep.sh" "秘密が未設定のとき検証を飛ばす Webhook" \
+  's = s.replace("\x27[Ss]ecret[A-Za-z_]*[[:space:]]*(&&|and)[^;]{0,80}", "\x27[Ss]ecretX[A-Za-z_]*[[:space:]]*(&&|and)[^;]{0,80}", 1)'
+mutate "2k: 試験のパスも並べる" "scripts/audit_grep.sh" "試験のファイルの CORS を並べない" \
+  's = s.replace("grep -vE \x27(package|package-lock|tsconfig)\\.json:\x27 | grep -vE \"$TESTPATH\"", "grep -vE \x27(package|package-lock|tsconfig)\\.json:\x27", 1)'
+mutate "2k: 資格情報の許可をファイル全体で探す" "scripts/audit_grep.sh" "資格情報の許可が離れていれば" \
+  's = s.replace("<<<\"$(sed -n \"${n},$((n + 3))p\" \"$f\" 2>/dev/null)\"", "\"$f\"", 1)'
+mutate "2m: 経路の区切りでない :id も拾う" "scripts/audit_grep.sh" "設定の読み出しの :id" \
+  's = s.replace("|/:[a-z_]*[iI]d([/", "|:[a-z_]*[iI]d([/", 1)'
+mutate "3: Blade の {!! を対で見ない" "scripts/audit_grep.sh" "TSX の" \
+  's = s.replace("|\\{!![^}]*!!\\}|th:utext|mark_safe", "|\\{!!|th:utext|mark_safe", 1)'
+mutate "3: 試験のファイルもアプリのコードと並べる" "scripts/audit_grep.sh" "静的な資産の置き場の ★ は" \
+  's = s.replace("if (f ~ /(^|\\/)(assets|static|public|lib|libs|javascripts|js|test|", "if (f ~ /NOMATCH(^|\\/)(assets|static|public|lib|libs|javascripts|js|test|", 1)'
+mutate "語の一覧: 読めない行でも止めない" "../build/identifying-words.sh" "正規表現として読めない行があれば止まる" \
+  's = s.replace("printf \x27\x27 | grep -E -- \"$w\" >/dev/null 2>&1; [[ $? -eq 2 ]] && bad=$((bad + 1))", ":", 1)'
+mutate "台帳: 観点の一覧の空欄を数えない" "scripts/make_register.py" "観点の一覧の結果の空欄を数える" \
+  's = s.replace("checks.append((\"観点の一覧で、結果が空欄の行\"", "checks.append((\"観点の一覧で、結果の欄\"", 1)'
+mutate "台帳: 観点の一覧から節を落とす" "scripts/make_register.py" "02 と 07 の節の見出しをすべて持つ" \
+  's = s.replace("\"07 5. SSRF\",", "", 1)'
 mutate "scan_secrets: 記号を含む値を見ない" "scripts/scan_secrets.sh" "記号を含む値の SECRET_KEY" \
   's = s.replace("([bruf]?[\"\x27\"\x27\"\x27`][^\"\x27\"\x27\"\x27`<…[:space:]]{16,}|", "([bruf]?[\"\x27\"\x27\"\x27`][A-Za-z0-9_/+=-]{16,}|", 1)'
 mutate "scan_secrets: 差し込みの書き方を値とみなす" "scripts/scan_secrets.sh" "誤検出しない" \

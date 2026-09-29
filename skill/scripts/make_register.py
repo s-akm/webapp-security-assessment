@@ -236,6 +236,19 @@ def add_list(ws, cells, values, strict=True):
 
 
 # --------------------------------------------------------------------------
+# 観点の一覧の行（02 の A〜O と 07 の 0〜11 節）と、結果の値（04 の「観点の一覧」）
+OBSERVATIONS = [
+    "02 A. 認可", "02 B. 認証と資格情報", "02 C. 秘密情報の扱い", "02 D. 入力と出力", "02 E. データアクセス層",
+    "02 F. 濫用対策", "02 G. ログと追跡", "02 H. 依存関係とビルド", "02 I. 開発用の抜け道", "02 J. 未使用・孤児コード",
+    "02 K. fail-open のデフォルト", "02 L. 第三者タグの読み込み", "02 M. Webhook と外部からの通知", "02 N. 乱数と暗号",
+    "02 O. 通信の保護",
+    "07 0. インジェクション", "07 1. XSS", "07 2. CSRF", "07 3. CORS", "07 4. オープンリダイレクト", "07 5. SSRF",
+    "07 6. ファイルアップロード", "07 7. キャッシュ", "07 8. 競合と二重送信", "07 9. 業務ロジックの欠陥",
+    "07 10. 言語・処理系に固有のもの", "07 11. リアルタイム通信",
+]
+OBS_VALUES = ["問題なし", "指摘あり", "未確認", "対象外"]
+
+
 def sheet_summary(wb, names, service, date, skill_version, standards):
     ws = wb.create_sheet(names["summary"])
     F = "'{}'".format(names["findings"])
@@ -354,6 +367,10 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
         (f"集計の範囲（{LAST} 行目まで）の外に書いた行",
          f"=COUNTA({F}!${idc}${LAST + 1}:${idc}$1048576)"),
     ]
+    # 観点の一覧の結果の書き忘れ。一覧はこのシートの下にある（位置は下の行の並びで決まる）
+    obs_head = r + 2 + (len(checks) + 1) + 1 + 4 + 4
+    obs_first, obs_last = obs_head + 2, obs_head + 1 + len(OBSERVATIONS)
+    checks.append(("観点の一覧で、結果が空欄の行", f"=COUNTBLANK($B${obs_first}:$B${obs_last})"))
     for i, (label, formula) in enumerate(checks):
         body_row(ws, r + 2 + i, [label, formula, "件"])
     r = r + 2 + len(checks) + 1
@@ -368,9 +385,23 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
          "それぞれ「何が起きるか」を 2〜3 行で書く。5 件も 10 件も挙げるとどれが先か伝わらなくなる。",
          5)
 
+    # 観点の一覧。このスキルの観点（02 の A〜O、07 の 0〜11 節）をどこまで当てたかを残す（04 の「観点の一覧」）。
+    # 台帳の指摘だけでは「見て問題なしだった」と「見ていない」が同じに見える。結果の空欄は「整合の確認」が数える
+    r += 4
+    assert r == obs_head
+    section(ws, r, "■ 観点の一覧（結果を空欄にしない。構成に応じて開いた 08・12・13・14 の節は行を足す）")
+    header_row(ws, r + 1, ["観点", "結果", "根拠（指摘・未確認の ID、対象外の理由）"], [30, 22, 22])
+    ws.freeze_panes = None
+    ws.merge_cells(start_row=r + 1, start_column=3, end_row=r + 1, end_column=5)
+    for i, label in enumerate(OBSERVATIONS):
+        body_row(ws, obs_first + i, [label, None, None])
+        ws.merge_cells(start_row=obs_first + i, start_column=3, end_row=obs_first + i, end_column=5)
+    add_list(ws, f"B{obs_first}:B{obs_last}", OBS_VALUES)
+    r = obs_last + 1
+
     # 気づいたこと。評価の範囲外で目に付いたもの、事実として記録しておくだけのもの。
     # 指摘の表に入れず、判定も優先度も付けない。シートの末尾に置くので、行は下へ足せる。
-    r += 4
+    r += 2
     section(ws, r, "■ 気づいたこと（指摘にしないもの。判定も優先度も付けない）")
     header_row(ws, r + 1, ["区分", "内容"], [30, 22])
     ws.freeze_panes = None

@@ -36,8 +36,8 @@ build/
   identifying-words.sh  公開してはいけない語の一覧を、手元の非公開のファイルから作る（案件語と、評価の題材の名前）
 .github/        CI（macOS と Linux）、Dependabot、secret scanning の設定
 tests/          スキルを直したときに壊れていないかを見る
-  run.sh        検査本体（845 件）
-  mutations.sh  検査の検査。欠陥を入れて、対応する検査が失敗するかを確かめる（183 件）
+  run.sh        検査本体（1013 件）
+  mutations.sh  検査の検査。欠陥を入れて、対応する検査が失敗するかを確かめる（271 件）
   self-audit.sh 配布前の自己監査。上の 2 つに加え、方針の遵守と配布物を見る
   eval/         実地の評価。スキルを教材に当て、見つけた割合と方針の遵守を測る（費用がかかる。CI では実行しない）
     local/      題材ごとの情報（.gitignore 済み。手元にだけ置く）
@@ -82,9 +82,11 @@ Node.js は 20 以降。`openpyxl` は `make_register.py` の検査に使う。
 ```
 
 `dist/webapp-security-assessment-v<版>.skill` と、同じ中身の `dist/webapp-security-assessment.skill` ができる。これを Claude の設定から読み込む。
-検査（`tests/run.sh`）を通ってからでないと組み立てない。急ぐときは `--skip-tests`。
-中のファイルの時刻を最後のコミットの時刻に揃えているので、**同じコミットからは同じ zip ができる**
-（出力の sha256 で確かめられる）。古い版は `dist/archive/` へ移す。
+検査（`tests/run.sh`）を通ってからでないと組み立てない。検査で省略があっても組み立てない（道具を入れて省略 0 にする。
+省略したまま組み立てると確かめたときだけ `WSA_ALLOW_SKIP=1`）。急ぐときは `--skip-tests`。
+中のファイルの時刻を、配布物に入るもの（`skill/`・`LICENSE`・`VERSION`）を最後に変えたコミットの時刻に揃えているので、
+**同じ中身からは、同じ OS と同じ zip の実装の範囲で同じ zip ができる**（出力の sha256 で確かめられる。OS が違うと圧縮の結果が変わりうる）。
+古い版は `dist/archive/` へ移す。
 
 ### push する前に
 
@@ -176,7 +178,7 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 **検査は「通ること」しか示さない。** 通る検査が、壊れたときに失敗するかどうかは別の話で、
 実際に「浅い場所に題材を置いたため不具合を再現できず素通りしていた」検査があった。
 `mutations.sh` はスキルにわざと欠陥を入れて `run.sh` を実行し、**対応する検査が失敗すること**（＝壊れたことを検査が見つけること）を
-1 つずつ確かめる（183 件）。失敗しない検査は「生きていない」と判定する。
+1 つずつ確かめる（271 件）。失敗しない検査は「生きていない」と判定する。
 
 初回に実行したところ、20 件中 5 件で問題が出た。うち 3 件は検査自体が弱かった
 （期待値が先頭付近の文字だったため、行末で起きる文字化けを検出できていない、など）。
@@ -234,9 +236,9 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 
 | | 要るもの |
 |---|---|
-| `recon.sh` | `curl`、`dig`（無くても DNS 以外は動く） |
+| `recon.sh` | `curl`、`perl`（HTML の参照を読む）、`dig`（無くても DNS 以外は動く） |
 | `audit_grep.sh` | `grep`、`git`（任意）、`rg`（任意。あれば再帰の検索に使い、大きなリポジトリで 3〜4 倍速い） |
-| `scan_secrets.sh` | `grep`、`iconv`（任意）、`unzip`（Office の文書を見るとき） |
+| `scan_secrets.sh` | `grep`、`xargs`、`iconv`（UTF-16・Shift_JIS・EUC-JP を直して見るとき。無ければその文書は未検査と出す）、`unzip`（Office の文書を見るとき） |
 | `make_register.py` | `openpyxl` |
 | `browser_probe.mjs` | Node.js 20 以降、`playwright` 1.63（評価対象のリポジトリには入れず、`NODE_PATH` で渡す） |
 
