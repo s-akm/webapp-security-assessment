@@ -229,6 +229,25 @@ def usage(path):
     }
 
 
+def refusal_fallback(path):
+    """安全上の判定で止められ、CLI が別のモデルに切り替えて続けたか。切り替えた場合は（元のモデル, 切り替え先）を返す。
+
+    CLI 2.1.281 からは、止められるとセッションの残りを別のモデルで続ける。台帳の書き出しで止められると、
+    調査は元のモデル、台帳は切り替え先が書いたものになる。費用のいちばん大きいモデルで記録すると、
+    どちらが書いたかに関係なく同じモデルの回として比べてしまう（実測で、台帳を書いたのが別のモデルの回が大半を占めた日があった）
+    """
+    for line in pathlib.Path(path).read_text(encoding='utf-8', errors='replace').splitlines():
+        if 'model_refusal_fallback' not in line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if d.get('subtype') == 'model_refusal_fallback':
+            return d.get('original_model') or '', d.get('fallback_model') or ''
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('answers')
@@ -240,6 +259,10 @@ def main():
 
     answers = json.loads(pathlib.Path(a.answers).read_text(encoding='utf-8'))
     result, meta = load_result(a.result)
+    # 途中で切り替えた回は「元→切り替え先」と記録し、比較では別の条件として扱う（compare.py は同じモデルの回だけを比べる）
+    fb = refusal_fallback(a.transcript) if (a.transcript and meta) else None
+    if fb:
+        meta['model'] = f'{fb[0]}→{fb[1]}'
     if meta.get('is_error') or not result:
         print('結果に指摘の JSON が無い（実行が途中で止まったか、予算を使い切った）', file=sys.stderr)
     rows, extra, violations, s = score(answers, result, a.tolerance)

@@ -114,15 +114,11 @@ def main():
     print(f'新: {a.new}　旧: {old_sel or "（タグが無い）"}')
 
     targets = list(OrderedDict.fromkeys(r['題材'] for r in hist))
-    regress, recheck, unevaluated, mixed = [], [], [], []
-    for t in targets:
-        trows = [r for r in hist if r['題材'] == t]
-        new = [r for r in trows if group_key(r) in new_keys]
-        print(f'\n■ {t}')
-        if not new:
-            print('  新: 未評価')
-            unevaluated.append(t)
-            continue
+    regress, recheck, unevaluated, mixed, uncompared = [], [], [], [], []
+
+    def compare_group(t, trows, new):
+        """新の回のうち、同じモデルの条件の回（new）を旧と比べる。判定（regress・recheck・mixed・ok）と、同じ条件の旧があったかを返す"""
+        verdict = 'ok'
         models = {r['モデル'] for r in new}
         # 旧は、新と同じモデルで当てた回だけ。無ければ別のモデルの回と比べ、判定には使わない
         cands = [r for r in trows if group_key(r) not in new_keys and group_key(r) is not None]
@@ -191,23 +187,54 @@ def main():
         if doubts and model_differs:
             for d in doubts:
                 print(f'  参考: {d}（モデルが違うので判定しない）')
-            mixed.append(t)
+            verdict = 'mixed'
         elif doubts and len(new) < 2:
             for d in doubts:
                 print(f'  要再確認: {d}（新が 1 回だけ。もう 1 回当てて判定する）')
-            recheck.append(t)
+            verdict = 'recheck'
         elif doubts:
             for d in doubts:
                 print(f'  劣後: {d}')
+            verdict = 'regress'
+
+        return verdict, bool(old) and not model_differs
+
+    for t in targets:
+        trows = [r for r in hist if r['題材'] == t]
+        new_all = [r for r in trows if group_key(r) in new_keys]
+        print(f'\n■ {t}')
+        if not new_all:
+            print('  新: 未評価')
+            unevaluated.append(t)
+            continue
+        # 新の回を、モデルの条件ごとに分けて比べる。安全上の判定で止められて途中から別のモデルが台帳を書いた回
+        # （「元→切り替え先」）は、元のモデルだけの回と条件が違うので混ぜない。元のモデルだけの回を先に出す
+        conds = sorted({r['モデル'] for r in new_all}, key=lambda m: ('→' in m, m))
+        verdicts, compared = [], False
+        for m in conds:
+            if len(conds) > 1:
+                print(f'  ［{m}］')
+            v, c = compare_group(t, trows, [r for r in new_all if r['モデル'] == m])
+            verdicts.append(v); compared = compared or c
+        if 'regress' in verdicts:
             regress.append(t)
+        elif 'recheck' in verdicts:
+            recheck.append(t)
+        elif not compared:
+            # どの条件でも同じ条件の旧が無ければ、版の比較になっていない。劣後なしとは言えない
+            uncompared.append(t)
+        elif 'mixed' in verdicts:
+            mixed.append(t)
 
     print()
     if regress:
         print(f'劣後あり: {"・".join(regress)}')
         return 1
-    if recheck or unevaluated:
+    if recheck or unevaluated or uncompared:
         if recheck:
             print(f'要再確認（もう 1 回当てる）: {"・".join(recheck)}')
+        if uncompared:
+            print(f'同じ条件の旧が無い（新か旧を、同じモデルの条件でもう 1 回当てる）: {"・".join(uncompared)}')
         if unevaluated:
             print(f'未評価: {"・".join(unevaluated)}')
         return 3

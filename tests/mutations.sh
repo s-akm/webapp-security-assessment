@@ -356,6 +356,12 @@ mutate "eval: 比較で 1 回だけの疑いを見逃す" "../tests/eval/compare
   's = s.replace("        elif doubts and len(new) < 2:", "        elif False:", 1)'
 mutate "eval: 比較でモデルの違う旧と判定する" "../tests/eval/compare.py" "旧が別のモデルの回しか無ければ" \
   's = s.replace("        if doubts and model_differs:", "        if False:", 1)'
+mutate "eval: 比較で切り替えた回を元のモデルの回に混ぜる" "../tests/eval/compare.py" "途中で切り替えた回を、元のモデルだけの回と分けて" \
+  's = s.replace("v, c = compare_group(t, trows, [r for r in new_all if r[\x27モデル\x27] == m])", "v, c = compare_group(t, trows, new_all)", 1)'
+mutate "eval: 同じ条件の旧が無くても劣後なしとする" "../tests/eval/compare.py" "劣後なしとも言わない" \
+  's = s.replace("        elif not compared:\n            # どの", "        elif False:\n            # どの", 1)'
+mutate "eval: 採点で切り替えを記録しない" "../tests/eval/score.py" "元→切り替え先と記録する" \
+  's = s.replace("    if fb:\n        meta[\x27model\x27]", "    if False:\n        meta[\x27model\x27]", 1)'
 mutate "eval: URL の // もコメントとして消す" "../tests/eval/prep_anchors.py" "URL の中の // を壊さない" \
   's = s.replace("SLASH = [re.compile(r\x27(^|(?<=[\\s;,)\\]}]))//.*$\x27)", "SLASH = [re.compile(r\x27//.*$\x27)")'
 mutate "eval: 手掛かりの消し残しがあっても止めない" "../tests/eval/prep_anchors.py" "手掛かりの消し残しがあれば止まる" \

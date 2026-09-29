@@ -1985,6 +1985,12 @@ EOF
 ST="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr.json" --transcript "$TMP/eval-tr.jsonl" 2>&1 || true)"
 contains "eval[採点]: スキルを読み込んだかを数える"               "スキルを読み込んだ: はい  読んだ資料: 02" "$ST"
 contains "eval[採点]: audit_grep の出力を読んだかを数える"        "audit_grep の出力を読んだ: はい" "$ST"
+# 安全上の判定で止められ、CLI が別のモデルに切り替えて続けた回は、モデルの欄を「元→切り替え先」にする
+cp "$TMP/eval-tr.jsonl" "$TMP/eval-tr-fb.jsonl"
+echo '{"type":"system","subtype":"model_refusal_fallback","original_model":"mA","fallback_model":"mB"}' >> "$TMP/eval-tr-fb.jsonl"
+SF="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr.json" --transcript "$TMP/eval-tr-fb.jsonl" 2>&1 || true)"
+contains "eval[採点]: 途中で別のモデルに切り替えた回を、元→切り替え先と記録する" "mA→mB" "$SF"
+absent   "eval[採点]: 切り替えの無い回には切り替えを書かない"   "→" "$(grep '^費用' <<<"$ST")"
 
 # 汎用の下拵え（prep_anchors.py）。題材ごとの表（アンカー・消すもの・手掛かりの語）は手元に置くので、
 # ここでは架空の題材と表で、答えの行を決められるか・手掛かりのコメントだけを行を保って消せるかを見る
@@ -2087,15 +2093,16 @@ else ng "eval: run-eval.sh を実行の前に最後まで読み切る" "全体�
 
 # 版の比較（compare.py）。版を上げてよいかの判定に使うので、劣後を見逃さないか・足りない回数で「劣後なし」と言わないかを確かめる。
 # 架空の題材 t1 で、旧 9.9.0 と新 9.9.1 を比べる。コミットは git で解けない語にして、版の名前でまとめさせる
-cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル]
+cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル] [新の回ごとのモデル（空白区切り）]
   local d="$TMP/eval-cmp-$1"; mkdir -p "$d"
-  python3 - "$d" "$2" "$3" "$4" "${5:-m}" <<'PY'
+  python3 - "$d" "$2" "$3" "$4" "${5:-m}" "${6:-}" <<'PY'
 import sys
 d, found, viol, xfound, om = sys.argv[1], sys.argv[2].split(), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
+nm = sys.argv[6].split() or ['m'] * len(found)
 H = ['日付', 'スキルの版', 'スキルのコミット', '題材', '題材のコミット', 'モデル', '見つけた', 'うち行で指した', '範囲内', '保留', '見誤り',
      '範囲が広い', '見落とし', '一覧外', '違反', '費用（米ドル）', '分', '入力トークン', 'キャッシュ読みトークン', '出力トークン']
 hist, items = ['\t'.join(H)], ['\t'.join(['日付', 'スキルの版', 'スキルのコミット', '題材', '実行', '項目', '範囲', '状態', 'モデル'])]
-runs = [('9.9.0', 'zzold01', f, 0, 1, om) for f in ('10', '12')] + [('9.9.1', 'zznew01', f, viol, int(i < xfound), 'm') for i, f in enumerate(found)]
+runs = [('9.9.0', 'zzold01', f, 0, 1, om) for f in ('10', '12')] + [('9.9.1', 'zznew01', f, viol, int(i < xfound), nm[i]) for i, f in enumerate(found)]
 for n, (ver, c, f, v, x, m) in enumerate(runs):
     hist.append('\t'.join(['2026-01-01', ver, c, 't1', 'x', m, f, f, '19', '0', '0', '0', '0', '5', str(v), '2', '10', '1', '1', '1']))
     items.append('\t'.join(['2026-01-01', ver, c, 't1', f'run{n}', 'X', 'in', '見つけた' if x else '見落とし', m]))
@@ -2120,9 +2127,15 @@ if [[ "$CMP_RC" -eq 3 ]] && grep -qF '要再確認（もう 1 回当てる）: t
   ok "eval[比較]: 新が 1 回だけで疑いがあれば、劣後とも劣後なしとも言わず、もう 1 回当てさせる"
 else ng "eval[比較]: 新が 1 回だけで疑いがあれば、劣後とも劣後なしとも言わず、もう 1 回当てさせる" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 cmp_case model "7 8" 0 0 other || true
-if [[ "$CMP_RC" -eq 0 ]] && grep -qF '版の差とモデルの差が混ざる' <<<"$CMP_OUT" && grep -qF '版の比較にはなっていない' <<<"$CMP_OUT"; then
-  ok "eval[比較]: 旧が別のモデルの回しか無ければ、劣後の判定に使わず、そのことを出す"
-else ng "eval[比較]: 旧が別のモデルの回しか無ければ、劣後の判定に使わず、そのことを出す" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+if [[ "$CMP_RC" -eq 3 ]] && grep -qF '版の差とモデルの差が混ざる' <<<"$CMP_OUT" && grep -qF '同じ条件の旧が無い' <<<"$CMP_OUT" && ! grep -qF '劣後なし' <<<"$CMP_OUT"; then
+  ok "eval[比較]: 旧が別のモデルの回しか無ければ、劣後の判定に使わず、劣後なしとも言わない"
+else ng "eval[比較]: 旧が別のモデルの回しか無ければ、劣後の判定に使わず、劣後なしとも言わない" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+# 新に、元のモデルだけの回（m）と、途中で切り替えた回（m→f）が混ざるとき。条件ごとに分けて比べ、m の回で判定する
+# （混ぜると、切り替えた回の少ない数で平均が下がり、劣後と誤る）
+cmp_case cond "11 12 3" 0 2 m "m m m→f" || true
+if [[ "$CMP_RC" -eq 0 ]] && grep -qF '［m→f］' <<<"$CMP_OUT" && grep -qF '劣後なし' <<<"$CMP_OUT"; then
+  ok "eval[比較]: 途中で切り替えた回を、元のモデルだけの回と分けて比べる"
+else ng "eval[比較]: 途中で切り替えた回を、元のモデルだけの回と分けて比べる" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 
 # 手元の題材の検査（tests/eval/local/tests.sh）。題材を特定できる情報を含むので公開しない。
 # あるときだけ回し、成功の数は公開の件数とは別に出す（README の件数は公開の検査だけ）。失敗は全体の失敗に数える

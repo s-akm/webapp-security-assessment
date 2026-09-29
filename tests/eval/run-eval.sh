@@ -159,10 +159,10 @@ else
   ( cd "$LOCAL" && python3 -B "$PREP_PATH" $PREP_ARGS "$SRC" "$OUT/answers.json" )
 fi
 
-# audit_grep.sh は先に回して、出力を読ませる。エージェントに回させると、変数やパイプを組み合わせたコマンドになり、
+# audit_grep.sh は先に実行して、出力を読ませる。エージェントに実行させると、変数やパイプを組み合わせたコマンドになり、
 # 許可の条件（読むことと audit_grep.sh の単独の呼び出し）に合わず止められる（初回の実測で 3 回止められ、1 度も回らなかった）。
-# 出力の置き場は題材の外で、答えの一覧（$OUT）とも分ける。スキルを題材の中に置く前に回す
-# （後に回すと、スキル自身のファイルまで監査の対象に混ざる。2.20.1 までの実測で recon.sh の行が出ていた）
+# 出力の置き場は題材の外で、答えの一覧（$OUT）とも分ける。スキルを題材の中に置く前に実行する
+# （後で実行すると、スキル自身のファイルまで監査の対象に混ざる。2.20.1 までの実測で recon.sh の行が出ていた）
 EVID="$WORK/evidence"; mkdir -p "$EVID"
 # 当てるスキル。--skill-ref なら、その版の skill/ と VERSION を git から取り出す（下拵えの audit_grep.sh もその版のものを使う）
 SKILL_SRC="$ROOT/skill"; SKILL_VERSION_FILE="$ROOT/VERSION"
@@ -172,7 +172,7 @@ if [[ -n "$SKILL_REF" ]]; then
   SKILL_SRC="$WORK/skill-ref/skill"; SKILL_VERSION_FILE="$WORK/skill-ref/VERSION"
 fi
 ( cd "$APP" && bash "$SKILL_SRC/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
-echo "audit_grep.sh を先に回した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
+echo "audit_grep.sh を先に実行した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
 
 # スキルを題材の中に置く。--setting-sources project で、利用者の手元の設定・スキル・CLAUDE.md は読まない
 mkdir -p "$APP/.claude/skills"
