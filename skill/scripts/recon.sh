@@ -16,9 +16,23 @@
 # 対象システムの状態は一切変更しない。GET と DNS 参照のみ。
 # 検出した鍵の値は伏字で表示する。値そのものが必要な場合は取得したファイルを直接見る。
 #
+# 対象へ送る要求（依頼者に説明するときの一覧。1 回の実行で HTTP はおよそ 20 本＋ページが読み込む JS の本数）:
+#   1    渡された URL を 1 本（転送は 5 回まで追う）
+#   1c   外から見えてはいけないパスを 13 本（EXPOSE の表）と /.well-known/security.txt。
+#        200 が返ったものだけ、中身の先頭 1KB を読むためにもう 1 本
+#   1d   TLS の接続を 1 本（openssl。証明書を読むだけ）
+#   3    ログイン系のパスを 5 本（/login /signin /sign-in /admin/login /auth/login）と、
+#        取得したページが <script> などで読み込む JS（ページに書かれたものだけ。推測して取りに行かない）
+#   5    引数で渡した追加パス（転送は追わない）
+#   DNS  2 節で 40 問ほど（NS・A・AAAA・MX・CAA・SOA・DS・SPF・DMARC・MTA-STS・TLS-RPT・配信用サブドメイン・DKIM）
+# 要求の間に待ち時間は置かず、robots.txt も見ない。依頼者の許可を得た、依頼者自身のサイトに使う前提。
+# User-Agent は "webapp-security-assessment-recon" を名乗る（RECON_UA で変えられる）。依頼者が WAF やアクセスログで
+# 評価の要求だと見分けられるようにするため。curl の既定の名乗りは WAF に止められやすく、403 を「問題なし」と読み違える。
+#
 # 環境変数:
 #   RECON_DNS          "サーバー:ポート"。DNS をそのサーバーに聞く（社内の権威サーバー、検査用の受け口）
 #   RECON_DNS_TIMEOUT  dig の 1 回あたりの待ち時間（秒）。既定は 3（RECON_DNS を指定したときは 2）
+#   RECON_UA           User-Agent。既定は "webapp-security-assessment-recon"
 
 set -uo pipefail
 
@@ -44,6 +58,16 @@ MAXREDIR=5
 
 hr() { printf '\n=== %s ===\n' "$1"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# すべての curl に名乗り（User-Agent）を付ける。呼び出しの箇所ごとに付け忘れないよう、curl を包む
+UA="${RECON_UA:-webapp-security-assessment-recon}"
+curl() { command curl -A "$UA" "$@"; }
+
+# 対象から受け取った文字列（ヘッダ・URL・ホスト名）から制御文字を落とす。端末の表示を書き換える
+# 並び（ESC で始まるもの）を、そのまま画面や作業ログに出さないため。タブと改行は残す
+strip_ctl() { LC_ALL=C tr -d '\000-\010\013-\037\177'; }
+# WAF・ボット対策が返すことの多い状態。中身が返っていないことを示すだけで、有無や設定の良し悪しは分からない
+is_blocked() { [[ "$1" == "403" || "$1" == "406" || "$1" == "429" ]]; }
 
 # --------------------------------------------------------------------------
 # DNS の問い合わせ
@@ -152,12 +176,13 @@ mask_headers() {
 }
 
 # 複数の応答（リダイレクトの各段）が続けて書かれたヘッダから、最後の応答だけを取る
-last_block() { tr -d '\r' < "$1" | awk '/^HTTP\//{buf=""} {buf = buf $0 "\n"} END{printf "%s", buf}'; }
+last_block() { strip_ctl < "$1" | awk '/^HTTP\//{buf=""} {buf = buf $0 "\n"} END{printf "%s", buf}'; }
 
-# URL のホスト名（ポートを除く、小文字）
-host_of() { printf '%s\n' "$1" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://##; s#^//##; s#[/:?\#].*$##' | tr 'A-Z' 'a-z'; }
-# URL のオリジン（スキーム + ホスト + ポート）
-origin_of() { printf '%s\n' "$1" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://[^/?\#]+).*$#\1#'; }
+# URL のホスト名（ポートを除く、小文字）。URL に認証部（https://<鍵>@o1.ingest.sentry.io のような user@）が
+# 付いていれば落とす。以前はそのまま出し、Sentry の DSN の鍵が 4 節に伏せられずに出ていた
+host_of() { printf '%s\n' "$1" | sed -E 's#^[A-Za-z][A-Za-z0-9+.-]*://##; s#^//##; s#^[^/?\#@]*@##; s#[/:?\#].*$##' | tr 'A-Z' 'a-z' | strip_ctl; }
+# URL のオリジン（スキーム + ホスト + ポート）。認証部は落とす
+origin_of() { printf '%s\n' "$1" | sed -E 's#^([A-Za-z][A-Za-z0-9+.-]*://)[^/?\#@]*@#\1#; s#^([A-Za-z][A-Za-z0-9+.-]*://[^/?\#]+).*$#\1#' | strip_ctl; }
 
 # ページが参照する URL を、そのページの最終的な URL を基準に絶対 URL へ直す。
 #   resolve <基準の URL> <参照>
@@ -188,8 +213,25 @@ script_refs() {
 inline_scripts() {
   perl -0777 -ne 'while (/<script\b([^>]*)>(.*?)<\/script\s*>/gis) { print "$2\n" unless $1 =~ /\bsrc\s*=/i }' "$@" 2>/dev/null
 }
-# コードの中に書かれた URL（パスまで。ホスト名は tag_hosts_of が取り出す）
-url_refs() { grep -ohE "(https?:)?//[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}[^\"'<>[:space:]]*" "$@" 2>/dev/null; }
+# コードの中に書かれた URL（パスまで。ホスト名は tag_hosts_of が取り出す）。
+# 認証部の付いた URL（Sentry の DSN: https://<鍵>@o1.ingest.sentry.io/1）も拾う。認証部は host_of で落とす
+url_refs() { grep -ohE "(https?:)?//([^/@[:space:]\"'<>]+@)?[A-Za-z0-9][A-Za-z0-9.-]*\.[A-Za-z]{2,}[^\"'<>[:space:]]*" "$@" 2>/dev/null; }
+
+# ページが読み込む参照（4 節の第三者オリジンに使う）。src 属性のすべてと、読み込みを起こす rel を持つ <link> の href。
+# <a href> や rel="canonical"・"alternate" は利用者が押すまで何も送らないので数えない。以前は href を全部集め、
+# SNS や提携先へのリンクまで「読み込まれる第三者オリジン」に並べていた（外部送信の一覧にリンク先が混ざる）
+LOAD_RELS='stylesheet|preload|modulepreload|prefetch|preconnect|dns-prefetch|icon|apple-touch-icon|mask-icon|manifest'
+load_refs() {
+  LOAD_RELS="$LOAD_RELS" perl -0777 -ne '
+    my $rels = $ENV{LOAD_RELS};
+    while (/<([a-z][a-z0-9-]*)\b([^>]*)>/gis) {
+      my ($tag, $a) = (lc $1, $2);
+      while ($a =~ /\bsrc\s*=\s*["\x27]([^"\x27<> ]+)["\x27]/gi) { print "$1\n" }
+      next unless $tag eq "link" && $a =~ /\brel\s*=\s*["\x27]?([^"\x27>]+)/i;
+      my $rel = lc $1;
+      print "$1\n" if $rel =~ /(^|\s)($rels)(\s|$)/ && $a =~ /\bhref\s*=\s*["\x27]([^"\x27<> ]+)["\x27]/i;
+    }' "$@" 2>/dev/null
+}
 
 # 自サイトかどうか。渡された URL のホスト、リダイレクト後の最終的なホスト、そのサブドメインを自サイトとみなす
 FINAL_HOST="$DOMAIN"
@@ -202,6 +244,8 @@ is_own_host() {
 # **browser_probe.mjs の TAGS と同じ内容に揃える**（tests/run.sh が一致を検査する）。
 # ホスト名の末尾で照合する（端の指定が無いと hotjar.com.attacker.example にもラベルが付く）。
 # ホスト名は各社の公式の CSP の設定例・送信先の一覧で確かめたもの（2026-09）。
+# Microsoft 広告・LINE Tag・KARTE・Yahoo! タグマネージャー・New Relic・Mixpanel・Amplitude・Segment・HubSpot は
+# 2026-09 に足した。配信元と送信先のホスト名は各社の案内と公開の資料で確かめた範囲で書いている。
 TAGS=(
   'Google タグマネージャ|(^|\.)googletagmanager\.com$'
   'Google アナリティクス|(^|\.)(google-analytics\.com|analytics\.google\.com)$'
@@ -210,9 +254,13 @@ TAGS=(
   'Microsoft Clarity|(^|\.)clarity\.ms$|^c\.bing\.com$'
   'Hotjar|(^|\.)hotjar\.(com|io)$'
   'TikTok ピクセル|^analytics\.tiktok\.com$'
-  'LinkedIn Insight|^snap\.licdn\.com$'
+  'LinkedIn Insight|^snap\.licdn\.com$|^px\.ads\.linkedin\.com$'
   'X 広告|^static\.ads-twitter\.com$'
   'Yahoo! 広告|^s\.yimg\.jp$'
+  'Yahoo! タグマネージャー|^s\.yjtag\.jp$|^yjtag\.yahoo\.co\.jp$'
+  'Microsoft 広告|^bat\.bing\.com$'
+  'LINE Tag|^tr\.line\.me$|^d\.line-scdn\.net$'
+  'KARTE|(^|\.)karte\.io$'
   'Sentry|(^|\.)(sentry\.io|sentry-cdn\.com)$'
   'Intercom|(^|\.)intercom\.io$'
   'LogRocket|(^|\.)(logrocket\.(io|com)|lr-ingest\.(io|com)|lr-in\.com|lr-in-prod\.com|ingest-lr\.com|lr-intake\.com|intake-lr\.com|logr-ingest\.com|lrkt-in\.com|lgrckt-in\.com|logr-in\.com)$'
@@ -220,6 +268,11 @@ TAGS=(
   'PostHog|(^|\.)posthog\.com$'
   'Datadog RUM|(^|\.)browser-intake-([a-z0-9]+-)?(datadoghq\.(com|eu)|ddog-gov\.com)$|^www\.datadoghq-browser-agent\.com$'
   'Mouseflow|(^|\.)mouseflow\.com$'
+  'New Relic Browser|^js-agent\.newrelic\.com$|(^|\.)nr-data\.net$'
+  'Mixpanel|(^|\.)(mixpanel\.com|mxpnl\.com)$'
+  'Amplitude|(^|\.)amplitude\.com$'
+  'Segment|^(cdn|api)\.segment\.(com|io)$'
+  'HubSpot|(^|\.)(hs-scripts\.com|hs-analytics\.net)$|^track\.hubspot\.com$'
 )
 # ホスト名だけでは計測と言えない送信先。同じホストに共有ボタンや画像も置かれているので、ここではパスまで見る。
 # 「ホスト|パスの正規表現」。以前は共有リンク（www.facebook.com/sharer）や画像（s.yimg.jp/images/…）で
@@ -228,6 +281,7 @@ TAGS=(
 TAG_PATHS=(
   'www.facebook.com|^/tr([/?#]|$)'
   's.yimg.jp|^/images/listing/tool/cv/'
+  'd.line-scdn.net|^/n/line_tag/'
 )
 # URL（1 行 1 件）から、タグの判定に使うホスト名を出す。TAG_PATHS のホストは、パスが合うときだけ出す
 tag_hosts_of() {
@@ -282,16 +336,21 @@ else
   FINAL_HOST="$(host_of "$FINAL_URL")"
   if [[ "${nredir:-0}" -gt 0 ]]; then
     printf '  リダイレクト %s 回:\n' "$nredir"
-    tr -d '\r' < "$WORK/hdr_all.txt" | awk '
+    strip_ctl < "$WORK/hdr_all.txt" | awk '
       /^HTTP\// { st = $2 }
       tolower($0) ~ /^location:/ { v = $0; sub(/^[^:]*:[ \t]*/, "", v); q = index(v, "?"); if (q > 0) v = substr(v, 1, q - 1) "?<伏字>"; print "    " st " → " v }'
-    printf '  最終的な URL: %s\n' "$(printf '%s' "$FINAL_URL" | sed -E 's/\?.*$/?<伏字>/')"
+    printf '  最終的な URL: %s\n' "$(printf '%s' "$FINAL_URL" | sed -E 's/\?.*$/?<伏字>/' | strip_ctl)"
     echo "  （以下のヘッダと 3・4 節は、最終的な応答で判定する）"
   fi
   echo ""
   last_block "$WORK/hdr_all.txt" > "$WORK/hdr_final.txt"
   mask_headers < "$WORK/hdr_final.txt" | sed 's/^/  /'
   echo "  ※ Set-Cookie は値を伏せ、名前と属性だけを出す。判定に使わないヘッダで値の長いものは伏せる"
+  code_final="$(awk '/^HTTP\//{c=$2} END{print c}' "$WORK/hdr_final.txt")"
+  if is_blocked "$code_final"; then
+    echo "  ※ 最初の応答が ${code_final}。WAF・ボット対策で止められた可能性がある。以下の判定はこの応答に対するもので、"
+    echo "    サイト本来のヘッダ・ページとは限らない。依頼者に許可の設定（${UA} の名乗りや送信元の IP）を頼んで取り直す"
+  fi
 fi
 
 if [[ $REACH -eq 1 ]]; then
@@ -310,9 +369,31 @@ if [[ $REACH -eq 1 ]]; then
 
   hr "1c. 外から見えてはいけないもの（ステータスだけ。本文は保存しない）"
   # SPA は存在しないパスにもトップページを 200 で返すことがある。200 のときは先頭だけを見て判定し、
-  # 値は出さない。HTML だと言い切るのは、HTML の書き出しがあるときだけにする（それ以外は要確認）。
+  # 値は出さない。中身だと言い切るのは、そのファイルの書き出しの印（下の表）があるときだけにする。
   # 渡された URL にパスが付いていても、ここはサイトの根（オリジン）から引く。
-  for p in /.git/HEAD /.env /.env.local /.env.production /.DS_Store /.well-known/security.txt; do
+  # パスは references/03-runtime-config.md の 10 節に揃える。見えてはいけないものがあるかの確認にとどめ、
+  # 見つけた中身をたどって先の要求は送らない。
+  #   「重さ パス 中身だと分かる印（ERE。先頭 1KB に当てる。# と ; で始まる行は除いて見る）」
+  #   重さ: p0   = 鍵や履歴がそのまま取れる（P0 の候補）
+  #         info = 内部の設定や状態が見える（優先度は 04 で引く）
+  #         ls   = ファイルの一覧が見える
+  EXPOSE=(
+    'p0   /.git/HEAD         ^(ref:|[0-9a-f]{40})'
+    'p0   /.git/config       ^\[(core|remote|branch)'
+    'p0   /.env              ^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*='
+    'p0   /.env.local        ^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*='
+    'p0   /.env.production   ^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*='
+    'p0   /.env.bak          ^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*='
+    'p0   /.aws/credentials  ^[[:space:]]*aws_(access_key_id|secret_access_key|session_token)[[:space:]]*='
+    'p0   /.npmrc            (_authToken|_auth|_password)[[:space:]]*='
+    'info /actuator/env      "(propertySources|activeProfiles)"'
+    'info /server-status     Apache Server Status|Server uptime'
+    'info /phpinfo.php       phpinfo\(\)|PHP Version'
+    'ls   /.DS_Store         Bud1'
+  )
+  blocked_seen=0
+  for e in "${EXPOSE[@]}" 'sec  /.well-known/security.txt  ^[Cc]ontact:'; do
+    read -r kind p sig <<< "$e"
     code="$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 --max-time 10 "$ORIGIN$p" 2>/dev/null)"
     note=""
     if [[ -z "$code" || "$code" == "000" ]]; then
@@ -320,25 +401,25 @@ if [[ $REACH -eq 1 ]]; then
     elif [[ "$code" == "200" ]]; then
       head_="$(curl -s --max-time 10 "$ORIGIN$p" 2>/dev/null | head -c 1024 | tr -d '\0')"
       is_html=""; printf '%s' "$head_" | grep -iE '<(!doctype|html|head|body)' >/dev/null && is_html=1
-      case "$p" in
-        /.git/HEAD)
-          if printf '%s' "$head_" | grep -E '^(ref:|[0-9a-f]{40})' >/dev/null; then note="$P0NOTE"
-          elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
-          else note="（HTML ではない何かが返っている。要確認）"; fi ;;
-        /.env*)
-          if printf '%s\n' "$head_" | grep -vE '^[[:space:]]*#' | grep -E '^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=' >/dev/null; then note="$P0NOTE"
-          elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
-          else note="（HTML ではない何かが返っている。要確認）"; fi ;;
-        /.well-known/security.txt)
-          if printf '%s' "$head_" | grep -i '^contact:' >/dev/null; then note="（連絡窓口あり）"
-          else note="（連絡窓口の書式ではない）"; fi ;;
-        /.DS_Store)
-          [[ -z "$is_html" ]] && note="← HTML ではない。ファイル一覧が露出している可能性" ;;
-      esac
-    elif [[ "$p" == "/.well-known/security.txt" ]]; then note="（連絡窓口が無い）"
+      if printf '%s\n' "$head_" | grep -vE '^[[:space:]]*[#;]' | grep -E "$sig" >/dev/null; then
+        case "$kind" in
+          p0)   note="$P0NOTE" ;;
+          info) note="← 中身が返っている。内部の設定や状態が見える（優先度は 04 で引く）" ;;
+          ls)   note="← ファイルの一覧が露出している（中の名前から非公開のファイルを探せる）" ;;
+          sec)  note="（連絡窓口あり）" ;;
+        esac
+      elif [[ "$kind" == "sec" ]]; then note="（連絡窓口の書式ではない）"
+      elif [[ -n "$is_html" ]]; then note="（HTML が返っている。SPA の既定応答）"
+      else note="（HTML ではない何かが返っている。要確認）"; fi
+    elif [[ "$kind" == "sec" ]]; then note="（連絡窓口が無い）"
+    elif is_blocked "$code"; then note="（※）"; blocked_seen=1
     fi
     printf '  %-28s %s %s\n' "$p" "$code" "$note"
   done
+  if [[ $blocked_seen -eq 1 ]]; then
+    echo "  ※ 403・406・429 は中身が返っていないことを示すだけで、ファイルの有無は分からない"
+    echo "    （サーバーが拒んだのか、WAF・ボット対策が止めたのかは区別できない）"
+  fi
 
   if [[ "$URL" == https://* ]] && have openssl; then
     hr "1d. 証明書"
@@ -598,25 +679,48 @@ for entry in "${LLM_KEYS[@]}"; do
   fi
 done
 
-# 各サービスの公開鍵・秘密鍵の典型パターン
-for pat in 'sb_publishable_[A-Za-z0-9_-]{10,}' 'sb_secret_[A-Za-z0-9_-]{10,}' \
-           'AIza[0-9A-Za-z_-]{20,}' 'pk_live_[0-9A-Za-z]{10,}' 'sk_live_[0-9A-Za-z]{10,}' \
-           'rk_live_[0-9A-Za-z]{10,}' 'AKIA[0-9A-Z]{16}' 'ghp_[0-9A-Za-z]{20,}' \
-           'github_pat_[0-9A-Za-z_]{20,}' 'xox[baprs]-[0-9A-Za-z-]{10,}'; do
+# 各サービスの鍵の典型パターン。「種類|サービス|正規表現」
+#   secret = クライアントに出てはいけない秘密鍵（報告書を待たずに知らせる対象）
+#   test   = テスト環境の秘密鍵（本番の被害は無いが、クライアントに出てはいけない）
+#   public = 公開してよい鍵（場所の確認のために出す）
+# **scan_secrets.sh の鍵の検査と同じ種類を見る**。tests/run.sh が同じ見本の一覧を両方に当てて、片方だけが
+# 拾う種類が無いことを確かめる（どちらかに足したら、もう一方と、発火台の見本の一覧にも足す）
+KEYS=(
+  'public|Supabase（公開用）|sb_publishable_[A-Za-z0-9_-]{10,}'
+  'secret|Supabase|sb_secret_[A-Za-z0-9_-]{10,}'
+  'public|Google|AIza[0-9A-Za-z_-]{20,}'
+  'public|Stripe（公開用）|pk_(live|test)_[0-9A-Za-z]{10,}'
+  'secret|Stripe|(sk|rk)_live_[0-9A-Za-z]{10,}'
+  'test|Stripe（テスト環境）|(sk|rk)_test_[0-9A-Za-z]{10,}'
+  'secret|Stripe の Webhook|whsec_[0-9A-Za-z]{20,}'
+  'secret|AWS|(AKIA|ASIA)[0-9A-Z]{16}'
+  'secret|Azure|(Account|SharedAccess)Key=[A-Za-z0-9+/]{40,}={0,2}'
+  'secret|GitHub|gh[pousr]_[0-9A-Za-z]{20,}|github_pat_[0-9A-Za-z_]{20,}'
+  'secret|npm|npm_[0-9A-Za-z]{30,}'
+  'secret|Slack|xox[abeoprs]-[0-9A-Za-z-]{10,}|xapp-[0-9]+-[0-9A-Za-z-]{12,}'
+  'secret|Twilio|\b(AC|SK)[0-9a-f]{32}\b'
+  'secret|SendGrid|SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}'
+  'secret|Mailgun|\bkey-[0-9a-f]{32}\b'
+)
+for entry in "${KEYS[@]}"; do
+  kind="${entry%%|*}"; rest="${entry#*|}"; label="${rest%%|*}"; pat="${rest#*|}"
   if grep -oE "$pat" all.js >/dev/null 2>&1; then
     grep -oE "$pat" all.js | sort -u | while read -r k; do
-      echo "    $(printf '%s' "$k" | mask)"
+      echo "    [${label}] $(printf '%s' "$k" | mask)"
     done
-    # 秘密鍵の種類（公開してよい pk_live_ / sb_publishable_ / AIza 以外）は、報告書を待たずに知らせる対象
-    case "$pat" in
-      sb_secret_*|sk_live_*|rk_live_*|AKIA*|ghp_*|github_pat_*|xox*) echo "      → クライアントに出てはいけない種類。${P0KEY}" ;;
+    case "$kind" in
+      secret) echo "      → クライアントに出てはいけない種類。${P0KEY}" ;;
+      test)   echo "      → テスト環境の秘密鍵。本番の被害は無いが、クライアントに出てはいけない（本番の鍵も同じ置き方になっていないか確かめる）" ;;
     esac
     found=1
   fi
 done
 [[ $found -eq 0 ]] && echo "    （検出なし）"
-echo "    ※ LLM の鍵（★）、sk_live_ / rk_live_ / AKIA / ghp_ / github_pat_ / sb_secret_ / service_role は"
-echo "      クライアントに出てはいけない種類。AIza は Gemini API が有効なプロジェクトなら LLM の鍵として働く"
+echo "    ※ LLM の鍵（★）と、→ の付いた秘密鍵（service_role を含む）はクライアントに出てはいけない種類。"
+echo "      AIza は Gemini API が有効なプロジェクトなら LLM の鍵として働く"
+echo "    ※ 見たのは、取得したページ（渡された URL と 5 つのログイン系のパス）が直接読み込む JS だけ。"
+echo "      import() で後から読み込む分割されたファイル（管理画面用など）は含まない。鍵が無いと言えるのはこの範囲だけ。"
+echo "      残りはブラウザで画面を開いて読み込まれた JS を見るか、リポジトリのビルド設定と環境変数の名前で確かめる"
 
 echo "  --- API エンドポイント ---"
 ep="$(grep -ohE 'https://[a-z0-9.-]+\.(supabase\.co|firebaseio\.com|amazonaws\.com|googleapis\.com|appwrite\.io|pocketbase\.io)' all.js 2>/dev/null | sort -u)"
@@ -626,12 +730,10 @@ if [[ -n "$ep" ]]; then printf '%s\n' "$ep" | sed 's/^/    /'; else echo "    �
 # 外部送信規律・同意管理の検討に使う。通知・公表の対象になる送信先の一覧を作る。
 hr "4. 第三者への送信先（外部送信規律・CMP の検討材料）"
 
-# 収集した全ページの src / href から、自サイト以外のオリジンを抜き出す（引用符は二重・一重の両方）
+# 収集した全ページが読み込む参照（src と、読み込みを起こす <link> の href）から、自サイト以外のオリジンを抜き出す
 : > refs_all.txt
 while IFS=$'\t' read -r f base; do
-  grep -ohiE "(src|href)=[\"'][^\"'<> ]+[\"']" "$f" 2>/dev/null \
-    | sed -E "s/^[A-Za-z]+=[\"']//; s/[\"']$//" \
-    | while IFS= read -r ref; do resolve "$base" "$ref"; done >> refs_all.txt
+  load_refs "$f" | while IFS= read -r ref; do resolve "$base" "$ref"; done >> refs_all.txt
 done < pages.tsv
 : > thirdparty_raw.txt
 while IFS= read -r u; do
@@ -643,6 +745,7 @@ sort thirdparty_raw.txt | uniq -c | sort -rn > thirdparty.txt
 if [[ -s thirdparty.txt ]]; then
   echo "  --- 読み込まれる第三者オリジン（件数付き） ---"
   sed 's/^/    /' thirdparty.txt
+  echo "    ※ ページが読み込むもの（src と、stylesheet・preload などの <link>）だけを数える。<a> のリンク先は含まない"
 else
   echo "  （第三者オリジンの検出なし）"
 fi

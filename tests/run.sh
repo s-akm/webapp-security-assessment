@@ -895,9 +895,11 @@ python3 - "$REP/台帳 dir/台帳 v1.xlsx" <<'PYEOF'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as z:
     z.writestr("[Content_Types].xml", "<Types/>")
+    # 3 つ目は、電話番号の途中で書式が変わったリッチテキスト（<r> の断片が 2 つ）と、ふりがな（<rPh>）
     z.writestr("xl/sharedStrings.xml",
                '<?xml version="1.0"?><sst><si><t>接続: postgresql://fixture:FIXTUREDUMMY0@db.example.com/app</t></si>'
-               '<si><t xml:space="preserve">鍵 AKIAFIXTUREDUMMY0123 &amp; 電話 090-0000-0000</t></si></sst>')
+               '<si><t xml:space="preserve">鍵 AKIAFIXTUREDUMMY0123 &amp; 電話 090-0000-0000</t></si>'
+               '<si><r><t>電話 080-</t></r><r><rPr><b/></rPr><t>0000-0000</t></r><rPh sb="0" eb="2"><t>デンワ</t></rPh></si></sst>')
     z.writestr("xl/worksheets/sheet1.xml",
                '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>'
                'sk-proj-FIXTUREDUMMY0123456789abcdefXYZ</t></is></c></row></sheetData></worksheet>')
@@ -932,9 +934,33 @@ KEY = b'FIXTDUMMY910111212345678910111212'
 SECRET_KEY = 'fixT#DUMMY-qd(mq0pdn9ma*ls!h+4'
 EOF
 printf '%%PDF-1.4 fixture\n' > "$REP/報告書.pdf"
+# 引用符の無い文の中の値、パスワードのハッシュ、鍵ファイルを base64 にした環境変数、Azure・Mailgun の鍵、
+# OpenRouter の鍵、git の履歴から写した GitHub の代理アドレス（値はすべて架空）。
+# Azure と Mailgun の形は、Twilio と同じく実行時に組み立てる（鍵の形のままリポジトリに置かない）
+cat > "$REP/more.md" <<'EOF'
+初期パスワードは FixtDUMMY9 です。
+$2b$10$FIXTUREDUMMYFIXTUREDUMMYFIXTUREDUMMYFIXTUREDUMMY01234
+GOOGLE_CREDENTIALS_BASE64=eyJ0eXBlFIXTUREDUMMY0123456789
+<AZURE>
+mailgun: key-<HEX32>
+openrouter: sk-or-v1-FIXTUREDUMMY0123456789abcdef
+author: 12345+fixture-user@users.noreply.github.com
+EOF
+AZ="$(printf 'DefaultEndpointsProtocol=https;AccountName=fixture;Account%s=%s==' Key FIXTUREDUMMYFIXTUREDUMMYFIXTUREDUMMYFIXTURE01)"
+sed -e "s/<HEX32>/${H32}/" -e "s/<AZURE>/${AZ}/" "$REP/more.md" > "$REP/more.md.t" && mv "$REP/more.md.t" "$REP/more.md"
+# 文字コードの違うテキスト。UTF-16（BOM 付き。Windows の PowerShell の「>」で書き出した形）と、
+# Shift_JIS の CSV（表計算ソフトの「CSV」で書き出した形）。grep -I は前者を丸ごと飛ばし、後者は日本語が一致しない。
+# NUL を含むファイル（画像）は中身を見られないので、未検査として名前を出す
+python3 - "$REP" <<'PYEOF'
+import os, sys
+d = sys.argv[1]
+open(os.path.join(d, "ps-out.txt"), "wb").write("鍵 AKIAFIXTUREDUMMY0456\r\n".encode("utf-16"))
+open(os.path.join(d, "clients.csv"), "wb").write("氏名,住所\r\nダミー,大阪府大阪市北区梅田9-9-9\r\n".encode("cp932"))
+open(os.path.join(d, "screen.bin"), "wb").write(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+PYEOF
 # LC_ALL=C で走らせる。伏字の前に残す部分はバイト単位で切るため、日本語の途中で切れる。
 # 不完全なバイト列を落とす処理が働いているかは、この条件でないと確かめられない。
-S="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"
+S="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"; S_RC=$?
 for pair in "JWT 形式のトークン" "接続文字列" "メールアドレス" "電話番号らしき並び" \
             "クレジットカード番号らしき並び" "住所らしき記述" "select * の使用"; do
   contains "scan_secrets: $pair" "$pair" "$S"
@@ -964,21 +990,21 @@ done <<'EOF'
 パスワード・鍵らしき値の直書き（関数の引数・短い値の代入）|./code-quote.md:3|password への短い値
 パスワード・鍵らしき値の直書き（関数の引数・短い値の代入）|./code-quote.md:4|大文字の定数への短い値
 パスワード・鍵らしき値の直書き（関数の引数・短い値の代入）|./code-quote.md:5|日本語の文の中の値
-LLM の鍵（OpenAI・Anthropic）|./keys.yml:1|OpenAI（sk-proj-）
-LLM の鍵（OpenAI・Anthropic）|./keys.yml:2|OpenAI（旧形式の sk-）
-LLM の鍵（OpenAI・Anthropic）|./keys.yml:3|Anthropic（sk-ant-）
+LLM の鍵（OpenAI・Anthropic・OpenRouter ほか）|./keys.yml:1|OpenAI（sk-proj-）
+LLM の鍵（OpenAI・Anthropic・OpenRouter ほか）|./keys.yml:2|OpenAI（旧形式の sk-）
+LLM の鍵（OpenAI・Anthropic・OpenRouter ほか）|./keys.yml:3|Anthropic（sk-ant-）
 コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:4|GitHub（github_pat_）
 コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:5|GitHub（gho_）
-クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:6|Twilio（AC）
-クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:7|Twilio（SK）
-クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:8|Stripe（rk_live_）
-クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:9|Stripe（sk_test_）
-クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:10|Stripe（whsec_）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./keys.yml:6|Twilio（AC）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./keys.yml:7|Twilio（SK）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./keys.yml:8|Stripe（rk_live_）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./keys.yml:9|Stripe（sk_test_）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./keys.yml:10|Stripe（whsec_）
 コード管理・パッケージのトークン（GitHub・npm）|./keys.yml:11|npm（npm_）
 チャットの鍵と Webhook（Slack）|./keys.yml:12|Slack（xapp-）
 チャットの鍵と Webhook（Slack）|./keys.yml:13|Slack の Webhook URL
-クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:14|AWS（ASIA）
-クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./keys.yml:15|SendGrid（SG.）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./keys.yml:14|AWS（ASIA）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./keys.yml:15|SendGrid（SG.）
 URL に埋め込んだ認証情報（user:pass@）|./keys.yml:16|URL の user:pass@
 Google・Supabase の鍵|./sa.json:1|GCP のサービスアカウント
 key/secret への値の代入|./.env:1|引用符なしの API_KEY=
@@ -1001,22 +1027,40 @@ select * の使用|./NOTES.MD:1|大文字の SELECT * FROM
 郵便番号|./NOTES.MD:11|単独の郵便番号
 電話番号らしき並び|./NOTES.MD:12|電話番号（TEL. の直後。前の境界に英字の後の「.」を許す）
 接続文字列|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:1|xlsx の台帳（セルの文字列）
-クラウド・決済の鍵（AWS・Stripe・Twilio・SendGrid）|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（同じセルの 2 つ目の値）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（同じセルの 2 つ目の値）
 電話番号らしき並び|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:2|xlsx の台帳（実体参照 &amp; の後ろ）
-LLM の鍵（OpenAI・Anthropic）|./台帳 dir/台帳 v1.xlsx[xl/worksheets/sheet1.xml]:1|xlsx の台帳（インライン文字列）
+LLM の鍵（OpenAI・Anthropic・OpenRouter ほか）|./台帳 dir/台帳 v1.xlsx[xl/worksheets/sheet1.xml]:1|xlsx の台帳（インライン文字列）
 郵便番号|./台帳 dir/台帳 v1.xlsx[xl/comments1.xml]:1|xlsx の台帳（セルのコメント）
 電話番号らしき並び|./報告書.docx[word/document.xml]:1|docx の本文（書式で 2 つに分かれた番号を段落でつなぐ）
-LLM の鍵（OpenAI・Anthropic）|./説明.pptx[ppt/slides/slide1.xml]:1|pptx のスライド
+LLM の鍵（OpenAI・Anthropic・OpenRouter ほか）|./説明.pptx[ppt/slides/slide1.xml]:1|pptx のスライド
+電話番号らしき並び|./台帳 dir/台帳 v1.xlsx[xl/sharedStrings.xml]:3|xlsx の台帳（書式で 2 つに分かれた番号を文字列ごとにつなぐ）
+パスワードらしき値（引用符の無い文）|./more.md:1|引用符の無い文の中のパスワード
+パスワードのハッシュ（bcrypt・Argon2・crypt・PBKDF2）|./more.md:2|bcrypt のハッシュ
+key/secret への値の代入|./more.md:3|credentials の名前への代入
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./more.md:4|Azure の AccountKey
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./more.md:5|Mailgun（key-）
+LLM の鍵（OpenAI・Anthropic・OpenRouter ほか）|./more.md:6|OpenRouter（sk-or-v1-）
+クラウド・決済の鍵（AWS・Azure・Stripe・Twilio・SendGrid・Mailgun）|./ps-out.txt[UTF-16 を UTF-8 に直して検査]:1|UTF-16 のテキスト
+住所らしき記述|./clients.csv[Shift_JIS を UTF-8 に直して検査]:2|Shift_JIS の CSV
 EOF
 
 # 検出した値そのものを出さない。位置と種類と、先頭の数バイトだけを出す。
 # 題材の値は、先頭 4 バイトより後ろに DUMMY を含むように作ってある。
-for leak in "DUMMY" "456789abcdef" "yamada" "FIXTUREpw1" "hunter2x" "fixtr9pw" "fixtjapw" "fixt4pin" "0000-0000" "神南" "みなとみらい" "５６７８" "822463" "150-0000" "4111 1111"; do
+for leak in "DUMMY" "456789abcdef" "yamada" "fixture-user" "梅田" "FIXTUREpw1" "hunter2x" "fixtr9pw" "fixtjapw" "fixt4pin" "0000-0000" "神南" "みなとみらい" "５６７８" "822463" "150-0000" "4111 1111"; do
   absent "scan_secrets: 検出した値を出さない（${leak}）" "$leak" "$S"
 done
 contains "scan_secrets: 伏字にした形で出す" "…<伏字>" "$S"
 contains "scan_secrets: PDF を黙って飛ばさず未検査と知らせる" "./報告書.pdf（PDF・旧形式の Office は中身を読めない" "$S"
 contains "scan_secrets: 説明用のドメインならメールのドメインを見せる" "ta…<伏字>@example.invalid" "$S"
+contains "scan_secrets: GitHub の代理アドレスはドメインを見せる" "12…<伏字>@users.noreply.github.com" "$S"
+contains "scan_secrets: テキストとして読めないファイルを未検査と知らせる" "./screen.bin（テキストとして読めない" "$S"
+# 終了コード。検出があれば 2、検出が無くても見ていないファイルがあれば 3、どちらも無ければ 0
+if [[ "$S_RC" -eq 2 ]]; then ok "scan_secrets: 検出があれば終了コード 2"
+else ng "scan_secrets: 検出があれば終了コード 2" "終了コードが $S_RC"; fi
+UO="$TMP/unread-only"; mkdir -p "$UO"; printf '%%PDF-1.4 fixture\n' > "$UO/a.pdf"
+env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$UO" >/dev/null 2>&1; UO_RC=$?
+if [[ "$UO_RC" -eq 3 ]]; then ok "scan_secrets: 見ていないファイルだけなら終了コード 3"
+else ng "scan_secrets: 見ていないファイルだけなら終了コード 3" "終了コードが $UO_RC"; fi
 
 # 誤検出しない。日時・UUID・バージョン番号・英単語の連なり・説明文の変数名・鍵の接頭辞だけ。
 # 数字の並びの検査は、境界を緩めるとここに当たる。
@@ -1041,16 +1085,21 @@ jwt.sign(payload, JWT_SECRET, { algorithm: 'HS256', expiresIn: '1h' })
 SQL の引用: WHERE email = '${email}' AND password = '${hash(password)}' / password = :password / password = '%s'
 パスワードは`crypto.createHash('md5')`でハッシュ化される。パスワード「hashPassword(x)」を呼ぶ
 カード番号の列は 1000000000000000〜9999999999999999 の範囲で検証する
+コミットの作者は noreply@github.com、取得元は git@github.com:fixture/app.git
+パスワードは 12 文字以上 / パスワードは bcrypt で保存 / パスワードを 2026-09-29 に変更 / パスワードは SHA-256 でハッシュ化
+パスワードを v2.1.0 で見直し / 暗証番号は 4 桁 / パスワード：PBKDF2 を使う
 EOF
-C="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$CLEAN" 2>&1)"
+C="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$CLEAN" 2>&1)"; C_RC=$?
 if printf '%s' "$C" | grep '^検出なし。$' >/dev/null; then
   ok "scan_secrets: 誤検出しない（日時・UUID・版・説明文）"
 else ng "scan_secrets: 誤検出しない（日時・UUID・版・説明文）" "$(printf '%s' "$C" | grep -A2 '^\[検出\]' | head -6 | tr '\n' ' ')"; fi
+if [[ "$C_RC" -eq 0 ]]; then ok "scan_secrets: 検出が無く、すべて見たなら終了コード 0"
+else ng "scan_secrets: 検出が無く、すべて見たなら終了コード 0" "終了コードが $C_RC"; fi
 
 # unzip が無い環境では、xlsx を黙って素通りさせず、見ていないことを出す。
 # unzip だけを除いた PATH を作って走らせる。
 NB="$TMP/no-unzip-bin"; mkdir -p "$NB"
-for t in grep sed cut iconv find sort mktemp rm awk tr head; do
+for t in grep sed cut iconv find sort mktemp rm awk tr head xargs; do
   p="$(command -v "$t" 2>/dev/null)" && ln -sf "$p" "$NB/$t"
 done
 U2="$(PATH="$NB" "$BASH" "$SKILL/scripts/scan_secrets.sh" "$REP" 2>&1)"
@@ -1178,6 +1227,15 @@ PY
      && [[ "$(cat "$TMP/r-exist.xlsx" 2>/dev/null)" != "書きかけの台帳（題材）" ]]; then
     ok "make_register: --force なら上書きする"
   else ng "make_register: --force なら上書きする"; fi
+  # 評価日の書式と出力先のディレクトリを先に確かめる。以前は崩れた日付をそのまま入れ、ディレクトリが無いと生のトレースバックで止まった
+  MD="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-date.xlsx" --date 2026/01/15 2>&1)"; MD_RC=$?
+  if [[ $MD_RC -ne 0 && ! -e "$TMP/r-date.xlsx" ]] && printf '%s' "$MD" | grep -F 'YYYY-MM-DD' >/dev/null; then
+    ok "make_register: --date の書式が崩れていれば止まる"
+  else ng "make_register: --date の書式が崩れていれば止まる" "終了コード $MD_RC / $(printf '%s' "$MD" | tail -1)"; fi
+  MN="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/no-such-dir/r.xlsx" 2>&1)"; MN_RC=$?
+  if [[ $MN_RC -ne 0 ]] && printf '%s' "$MN" | grep -F '出力先のディレクトリが無い' >/dev/null && ! printf '%s' "$MN" | grep -F 'Traceback' >/dev/null; then
+    ok "make_register: 出力先のディレクトリが無ければ言葉で知らせる"
+  else ng "make_register: 出力先のディレクトリが無ければ言葉で知らせる" "終了コード $MN_RC / $(printf '%s' "$MN" | tail -1)"; fi
   # 拡張子が .xlsx でなければ止める（中身は xlsx なのに、表計算ソフトが別の形式として開こうとする）
   if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-ext.xls" >/dev/null 2>&1 || [[ -e "$TMP/r-ext.xls" ]]; then
     ng "make_register: 拡張子が .xlsx でなければ止まる"
@@ -1189,7 +1247,7 @@ PY
   contains "make_register: --card でカード決済のシートが末尾に増える（owasp なら 8 枚目）" "8_カード決済" "$M6"
   M7="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-card-full.xlsx" --frameworks full --card 2>&1)"
   contains "make_register: --card（full）は番号を飛ばさない（6b_ があっても 9_カード決済）" "9_カード決済" "$M7"
-  V3="$("$PY_BIN" - "$TMP/r-owasp.xlsx" "$TMP/r-full.xlsx" "$TMP/r-card.xlsx" "$TMP/r-card-full.xlsx" <<'PYEOF' 2>&1
+  V3="$("$PY_BIN" - "$TMP/r-owasp.xlsx" "$TMP/r-full.xlsx" "$TMP/r-card.xlsx" "$TMP/r-card-full.xlsx" "$TMP/r-api-owasp.xlsx" "$SKILL/references/04-findings-register.md" <<'PYEOF' 2>&1
 import re, sys
 from openpyxl import load_workbook
 res = []
@@ -1204,7 +1262,15 @@ def lists(ws):
             out[rng.split(":")[0].rstrip("0123456789")] = (vals, dv.showErrorMessage)
     return out
 
-owasp, full, card, cardfull = (load_workbook(p) for p in sys.argv[1:5])
+owasp, full, card, cardfull, apiw = (load_workbook(p) for p in sys.argv[1:6])
+# 04 の「台帳の列」の表から分類の値を読む（「／」で区切り、太字の印と括弧の説明と「など」を外す）
+CATS = set()
+for line in open(sys.argv[6], encoding="utf-8"):
+    if line.startswith("| 分類 |"):
+        cell = line.split("|")[2]
+        cell = re.sub(r"（[^）]*）", "", cell.replace("**", "")).replace("など", "")
+        CATS = {c.strip() for c in cell.split("／") if c.strip()}
+        break
 for label, wb, fname in (("owasp", owasp, "3_指摘事項一覧"), ("full", full, "6_指摘事項一覧")):
     fs = wb[fname]
     heads = {fs.cell(3, c).value: fs.cell(3, c).column_letter for c in range(1, fs.max_column + 1) if fs.cell(3, c).value}
@@ -1264,6 +1330,45 @@ for label, wb, fname in (("owasp", owasp, "3_指摘事項一覧"), ("full", full
     check(f"対応ロードマップに前提タスク（T-x）の置き場所がある（{label}）", any(i.startswith("T-") for i in ids), str(ids))
     check(f"--card を付けなければカード決済のシートを作らない（{label}）", not any("カード" in n for n in wb.sheetnames), str(wb.sheetnames))
 
+    # 集計の範囲。200 行で切ると、指摘が 197 件を超えたところから件数が黙って少なく出る
+    m_ = re.search(r"\$4:\$[A-Z]+\$(\d+)", str(rows.get(2)))
+    last = int(m_.group(1)) if m_ else 0
+    check(f"集計の範囲が 1000 行以上ある（{label}）", last >= 1000, str(last))
+    # 整合の確認（04 の決まり）。どの行が、どの列に、何を当てているかを数式から読む
+    cons = {}
+    for r in range(1, sm.max_row + 1):
+        a = sm.cell(r, 1).value
+        if isinstance(a, str) and isinstance(sm.cell(r, 2).value, str) and sm.cell(r, 2).value.startswith("="):
+            cons[a] = sm.cell(r, 2).value
+    def find(key):
+        return next((v for k, v in cons.items() if key in k), "")
+    f1 = find("問題なしなのに優先度")
+    check(f"整合の確認: 問題なしの行の優先度が「—」かを数える（{label}）",
+          {(col_of.get(c), v) for c, v in pairs(f1)} == {("判定", "問題なし"), ("優先度", "<>—")}, f1)
+    f2 = find("問題なしなのに状態")
+    check(f"整合の確認: 問題なしの行の状態が クローズ（該当なし） かを数える（{label}）",
+          {(col_of.get(c), v) for c, v in pairs(f2)} == {("判定", "問題なし"), ("状態", "<>クローズ（該当なし）")}, f2)
+    f3 = find("問題ありなのに優先度")
+    check(f"整合の確認: 問題ありの行の優先度が P0〜P4 かを数える（{label}）",
+          '"P0","P1","P2","P3","P4"' in f3 and f"${heads['優先度']}$4" in f3 and f"${heads['判定']}$4" in f3, f3)
+    f4 = find("同じ ID")
+    idr = f"'{fname}'!${heads['ID']}$4:${heads['ID']}${last}"
+    check(f"整合の確認: 同じ ID が 2 回以上ある行を数える（{label}）", f"COUNTIF({idr},{idr})>1" in f4, f4)
+    f5 = find("未確認事項の影響する項目")
+    un = [n for n in wb.sheetnames if n.endswith("未確認事項")][0]
+    check(f"整合の確認: 未確認事項の影響する項目が台帳にあるかを数える（{label}）",
+          f"'{un}'!$E$5" in f5 and f"COUNTIF({idr}," in f5, f5)
+    f6 = find("集計の範囲")
+    check(f"整合の確認: 集計の範囲の外に書いた行を数える（{label}）",
+          f"'{fname}'!${heads['ID']}${last + 1}:" in f6, f6)
+    # 雛形の例示行どうしが食い違わない（U-1 の影響する項目が、指摘事項一覧の例示行の ID を指す）
+    us = wb[un]
+    check(f"未確認事項の例示行が指摘事項一覧の例示行の ID を指す（{label}）", us["E5"].value == fs["A4"].value, f"{us['E5'].value} / {fs['A4'].value}")
+    # 分類の候補は 04 の「台帳の列」の分類と揃える
+    cat = lv.get(heads.get("分類"), ([], None))
+    check(f"分類の候補が 04 の分類と一致する（{label}）", set(cat[0]) == CATS and cat[1] is False, f"{cat} / 04: {sorted(CATS)}")
+    check(f"指摘事項一覧の副題に根拠の強さの印がある（{label}）", "【実機確認で確定】" in str(fs["A2"].value))
+
 def premise(wb, key):
     sm = wb[wb.sheetnames[0]]
     for r in range(1, 20):
@@ -1280,6 +1385,11 @@ for kw in ("6.4.3", "11.6.1", "SAQ A", "EMV 3-D セキュア", "6.1 版"):
 n5 = sum(1 for r in range(5, cs.max_row + 1) if str(cs.cell(r, 2).value or "").startswith("脆弱性対策 "))
 check("カード決済のシートに EC 加盟店の脆弱性対策が 5 項目ある", n5 == 5, str(n5))
 check("カード決済のシートは full でも末尾に 1 枚", cardfull.sheetnames[-1] == "9_カード決済", str(cardfull.sheetnames))
+# OWASP・API のシートの判定も一覧から選ぶ（06 の 適合／条件付き適合／不適合）。自由記述だと表記が揺れる
+for name, wb_, sheet in (("OWASP（owasp）", owasp, "7_枠組みへの当てはめ"), ("OWASP（full）", full, "4_OWASP_Top10"),
+                         ("API", apiw, "7_API_Top10")):
+    v = lists(wb_[sheet]).get("C", ([], None))
+    check(f"{name} のシートの判定は 適合／条件付き適合／不適合 の入力規則", set(v[0]) == {"適合", "条件付き適合", "不適合"} and v[1], str(v))
 print("\n".join(res))
 PYEOF
 )"
@@ -1353,6 +1463,17 @@ const cases = [
   ["browser-intake-datadoghq.eu", "Datadog RUM"],
   ["o2.mouseflow.com", "Mouseflow"],
   ["s.yimg.jp", "Yahoo! 広告"],
+  ["bat.bing.com", "Microsoft 広告"],
+  ["px.ads.linkedin.com", "LinkedIn Insight"],
+  ["tr.line.me", "LINE Tag"],
+  ["static.karte.io", "KARTE"],
+  ["s.yjtag.jp", "Yahoo! タグマネージャー"],
+  ["bam.nr-data.net", "New Relic Browser"],
+  ["js-agent.newrelic.com", "New Relic Browser"],
+  ["api-js.mixpanel.com", "Mixpanel"],
+  ["api2.amplitude.com", "Amplitude"],
+  ["cdn.segment.com", "Segment"],
+  ["js.hs-scripts.com", "HubSpot"],
 ];
 let bad = 0;
 for (const [host, want] of cases) {
@@ -1362,7 +1483,8 @@ for (const [host, want] of cases) {
 // 自ドメインらしきホスト、送信先の名前を途中に含むだけのホストを取り違えないこと
 for (const host of ["example.com", "cdn.example.com", "notgoogle.example.com",
                     "hotjar.com.attacker.example", "clarity.ms.example.com", "notposthog.com",
-                    "bing.com", "www.bing.com", "facebook.com.example.com"]) {
+                    "bing.com", "www.bing.com", "facebook.com.example.com",
+                    "tr.line.me.example.com", "notkarte.io", "segment.com"]) {
   const hit = TAGS.find(([re]) => re.test(host));
   if (hit) { console.log(`NG ${host} を ${hit[1]} と誤判定した`); bad++; }
 }
@@ -1379,7 +1501,7 @@ for (const host of ["cookielaw.org.example.com", "notcookiebot.com"]) {
 console.log(bad === 0 ? "ALL OK" : `${bad} 件失敗`);
 NODE
 )"
-  if printf '%s' "$T" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: 既知タグと同意管理のラベル付け（25 例・誤判定 11 例）"
+  if printf '%s' "$T" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: 既知タグと同意管理のラベル付け（36 例・誤判定 14 例）"
   else ng "browser_probe: 既知タグと同意管理のラベル付け" "$T"; fi
 
   # recon.sh の TAGS と browser_probe.mjs の TAGS が同じ内容であること。
@@ -1420,10 +1542,19 @@ for (const [p, ui, ign, none] of cases) {
 }
 if (!judgeCsp("script-src 'nonce-a' 'unsafe-eval'").unsafeEval) { console.log("NG unsafe-eval は nonce で打ち消されない"); bad++; }
 if (!judgeCsp("frame-ancestors 'none'").frameAncestorsOnly) { console.log("NG frame-ancestors のみ"); bad++; }
+// どこからでも読み込める配信元（* やスキームだけの指定）。'strict-dynamic' があればブラウザは配信元の許可を無視する
+for (const [p, want] of [
+  ["script-src 'self' https:", "https:"], ["script-src *", "*"], ["default-src 'self' data:", "data:"],
+  ["script-src 'self' blob: 'nonce-a'", "blob:"],
+  ["script-src 'strict-dynamic' 'nonce-a' https:", ""], ["script-src 'self' https://cdn.example.com", ""],
+]) {
+  const got = judgeCsp(p).broadSources.join(" ");
+  if (got !== want) { console.log(`NG ${p} -> どこからでも読み込める配信元「${got}」/ 期待「${want}」`); bad++; }
+}
 console.log(bad === 0 ? "ALL OK" : `${bad} 件失敗`);
 NODE
 )"
-  if printf '%s' "$CJ" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: CSP を実際に適用される指令で判定する（12 例）"
+  if printf '%s' "$CJ" | grep '^ALL OK$' >/dev/null; then ok "browser_probe: CSP を実際に適用される指令で判定する（18 例）"
   else ng "browser_probe: CSP を実際に適用される指令で判定する" "$CJ"; fi
 else
   skip "browser_probe（node が無いため省略）"
@@ -1467,6 +1598,12 @@ else
   contains "recon[実地]: .env の中身が取れれば P0 の候補と言う"  "中身が返っている。P0 の候補" "$R1"
   contains "recon[実地]: 報告書を待たずに知らせると言う"         "報告書を待たずに依頼者へ知らせる" "$R1"
   absent   "recon[実地]: .env の値を出さない"                   "dummy-env-value-should-not-be-printed" "$R1"
+  # 外から見えてはいけないものの表（03 の 10 節に揃える）。中身の印で重さを分け、403 は有無を示さないと言う
+  if printf '%s\n' "$R1" | grep -F '/.git/config' | grep -F 'P0 の候補' >/dev/null; then ok "recon[1c]: .git/config の中身が取れれば P0 の候補と言う"
+  else ng "recon[1c]: .git/config の中身が取れれば P0 の候補と言う" "/.git/config の行に P0 の候補が無い"; fi
+  contains "recon[1c]: /actuator/env の中身が取れれば内部の設定が見えると言う" "内部の設定や状態が見える" "$R1"
+  contains "recon[1c]: 403 はファイルの有無を示さないと言う"   "ファイルの有無は分からない" "$R1"
+  contains "recon[3 節]: 見た JS の範囲（遅延読み込みを含まない）を書く" "import() で後から読み込む" "$R1"
 
   # 正しく作られている側にも当てる。誤検出するツールは、指摘の山に埋もれて
   # 本当に危ないものを隠す。
@@ -1504,6 +1641,48 @@ else
   absent   "recon[タグ誤検出]: 画像の s.yimg.jp で Yahoo! 広告と言わない"             "[検出] Yahoo! 広告"   "$RS"
   RP="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/pixel-noscript" 2>&1 || true)"
   contains "recon[タグ]: noscript の /tr を Meta ピクセルとして拾う"                 "[検出] Meta ピクセル" "$RP"
+
+  # 名乗り（User-Agent）。/waf は curl の既定の名乗りを 403 で止める（WAF を模す）。止められずに取れること。
+  # 名乗りを curl の既定に戻すと止められ、そのときは「止められた可能性」と言うこと
+  RW="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/waf" 2>&1 || true)"
+  absent   "recon[名乗り]: curl の既定の名乗りで送らない（WAF に止められない）" "WAF・ボット対策で止められた可能性" "$RW"
+  RW2="$(RECON_UA=curl/8.0 bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/waf" 2>&1 || true)"
+  contains "recon[名乗り]: 最初の応答が止められたら、そう言う"                "WAF・ボット対策で止められた可能性" "$RW2"
+
+  # 4 節は、ページが読み込むもの（src と、stylesheet などの <link>）だけを数える。<a> のリンク先と canonical は数えない。
+  # URL の認証部（Sentry の DSN の鍵）は出さず、認証部の付いた URL からもタグを拾う
+  RL="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/links" 2>&1 || true)"
+  RL4="$(printf '%s\n' "$RL" | sed -n '/第三者オリジン（件数付き）/,/既知タグ/p')"
+  contains "recon[4 節]: 読み込む <link rel=stylesheet> を数える"          "https://cdn.example.invalid" "$RL4"
+  contains "recon[4 節]: img の src を数える（認証部は落とす）"            "https://px.example.invalid"  "$RL4"
+  absent   "recon[4 節]: <a> のリンク先を数えない"                        "sns.example.invalid"         "$RL"
+  absent   "recon[4 節]: rel=canonical を数えない"                        "canonical.example.invalid"   "$RL"
+  contains "recon[4 節]: 認証部の付いた URL（Sentry の DSN）でタグを拾う" "[検出] Sentry"               "$RL"
+  absent   "recon[4 節]: URL の認証部（DSN の鍵）を出さない"              "FIXTUREDSNKEY0123"           "$RL"
+
+  # ヘッダの値に入った制御文字（端末の表示を書き換える並び）を、そのまま出さない
+  RC="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/ctrl-header" 2>&1 || true)"
+  contains "recon[制御文字]: ヘッダは制御文字を落として出す"         "Server: fixture[2Jserver" "$RC"
+  absent   "recon[制御文字]: 端末の表示を書き換える並びを出さない"   $'\033'                     "$RC"
+
+  # 鍵の形の表を recon.sh と scan_secrets.sh で揃える。発火台の見本（1 行に 1 つ）を両方に当て、どちらも全部を拾うこと。
+  # recon.sh は伏字の形（先頭 10 文字…（以降は伏字））で、scan_secrets.sh は位置（./keys.js:行:）で見る
+  KP="$TMP/key-parity"; mkdir -p "$KP"
+  curl -s "http://localhost:$PORT/keys/keys.js" > "$KP/keys.js"
+  RK="$(bash "$SKILL/scripts/recon.sh" "http://localhost:$PORT/keys" 2>&1 || true)"
+  SK="$(env LC_ALL=C bash "$SKILL/scripts/scan_secrets.sh" "$KP" 2>&1)"
+  miss_r=""; miss_s=""; nk=0
+  while IFS= read -r line; do
+    nk=$((nk+1)); k="$(printf '%s' "$line" | sed -E 's/^const [A-Z0-9]+ = "(.*)";$/\1/')"
+    printf '%s' "$RK" | grep -F -- "${k:0:10}…（以降は伏字）" >/dev/null || miss_r="$miss_r ${k:0:10}"
+    printf '%s' "$SK" | grep -F -- "./keys.js:${nk}:" >/dev/null || miss_s="$miss_s ${k:0:10}"
+  done < "$KP/keys.js"
+  if [[ $nk -ge 30 && -z "$miss_r" ]]; then ok "recon[鍵]: 見本の鍵をすべて拾う（scan_secrets.sh と同じ種類。${nk} 種）"
+  else ng "recon[鍵]: 見本の鍵をすべて拾う（scan_secrets.sh と同じ種類）" "見本 ${nk} 件のうち拾わなかったもの:${miss_r}"; fi
+  if [[ $nk -ge 30 && -z "$miss_s" ]]; then ok "scan_secrets[鍵]: 見本の鍵をすべて拾う（recon.sh と同じ種類。${nk} 種）"
+  else ng "scan_secrets[鍵]: 見本の鍵をすべて拾う（recon.sh と同じ種類）" "見本 ${nk} 件のうち拾わなかったもの:${miss_s}"; fi
+  absent   "recon[鍵]: 見本の鍵の値を伏字にする"          "PARITYDUMMY" "$RK"
+  absent   "scan_secrets[鍵]: 見本の鍵の値を伏字にする"   "PARITYDUMMY" "$SK"
 
   # ---- recon.sh の DNS まわり ----
   # 発火台は localhost だが、localhost は OS が特別扱いして常に 127.0.0.1 を返すため、
@@ -1631,7 +1810,8 @@ else
     # 穴を見つけられるかだけでは足りない。誤検出するツールは、指摘の山に埋もれて
     # 本当に危ないものを隠す。/clean は同意を取るまで第三者へ送らず、HttpOnly を付け、
     # CSP に unsafe-inline を持たず、セキュリティヘッダを揃えてある。
-    C="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/clean" 2>&1 || true)"
+    # 追加パス（/admin）も渡す。渡された URL にパス（/clean）があっても、追加パスはサイトの根から開く（recon.sh と同じ）
+    C="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/clean" /admin 2>&1 || true)"
     contains "browser_probe[誤検出]: 同意前の送信が無いことを言える" "送信は観測されなかった" "$C"
     absent   "browser_probe[誤検出]: HttpOnly のある Cookie を咎めない" "**HttpOnly なし**" "$C"
     absent   "browser_probe[誤検出]: 健全な CSP を咎めない"           "unsafe-inline がある" "$C"
@@ -1646,6 +1826,18 @@ else
     absent   "browser_probe: コンソールの URL のクエリを伏せる"         "FIXTURECONSOLEKEY0123" "$C3"
     contains "browser_probe[誤検出]: 空の保存領域を空と言える"         "localStorage: （空）" "$C"
     contains "browser_probe[誤検出]: WebSocket が無ければ無いと言える" "WebSocket の接続は観測されなかった" "$C"
+    contains "browser_probe[追加パス]: 渡された URL にパスがあってもサイトの根から開く" "403   /admin" "$C"
+
+    # ページが付けた保存領域のキー名に入った制御文字を、そのまま出さない（名前そのものは出す）
+    contains "browser_probe[制御文字]: キー名を出す"                       "fixture_ctl_key" "$P"
+    absent   "browser_probe[制御文字]: キー名の制御文字を落とす"           $'\033'           "$P"
+    # ヘッドレスのブラウザを止めるページ（ボット対策を模す）。止められたと言う
+    PWF="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/waf" 2>&1 || true)"
+    contains "browser_probe[ボット対策]: ヘッドレスのブラウザが止められたら、そう言う" "WAF・ボット対策がヘッドレスのブラウザ" "$PWF"
+    # 通信が途切れないページ（ロングポーリング）。待ち切れなくても止まらず、Cookie の節まで出す
+    PL="$(PROBE_IDLE_TIMEOUT=3 node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/longpoll" 2>&1 || true)"
+    contains "browser_probe[読み込み]: 通信が途切れないページでも続ける（そう言う）" "通信が途切れなかった" "$PL"
+    contains "browser_probe[読み込み]: 通信が途切れないページでも Cookie の節を出す"  "lp_session"          "$PL"
 
     # CSP を <meta> で置いたページ。ヘッダだけを見ると「CSP が無い」と誤る
     PM="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/meta-csp" 2>&1 || true)"

@@ -30,7 +30,9 @@ full なら 4_API_Top10）。none では 7_API_Top10 が 1 枚増える。
 末尾に「<次の番号>_カード決済」が 1 枚増える（owasp なら 8_カード決済）。常設はしない。
 
 件数と工数の合計は数式で入っているので、指摘の行を足せば自動で追従する。
-参照範囲は 200 行まで取ってあるため、行を足すときに数式へ手を入れる必要はない。
+参照範囲は 2000 行まで取ってあるため、行を足すときに数式へ手を入れる必要はない。
+範囲の外に行を書いたときと、判定・優先度・状態の組み合わせや ID の重複が 04 の決まりに
+合わないときは、総合評価の「整合の確認」の件数が 0 でなくなる。
 
 各シートには例示行を 1 行だけ入れてある（薄い黄色の網掛け）。書き方の見本なので、
 実際の指摘を書き始めるときに上書きするか削除する。
@@ -102,7 +104,7 @@ FONT = "Yu Gothic"          # 日本語の報告書向け。英語のみなら "
 NAVY = "1D3A5C"
 GRAY = "5B6B7B"
 EXAMPLE_FILL = "FFFBEA"     # 例示行の網掛け
-LAST = 200                  # 数式が参照する最終行
+LAST = 2000                 # 数式と入力規則が参照する最終行。超えた行は「整合の確認」で数える
 
 # シート名は構成によって変わる。指摘事項一覧を参照する数式があるため、
 # 名前をここで一元管理して、数式側にも同じものを使う。
@@ -138,6 +140,12 @@ PRIORITIES = ["P0", "P1", "P2", "P3", "P4", "—"]      # 問題なしの行は�
 STATES = ["未対応", "対応中", "クローズ（解消）", "クローズ（該当なし）", "見送り"]
 # 確認の方法は複数を併記することがある（「コード＋実機」）。一覧は候補として出すが、ほかの値も受け付ける。
 METHODS = ["コード", "実機", "依頼者の確認", "取材", "コード＋実機"]
+# 分類の候補。references/04-findings-register.md の「台帳の列」の分類と揃える（tests/run.sh が一致を検査する）。
+# 04 は「など」で閉じているので、候補として出すだけで、ほかの値も受け付ける。
+CATEGORIES = ["認可", "認証", "鍵管理", "濫用対策", "事業継続", "法令遵守", "プライバシー",
+              "サプライチェーンと CI", "開発環境とエージェント", "リアルタイム通信", "決済", "記録ツール"]
+# OWASP Top 10・API Security Top 10 への当てはめの判定（references/06-frameworks.md。指摘の判定とは別の軸）
+OWASP_VERDICTS = ["適合", "条件付き適合", "不適合"]
 # 枠組み（個人情報・カード決済）への当てはめの判定。指摘の判定とは別の軸。
 # コードから判定できない区分（人的・物理的など）は「範囲外」にして、未確認と混同させない。
 OUT_OF_SCOPE = "範囲外（取材で聞く）"
@@ -320,7 +328,35 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
     ]
     for i, (label, formula) in enumerate(breakdown):
         body_row(ws, base + i, [label, formula, "件"])
+
+    # 整合の確認。04 の決まりに合わない行と、数式の範囲の外に書いた行を数える。どれも 0 が正しい。
+    # 集計は数式なので、決まりに合わない行があっても件数は黙ってずれる。ずれを数で見えるようにする
     r = base + len(breakdown) + 1
+    section(ws, r, "■ 整合の確認（どれも 0 になる。0 でなければ指摘事項一覧の該当の行を直す）")
+    header_row(ws, r + 1, ["確かめること", "件数", ""], [30, 10, 4])
+    ws.freeze_panes = None
+    P = rng("優先度")
+    U = "'{}'!$E$5:$E${}".format(names["unknown"], LAST)
+    UNO = "'{}'!$A$5:$A${}".format(names["unknown"], LAST)
+    idc = fcol("ID")
+    checks = [
+        ("問題なしなのに優先度が「—」でない行", f'=COUNTIFS({J},"問題なし",{P},"<>—")'),
+        ("問題なしなのに状態が クローズ（該当なし） でない行", f'=COUNTIFS({J},"問題なし",{S},"<>クローズ（該当なし）")'),
+        ("問題ありなのに優先度が P0〜P4 でない行",
+         f'=COUNTIF({J},"問題あり")-SUMPRODUCT(COUNTIFS({J},"問題あり",{P},{{"P0","P1","P2","P3","P4"}}))'),
+        # 一度振った ID は再利用しない（04）。同じ ID が 2 行以上にあれば、その行の数
+        ("同じ ID が 2 回以上ある行", f'=SUMPRODUCT(({A}<>"")*(COUNTIF({A},{A})>1))'),
+        # U-x の影響する項目は台帳にある ID だけを書く（04）。ID を 1 つだけ書いたセルを確かめる
+        # （「、」「,」や空白で複数を並べたセルは数えないので、目で確かめる）
+        ("未確認事項の影響する項目が台帳に無い（ID を 1 つ書いたセル）",
+         f'=SUMPRODUCT(({U}<>"")*({U}<>"—")*ISERROR(SEARCH("、",{U}))*ISERROR(SEARCH(",",{U}))'
+         f'*ISERROR(SEARCH(" ",{U}))*(COUNTIF({A},{U})+COUNTIF({UNO},{U})=0))'),
+        (f"集計の範囲（{LAST} 行目まで）の外に書いた行",
+         f"=COUNTA({F}!${idc}${LAST + 1}:${idc}$1048576)"),
+    ]
+    for i, (label, formula) in enumerate(checks):
+        body_row(ws, r + 2 + i, [label, formula, "件"])
+    r = r + 2 + len(checks) + 1
     note(ws, r,
          "【数え方の但し書き】台帳 <n> 行 ＝ 問題あり <a> 行（うち 見送り <b>・クローズ（解消） <c>）"
          "＋ 判断保留 <d> 行 ＋ 問題なし <e> 行（クローズ（該当なし））。対応が要る指摘は <a−b−c> 件（P0〜P4）。"
@@ -371,7 +407,8 @@ def sheet_findings(wb, names):
                 "クローズ（該当なし）／見送り。ID は S-xx（コードを根拠にした指摘。外部の情報で、使っている版が"
                 "当たると分かったものを含む）、N-xx（コードの外で判明し、裏が取れた指摘）。前提タスク（T-x）は"
                 "この表に入れず、対応ロードマップに置く。一度振った ID は再利用しない。"
-                "「指摘事項」には事実を、「想定される影響」には誰が何をできてしまうかを書く。", len(FINDING_COLS))
+                "「指摘事項」には事実を、「想定される影響」には誰が何をできてしまうかを書く。"
+                "根拠の強さは指摘事項の冒頭に印で示す（【実機確認で確定】【新規・実機確認で判明】【依頼者確認】）。", len(FINDING_COLS))
     ws.row_dimensions[2].height = 58
     header_row(ws, 3, [h for h, _ in FINDING_COLS], [w for _, w in FINDING_COLS])
     example = {
@@ -392,6 +429,7 @@ def sheet_findings(wb, names):
     add_list(ws, f"{fcol('優先度')}4:{fcol('優先度')}{LAST}", PRIORITIES)
     add_list(ws, f"{fcol('状態')}4:{fcol('状態')}{LAST}", STATES)
     add_list(ws, f"{fcol('確認の方法')}4:{fcol('確認の方法')}{LAST}", METHODS, strict=False)
+    add_list(ws, f"{fcol('分類')}4:{fcol('分類')}{LAST}", CATEGORIES, strict=False)
     # 合計行はこのシートに置かない。同一シート内に置くと、集計範囲を広く取ったときに
     # 合計セル自身を巻き込んで循環参照になる。範囲を狭く取れば今度は行を足したときに
     # 数式へ手を入れる必要が出る。集計は総合評価シートに一本化してある。
@@ -417,12 +455,14 @@ def sheet_unknown(wb, names):
                 "重要度「高」は、何かの作業を止めているもの。"
                 "「調べれば分かるもの」と「担当者しか知らないもの」を区別して書く。", 5)
     header_row(ws, 4, ["No", "確認したい情報", "重要度", "取得方法", "影響する項目"], [8, 44, 10, 70, 16])
-    body_row(ws, 5, ["U-1", "管理者アカウントの一覧（件数と、それぞれの持ち主）", "高",
-                     "担当者への確認が唯一の手段。認証基盤の管理画面の閲覧権限が評価者に無く、"
-                     "API からも一覧を読み出せないため。",
-                     "S-02"], example=True)
+    # 影響する項目は、指摘事項一覧の例示行（S-01）を指す。例示どうしが食い違うと、
+    # 総合評価の「整合の確認」が雛形の時点で 0 にならない
+    body_row(ws, 5, ["U-1", "本番の注文 ID の採番の方式（連番か、推測できない値か）", "高",
+                     "担当者への確認が唯一の手段。採番は本番の DB の設定で決まり、評価者に閲覧権限が無いため。"
+                     "連番かどうかで S-01 の影響（総当たりの手間）と優先度が変わる。",
+                     "S-01"], example=True)
     note(ws, 7,
-         "【作業を止めているものは表の外にも書く】例:「U-1 は S-02 の作業を止める。"
+         "【作業を止めているものは表の外にも書く】例:「U-1 は S-01 の優先度の判断を止める。"
          "担当者への確認以外に取得手段がないため、着手と同時に依頼を出すこと。」", 5)
     return ws
 
@@ -685,6 +725,7 @@ def sheet_api(wb, names):
                [9, 46, 14, 60, 90])
     for i, (no, name, watch) in enumerate(API_TOP10, start=5):
         body_row(ws, i, [no, name, "", watch, ""])
+    add_list(ws, f"C5:C{4 + len(API_TOP10)}", OWASP_VERDICTS)
     note(ws, len(API_TOP10) + 6,
          "【API3 と API9 を書き落とさない】API3 は応答そのものを見ないと分からない"
          "（画面で使っていない項目が含まれていないか）。API9 は旧版が残っていると、"
@@ -696,12 +737,13 @@ def sheet_owasp(wb, names, edition="2025"):
     ws = wb.create_sheet(names["owasp"])
     title_block(ws, f"OWASP Top 10 ({edition}) への当てはめ",
                 f"OWASP Top 10 の {edition} 版で判定する。個別の指摘を洗い出した後に行う。"
-                "対外説明・網羅性の確認が要る場合のみ。判定だけでなく根拠を 1 行添える。"
+                "対外説明・網羅性の確認が要る場合のみ。判定は 適合／条件付き適合／不適合 から選び、根拠を 1 行添える。"
                 "「適合」だけだと、見たうえでの適合なのか、見ていないだけなのかが分からない。", 4)
     header_row(ws, 4, ["No", "カテゴリ", "判定", "根拠（要約）"], [8, 46, 16, 100])
     rows = OWASP[edition]
     for i, (no, name) in enumerate(rows, start=5):
         body_row(ws, i, [no, name, "", ""])
+    add_list(ws, f"C5:C{4 + len(rows)}", OWASP_VERDICTS)
     extra = ("【どの版で書いたかを必ず明記する】版を書かない適合表は、読み手が何と比べているか"
              "分からない。2025 版では SSRF が A01 に統合され、A03 がサプライチェーン全体に、"
              "A10 が例外処理（fail-open を含む）になっている。"
@@ -802,6 +844,15 @@ def main():
     # ファイルができる（.xls や拡張子なしで保存しても中身は xlsx のまま）。
     if not args.output.lower().endswith(".xlsx"):
         ap.error(f"出力先の拡張子は .xlsx にする: {args.output}")
+    # 評価日は台帳の「評価の前提」と副題に入る。書式が崩れたまま入ると、報告書と台帳で日付が食い違う
+    try:
+        _dt.date.fromisoformat(args.date)
+    except ValueError:
+        ap.error(f"--date は YYYY-MM-DD の形で書く（例: 2026-01-15）: {args.date}")
+    # 出力先のディレクトリが無いと、保存のときに生のトレースバックで止まる。先に確かめて言葉で返す
+    out_dir = os.path.dirname(os.path.abspath(args.output))
+    if not os.path.isdir(out_dir):
+        ap.error(f"出力先のディレクトリが無い: {out_dir}（先に作る）")
     if os.path.exists(args.output) and not args.force:
         print(f"既にある: {args.output}", file=sys.stderr)
         print("  書きかけの台帳を雛形で上書きしないよう止めた。上書きするなら --force を付ける。",
@@ -851,7 +902,11 @@ def main():
     wb.remove(wb.active)
     for key in names:
         builders[key]()
-    wb.save(args.output)
+    try:
+        wb.save(args.output)
+    except OSError as e:
+        print(f"保存できない: {args.output}（{e.strerror or e}）", file=sys.stderr)
+        raise SystemExit(1)
 
     suffix = f" / OWASP {args.owasp} 版" if "owasp" in names else ""
     if "api" in names:
@@ -861,7 +916,8 @@ def main():
     print()
     print("  ・薄い黄色の斜体行は書き方の例。実際の指摘を書くときに上書きするか削除する")
     print("  ・判定・優先度・状態は一覧から選ぶ（入力規則）。見送りとクローズは優先度ではなく状態に書く")
-    print("  ・件数と工数の合計は数式。行を足せば自動で追従する（参照範囲は 200 行まで）")
+    print(f"  ・件数と工数の合計は数式。行を足せば自動で追従する（参照範囲は {LAST} 行まで）")
+    print("  ・総合評価の「整合の確認」は、どれも 0 になる。0 でなければ指摘事項一覧の行を直す")
     print("  ・表計算ソフトで開くまで合計欄は空に見える。openpyxl は計算結果を持たないため")
     if not args.skill_version:
         print("  ・評価に使ったスキルの版は空欄。--skill-version で渡すか、総合評価に手で書く")

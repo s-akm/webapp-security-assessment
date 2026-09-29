@@ -128,13 +128,13 @@ mutate "audit_grep: 半年を超えても知らせない" "scripts/audit_grep.sh
 
 # ---- scan_secrets ----
 mutate "scan_secrets: 絶対パスのまま検索する（旧不具合）" "scripts/scan_secrets.sh" "検出行の中身が表示される" \
-  's = s.replace("(cd \"$DIR\" && grep -rnoI \"${gopt[@]}\" -e \"$full\" . 2>/dev/null)", "grep -rnoI \"${gopt[@]}\" -e \"$full\" \"$DIR\" 2>/dev/null")'
+  's = s.replace("(cd \"$DIR\" && tr \x27\\n\x27 \x27\\0\x27 < \"$TEXTS\" | xargs -0 grep -HnoI", "(cd \"$DIR\" && sed \"s#^.#$DIR#\" \"$TEXTS\" | tr \x27\\n\x27 \x27\\0\x27 | xargs -0 grep -HnoI")'
 mutate "scan_secrets: iconv を外す（日本語が壊れる）" "scripts/scan_secrets.sh" "日本語が壊れない" \
   's = s.replace("    iconv -c -f UTF-8 -t UTF-8 2>/dev/null\n", "    cat\n")'
 mutate "scan_secrets: 検出した値をそのまま出す" "scripts/scan_secrets.sh" "検出した値を出さない" \
   's = s.replace("else v=\"$(mask_value \"$v\")\"; fi", "fi")'
 mutate "scan_secrets: 拡張子で絞る（旧不具合）" "scripts/scan_secrets.sh" "scan_secrets\\[形式\\]: HAR の Authorization" \
-  's = s.replace("grep -rnoI \"${gopt[@]}\"", "grep -rnoI --include=\x27*.md\x27 --include=\x27*.json\x27 \"${gopt[@]}\"")'
+  's = s.replace("find . -type f ! -name \x27~$*\x27 ! -name \x27.DS_Store\x27", "find . -type f \\( -name \x27*.md\x27 -o -name \x27*.json\x27 \\) ! -name \x27~$*\x27 ! -name \x27.DS_Store\x27")'
 mutate "scan_secrets: xlsx を展開しない（旧不具合）" "scripts/scan_secrets.sh" "xlsx の台帳（セルの文字列）" \
   's = s.replace("-iname \x27*.xlsx\x27", "-iname \x27*.ZZZNOMATCH\x27")'
 mutate "scan_secrets: unzip が無いのを黙って飛ばす" "scripts/scan_secrets.sh" "unzip が無いと xlsx を未検査と知らせる" \
@@ -146,7 +146,7 @@ mutate "scan_secrets: 数字の並びの境界を外す（誤検出）" "scripts
 mutate "scan_secrets: 英字の後の「.」を境界に認めない（取りこぼし）" "scripts/scan_secrets.sh" "TEL. の直後" \
   's = s.replace("|[A-Za-z]\\\\.)(${pattern})", ")(${pattern})")'
 mutate "scan_secrets: docx の断片を段落でつながない（取りこぼし）" "scripts/scan_secrets.sh" "書式で 2 つに分かれた番号" \
-  's = s.replace("      *)    (cd \"$DIR\" && unzip -p \"$f\" \"$m\" 2>/dev/null) | xml_para_text > \"$out\" ;;", "      *)    (cd \"$DIR\" && unzip -p \"$f\" \"$m\" 2>/dev/null) | xml_text > \"$out\" ;;")'
+  's = s.replace("DOCX_ENDS=\x27^/(w|a):p$\x27", "DOCX_ENDS=\x27^/(w|a):(p|t)$\x27")'
 mutate "scan_secrets: PDF を黙って飛ばす" "scripts/scan_secrets.sh" "PDF を黙って飛ばさず未検査と知らせる" \
   's = s.replace("-iname \x27*.pdf\x27", "-iname \x27*.ZZZNOMATCH\x27")'
 mutate "scan_secrets: 日時の 12 桁を除外しない（誤検出）" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID" \
@@ -169,10 +169,42 @@ mutate "scan_secrets: 括弧を含むコードを値と取り違える" "scripts
   's = s.replace("|([\"\x27\"\x27\"\x27`]|「)[^\"\x27\"\x27\"\x27`」]*\\(", "")'
 
 mutate "scan_secrets: 見本の接続文字列を値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
-  's = s.replace("\x27://(<伏字>|<[^>]+>(:<[^>]+>)?)@\x27", "\x27://<伏字>@\x27")'
+  's = s.replace("\"\" \"\" \"://${PH}(:${PH})?@\"", "\"\" \"\" \"://<伏字>@\"", 1)'
 
 mutate "scan_secrets: 差し込みの記法の接続文字列を値と取り違える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
   's = s.replace("|\\$\\{[^}]*\\}", "", 1)'
+
+# 文字コードの違うテキスト・xlsx のリッチテキスト・終了コード・足した形式
+mutate "scan_secrets: xlsx の断片を文字列ごとにつながない" "scripts/scan_secrets.sh" "書式で 2 つに分かれた番号を文字列ごとにつなぐ" \
+  's = s.replace("XLSX_ENDS=\x27^/(si|is|c|text)$\x27", "XLSX_ENDS=\x27^/(si|is|c|text|t)$\x27")'
+mutate "scan_secrets: UTF-16 のテキストを直さない" "scripts/scan_secrets.sh" "UTF-16 のテキスト" \
+  's = s.replace("to_utf8 \"$f\" UTF-16 UTF-16 ||", "false ||")'
+mutate "scan_secrets: Shift_JIS のテキストを直さない" "scripts/scan_secrets.sh" "Shift_JIS の CSV" \
+  's = s.replace("    to_utf8 \"$f\" CP932 Shift_JIS && continue\n", "")'
+mutate "scan_secrets: 読めないファイルを黙って飛ばす" "scripts/scan_secrets.sh" "テキストとして読めないファイルを未検査と知らせる" \
+  's = s.replace("    UNREAD+=(\"${f}（テキストとして読めない。画像なら開いて目で確かめる）\")\n", "")'
+mutate "scan_secrets: 検出があっても 0 で終える" "scripts/scan_secrets.sh" "検出があれば終了コード 2" \
+  's = s.replace("[[ $HITS -gt 0 ]] && exit 2", ":")'
+mutate "scan_secrets: 見ていないファイルがあっても 0 で終える" "scripts/scan_secrets.sh" "見ていないファイルだけなら終了コード 3" \
+  's = s.replace("[[ ${#UNREAD[@]} -gt 0 ]] && exit 3", ":")'
+mutate "scan_secrets: 引用符の無い文の値を見ない" "scripts/scan_secrets.sh" "引用符の無い文の中のパスワード" \
+  's = s.replace("\x27(パスワード|暗証番号)(は|が|を|:|：)[[:space:]]*[A-Za-z0-9", "\x27ZZZNEVER(パスワード|暗証番号)(は|が|を|:|：)[[:space:]]*[A-Za-z0-9")'
+mutate "scan_secrets: 引用符の無い文で説明文まで数える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
+  's = s.replace("\x27(は|が|を|:|：)[[:space:]]*([^0-9]+|", "\x27ZZZNEVER(", 1)'
+mutate "scan_secrets: パスワードのハッシュを見ない" "scripts/scan_secrets.sh" "bcrypt のハッシュ" \
+  's = s.replace("\x27\\$2[abxy]?\\$[0-9]{2}\\$[./A-Za-z0-9]{53}|", "\x27ZZZNEVER|")'
+mutate "scan_secrets: credentials を名前に含めない" "scripts/scan_secrets.sh" "credentials の名前への代入" \
+  's = s.replace("|salt|credentials?|", "|salt|")'
+mutate "scan_secrets: Azure の鍵を見ない" "scripts/scan_secrets.sh" "Azure の AccountKey" \
+  's = s.replace("|(Account|SharedAccess)Key=[A-Za-z0-9+/]{40,}={0,2}", "")'
+mutate "scan_secrets: Mailgun の鍵を見ない" "scripts/scan_secrets.sh" "Mailgun（key-）" \
+  's = s.replace("|key-[0-9a-f]{32})", ")")'
+mutate "scan_secrets: OpenRouter の鍵を見ない" "scripts/scan_secrets.sh" "OpenRouter（sk-or-v1-）" \
+  's = s.replace("|or-v1-[A-Za-z0-9]{20,}", "")'
+mutate "scan_secrets: GitHub の送信専用アドレスも数える" "scripts/scan_secrets.sh" "誤検出しない（日時・UUID・版・説明文）" \
+  's = s.replace("\x27^(noreply|git)@github\\.com$\x27", "\x27^ZZZNEVER$\x27")'
+mutate "scan_secrets: GitHub の代理アドレスのドメインを伏せる" "scripts/scan_secrets.sh" "GitHub の代理アドレスはドメインを見せる" \
+  's = s.replace("|users\\.noreply\\.github\\.com)$", ")$")'
 
 # ---- make_register ----
 mutate "make_register: 既にあるファイルを黙って上書きする（旧不具合）" "scripts/make_register.py" "既にあるファイルは上書きせずに止まる" \
@@ -201,6 +233,34 @@ mutate "make_register: 実機確認サマリに「参考」を戻す（旧構成
   's = s.replace("中間の値は作らない。", "参考情報として記録するだけの行には「参考」を使う。")'
 mutate "make_register: pip だけを案内する（PEP 668 で失敗する）" "scripts/make_register.py" "導入の案内に venv がある" \
   's = "\n".join(l for l in s.split("\n") if "python3 -m venv" not in l)'
+mutate "make_register: 集計の範囲を 200 行に戻す（旧構成）" "scripts/make_register.py" "集計の範囲が 1000 行以上ある" \
+  's = s.replace("LAST = 2000 ", "LAST = 200 ")'
+mutate "make_register: 整合の確認で問題なしの優先度を見ない" "scripts/make_register.py" "問題なしの行の優先度が「—」かを数える" \
+  's = s.replace("f\x27=COUNTIFS({J},\"問題なし\",{P},\"<>—\")\x27", "f\x27=0\x27")'
+mutate "make_register: 整合の確認で問題なしの状態を見ない" "scripts/make_register.py" "問題なしの行の状態が クローズ（該当なし） かを数える" \
+  's = s.replace("{S},\"<>クローズ（該当なし）\")\x27", "{S},\"<>ZZZNEVER\")\x27")'
+mutate "make_register: 整合の確認で問題ありの優先度を P0 だけと比べる" "scripts/make_register.py" "問題ありの行の優先度が P0〜P4 かを数える" \
+  's = s.replace("{{\"P0\",\"P1\",\"P2\",\"P3\",\"P4\"}}", "{{\"P0\"}}")'
+mutate "make_register: 整合の確認で ID の重複を数えない" "scripts/make_register.py" "同じ ID が 2 回以上ある行を数える" \
+  's = s.replace("*(COUNTIF({A},{A})>1))", "*0)")'
+mutate "make_register: 整合の確認で未確認事項の影響先を見ない" "scripts/make_register.py" "未確認事項の影響する項目が台帳にあるかを数える" \
+  's = s.replace("*(COUNTIF({A},{U})+COUNTIF({UNO},{U})=0))", "*0)")'
+mutate "make_register: 整合の確認で範囲の外の行を数えない" "scripts/make_register.py" "集計の範囲の外に書いた行を数える" \
+  's = s.replace("f\"=COUNTA({F}!${idc}${LAST + 1}:${idc}$1048576)\"", "\"=0\"")'
+mutate "make_register: 未確認事項の例示行を S-02 に戻す（例示どうしが食い違う）" "scripts/make_register.py" "未確認事項の例示行が指摘事項一覧の例示行の ID を指す" \
+  's = s.replace("\"S-01\"], example=True)", "\"S-02\"], example=True)")'
+mutate "make_register: 分類の候補を付けない" "scripts/make_register.py" "分類の候補が 04 の分類と一致する" \
+  's = s.replace("    add_list(ws, f\"{fcol(\x27分類\x27)}4:{fcol(\x27分類\x27)}{LAST}\", CATEGORIES, strict=False)\n", "")'
+mutate "make_register: 根拠の強さの印を副題に書かない" "scripts/make_register.py" "副題に根拠の強さの印がある" \
+  's = s.replace("（【実機確認で確定】【新規・実機確認で判明】【依頼者確認】）", "")'
+mutate "make_register: OWASP の判定に入力規則を付けない" "scripts/make_register.py" "OWASP（owasp） のシートの判定" \
+  's = s.replace("    add_list(ws, f\"C5:C{4 + len(rows)}\", OWASP_VERDICTS)\n", "")'
+mutate "make_register: API の判定に入力規則を付けない" "scripts/make_register.py" "API のシートの判定" \
+  's = s.replace("    add_list(ws, f\"C5:C{4 + len(API_TOP10)}\", OWASP_VERDICTS)\n", "")'
+mutate "make_register: --date の書式を確かめない" "scripts/make_register.py" "--date の書式が崩れていれば止まる" \
+  's = s.replace("        _dt.date.fromisoformat(args.date)\n", "        pass\n")'
+mutate "make_register: 出力先のディレクトリを確かめない" "scripts/make_register.py" "出力先のディレクトリが無ければ言葉で知らせる" \
+  's = s.replace("    if not os.path.isdir(out_dir):\n", "    if False:\n")'
 
 # ---- audit_grep ----
 mutate "audit_grep: ガードの語彙から Laravel を外す" "scripts/audit_grep.sh" "audit_grep\\[laravel\\]: ガードを読み取る" \
@@ -279,7 +339,7 @@ mutate "audit_grep: 画面操作の記録で 09 を読ませない" "scripts/aud
 mutate "audit_grep: X 広告の関数を送信先から外す" "scripts/audit_grep.sh" "X 広告のタグを拾う" \
   's = s.replace("|ads-twitter|(^|[^A-Za-z0-9_$.])twq\\(|", "|ads-twitter|")'
 mutate "recon: パイプで grep -Eq に渡す（確率的に誤る書き方）" "scripts/recon.sh" "パイプで grep -q に渡していない" \
-  's = s.replace("| grep -E \x27^(ref:|[0-9a-f]{40})\x27 >/dev/null", "| grep -Eq \x27^(ref:|[0-9a-f]{40})\x27", 1)'
+  's = s.replace("| grep -E \"$sig\" >/dev/null", "| grep -Eq \"$sig\"", 1)'
 mutate "資料: コマンド例でスクリプトの中の変数を使う" "references/02-code-audit.md" "スクリプトの中の変数に頼らない" \
   's = s.replace("grep -rnE --exclude-dir=node_modules --exclude-dir=vendor \x27Math", "grep -rnE \"${EX}\" \x27Math", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
@@ -523,6 +583,32 @@ mutate "recon: DS を頂点ではなくホスト名で引く（旧不具合）" 
   's = s.replace("APEX=\"$(zone_apex)\"", "APEX=\"$DOMAIN\"")'
 mutate "recon: 親ドメインへ遡らない（旧不具合）" "scripts/recon.sh" "サブドメインから親の DMARC を見つける" \
   's = s.replace("    d=\"${d#*.}\"\n", "    break\n")'
+mutate "recon: curl の既定の名乗りで送る" "scripts/recon.sh" "curl の既定の名乗りで送らない" \
+  's = s.replace("curl() { command curl -A \"$UA\" \"$@\"; }", "curl() { command curl \"$@\"; }")'
+mutate "recon: 最初の応答が止められても言わない" "scripts/recon.sh" "最初の応答が止められたら、そう言う" \
+  's = s.replace("  if is_blocked \"$code_final\"; then", "  if false; then")'
+mutate "recon: 1c に .git/config を並べない" "scripts/recon.sh" ".git/config の中身が取れれば P0 の候補と言う" \
+  's = s.replace("    \x27p0   /.git/config       ^\\[(core|remote|branch)\x27\n", "")'
+mutate "recon: 1c に /actuator/env を並べない" "scripts/recon.sh" "/actuator/env の中身が取れれば内部の設定が見えると言う" \
+  's = s.replace("    \x27info /actuator/env      \"(propertySources|activeProfiles)\"\x27\n", "")'
+mutate "recon: 1c の 403 に注記を付けない" "scripts/recon.sh" "403 はファイルの有無を示さないと言う" \
+  's = s.replace("elif is_blocked \"$code\"; then note=\"（※）\"; blocked_seen=1", "elif false; then :")'
+mutate "recon: 4 節で a の href も数える（旧不具合）" "scripts/recon.sh" "<a> のリンク先を数えない" \
+  's = s.replace("while ($a =~ /\\bsrc\\s*=", "while ($a =~ /\\b(?:src|href)\\s*=")'
+mutate "recon: 4 節で link の rel を見ない" "scripts/recon.sh" "rel=canonical を数えない" \
+  's = s.replace("print \"$1\\n\" if $rel =~ /(^|\\s)($rels)(\\s|$)/ && ", "print \"$1\\n\" if ")'
+mutate "recon: URL の認証部を落とさない（旧不具合）" "scripts/recon.sh" "URL の認証部（DSN の鍵）を出さない" \
+  's = s.replace("s#^([A-Za-z][A-Za-z0-9+.-]*://)[^/?\\#@]*@#\\1#; ", "")'
+mutate "recon: 認証部の付いた URL を拾わない（旧不具合）" "scripts/recon.sh" "認証部の付いた URL（Sentry の DSN）でタグを拾う" \
+  's = s.replace("//([^/@[:space:]", "//(ZZZNEVER[^/@[:space:]", 1)'
+mutate "recon: ヘッダの制御文字を落とさない" "scripts/recon.sh" "端末の表示を書き換える並びを出さない" \
+  's = s.replace("last_block() { strip_ctl < \"$1\" |", "last_block() { tr -d \x27\\r\x27 < \"$1\" |")'
+mutate "recon: 見た JS の範囲を書かない" "scripts/recon.sh" "見た JS の範囲（遅延読み込みを含まない）を書く" \
+  's = s.replace("echo \"      import() で後から読み込む分割されたファイル（管理画面用など）は含まない。鍵が無いと言えるのはこの範囲だけ。\"\n", "")'
+mutate "recon: 鍵の表から Twilio を外す（scan_secrets とずれる）" "scripts/recon.sh" "recon\\[鍵\\]: 見本の鍵をすべて拾う" \
+  's = s.replace("  \x27secret|Twilio|\\b(AC|SK)[0-9a-f]{32}\\b\x27\n", "")'
+mutate "scan_secrets: npm の鍵を見ない（recon とずれる）" "scripts/scan_secrets.sh" "scan_secrets\\[鍵\\]: 見本の鍵をすべて拾う" \
+  's = s.replace("|npm_[0-9A-Za-z]{30,})", ")")'
 
 # ---- browser_probe（部品の検査。node があれば Playwright が無くても回る）----
 if command -v node >/dev/null 2>&1; then
@@ -532,8 +618,14 @@ if command -v node >/dev/null 2>&1; then
     's = s.replace("const name = tokens[0].toLowerCase();", "const name = tokens[0].toLowerCase().replace(/^script-src-(elem|attr)$/, \"script-src\");")'
   mutate "browser_probe: 評価対象に npm i -D させる（旧不具合）" "scripts/browser_probe.mjs" "評価対象の package.json を書き換える案内をしない" \
     's = s.replace("npm i --prefix \"$HOME/.cache/wsa-playwright\" playwright@${PW_VERSION}", "npm i -D playwright")'
+  mutate "browser_probe: どこからでも読み込める配信元を見ない" "scripts/browser_probe.mjs" "CSP を実際に適用される指令で判定する" \
+    's = s.replace("    return low.filter((x) => BROAD_SOURCES.includes(x));", "    return [];")'
+  mutate "browser_probe: strict-dynamic があっても配信元の許可を咎める（誤検出）" "scripts/browser_probe.mjs" "CSP を実際に適用される指令で判定する" \
+    's = s.replace("    if (low.includes(\"\x27strict-dynamic\x27\")) return [];\n", "")'
+  mutate "browser_probe: 既知タグから LINE Tag を外す" "scripts/browser_probe.mjs" "既知タグと同意管理のラベル付け" \
+    's = s.replace("  [\"LINE Tag\", \"^tr\\\\.line\\\\.me$|^d\\\\.line-scdn\\\\.net$\"],\n", "")'
 else
-  printf '  \033[33m-\033[0m browser_probe の部品の 3 件（node が無いため省略）\n'; SKIP=$((SKIP+3))
+  printf '  \033[33m-\033[0m browser_probe の部品の 6 件（node が無いため省略）\n'; SKIP=$((SKIP+6))
 fi
 
 # ---- browser_probe（Playwright がある環境でのみ）----
@@ -560,9 +652,17 @@ if node -e 'import("playwright")' >/dev/null 2>&1; then
     's = s.replace("  try { own.add(new URL(page.url()).hostname); } catch { /* 同上 */ }\n", "")'
   mutate "browser_probe: コンソールの URL を伏せない" "scripts/browser_probe.mjs" "コンソールの URL のクエリを伏せる" \
     's = s.replace("cspViolations.push(maskUrls(t).slice(0, 200))", "cspViolations.push(t.slice(0, 200))")'
+  mutate "browser_probe: 追加パスを渡された URL の下で開く（旧不具合）" "scripts/browser_probe.mjs" "渡された URL にパスがあってもサイトの根から開く" \
+    's = s.replace("const url = `${new URL(base).origin}${p.startsWith", "const url = `${base}${p.startsWith")'
+  mutate "browser_probe: 通信が途切れなければ止まる（旧不具合）" "scripts/browser_probe.mjs" "通信が途切れないページでも Cookie の節を出す" \
+    's = s.replace("if (e.name !== \"TimeoutError\" || !navRes) {", "if (true) {")'
+  mutate "browser_probe: ボット対策で止められても言わない" "scripts/browser_probe.mjs" "ヘッドレスのブラウザが止められたら、そう言う" \
+    's = s.replace("  if (BLOCKED.has(status)) {", "  if (false) {")'
+  mutate "browser_probe: 保存領域のキー名の制御文字を落とさない" "scripts/browser_probe.mjs" "キー名の制御文字を落とす" \
+    's = s.replace("console.log(`    ${clean(k)}${warn}`);", "console.log(`    ${k}${warn}`);")'
 else
   # 件数は上の if の中の mutate の数と揃える（自己監査が README の件数と照合する）
-  printf '  \033[33m-\033[0m browser_probe の 11 件（playwright が無いため省略）\n'; SKIP=$((SKIP+11))
+  printf '  \033[33m-\033[0m browser_probe の 15 件（playwright が無いため省略）\n'; SKIP=$((SKIP+15))
 fi
 
 printf '\n\033[1m結果\033[0m  生きている検査 %d / 生きていない %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIP"
