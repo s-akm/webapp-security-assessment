@@ -5,7 +5,14 @@
 - Q2 の（a）は 03 の 2 番の集約版。Q3 で素通しのポリシーが見つかったテーブルは、（b）ではなく（a）と突き合わせる
   （（b）は行ごとの権限制御が無効なテーブルだけを出す）
 - 対象の構成に無いもの（Storage・Realtime・多要素認証を使っていない等）は、番号ごと消してから渡す
-- ロール名（anon / authenticated）とスキーマ名（public）は構成に合わせて書き換える
+- ロール名（anon / authenticated）は構成に合わせて書き換える
+- Q1・Q2 は public 以外のスキーマも取る（03 の 1 節の SQL は public だけ）。Exposed schemas に public 以外があるとき、
+  そこも API から届くため。Supabase の内部のスキーマ（auth・storage など）の行も出るので、public と Exposed schemas の行から読む
+- Q9〜Q11 は 03 に無い読み取り。Q9 は 08 の 4 節の「保有件数と最古の登録日」。auth.users は Supabase の認証の表で、
+  保有件数を別の表で数える構成なら表の名前を書き換える（件数と日付だけを返す形は崩さない）
+- Q10 は、アプリが直接つなぐロールが rolbypassrls か rolsuper なら、その経路では行ごとの権限制御が働かないことを見る
+- Q11 に pg_net や http のような外へ通信する拡張があれば、Q4 の関数（とくに anon_exec が true のもの）の中で使っていないかを
+  コードかマイグレーションで確かめる。使っていれば、関数を呼べる人がデータベースから任意の宛先へ要求を出せる（07 の 5 節）
 - 返ってきた結果は台帳に戻す（references/04-findings-register.md の「依頼者の確認の結果を戻す」）
 -->
 
@@ -39,7 +46,9 @@
 - **SQL を書き換えないでください。** とくに、列を増やしたり `select *` に変えたりしないでください。
   ここで取るのは、テーブル名・権限・設定だけです。**氏名・メールアドレス・電話番号などの中身は取りません**
 - 管理画面の SQL エディタは強い権限で動くことがあります。**別の SQL を続けて実行しないでください**
-- 結果に、人の名前やメールアドレスのような**個人の情報が見えたら、貼り付けずに止めて**ご連絡ください
+- 結果に、人の名前やメールアドレスのような**個人の情報が見えたら、貼り付けずに止めて**ご連絡ください。
+  ただし **Q3 の式（qual・with_check の列）の中のメールアドレス**は、止めずに **`@` より前を `xxx` に置き換えて**貼ってください
+  （`@` より後ろはそのまま残してください）。権限のルールに管理者のアドレスが直接書かれていることがあり、その形自体が確認の結果になります
 - エラーが出た場合は、**エラーの文面をそのまま**貼ってください。それも確認の結果になります
 
 ---
@@ -49,8 +58,8 @@
 ```sql
 select schemaname, tablename, rowsecurity
 from pg_tables
-where schemaname = 'public'
-order by rowsecurity, tablename;
+where schemaname not in ('pg_catalog', 'information_schema')
+order by schemaname, rowsecurity, tablename;
 ```
 
 ```
@@ -66,10 +75,10 @@ order by rowsecurity, tablename;
 （a）公開の権限の全件（テーブルと相手ごとにまとめたもの）
 
 ```sql
-select table_name, grantee, string_agg(privilege_type, ' / ' order by privilege_type) as privs
+select table_schema, table_name, grantee, string_agg(privilege_type, ' / ' order by privilege_type) as privs
 from information_schema.role_table_grants
-where table_schema = 'public' and grantee in ('anon', 'authenticated', 'PUBLIC')
-group by table_name, grantee order by table_name, grantee;
+where table_schema not in ('pg_catalog', 'information_schema') and grantee in ('anon', 'authenticated', 'PUBLIC')
+group by table_schema, table_name, grantee order by table_schema, table_name, grantee;
 ```
 
 ```
@@ -81,14 +90,14 @@ group by table_name, grantee order by table_name, grantee;
 （b）公開の権限があり、行ごとの権限制御が無効なテーブル
 
 ```sql
-select g.table_name, g.grantee, string_agg(g.privilege_type, ' / ' order by g.privilege_type) as privs
+select g.table_schema, g.table_name, g.grantee, string_agg(g.privilege_type, ' / ' order by g.privilege_type) as privs
 from information_schema.role_table_grants g
 join pg_tables t on t.schemaname = g.table_schema and t.tablename = g.table_name
-where g.table_schema = 'public'
+where g.table_schema not in ('pg_catalog', 'information_schema')
   and g.grantee in ('anon', 'authenticated', 'PUBLIC')
   and g.privilege_type in ('SELECT', 'INSERT', 'UPDATE', 'DELETE')
   and not t.rowsecurity
-group by g.table_name, g.grantee order by g.table_name, g.grantee;
+group by g.table_schema, g.table_name, g.grantee order by g.table_schema, g.table_name, g.grantee;
 ```
 
 ```
@@ -98,6 +107,8 @@ group by g.table_name, g.grantee order by g.table_name, g.grantee;
 ```
 
 ## Q3. 権限のルール（ポリシー）の一覧
+
+式の中にメールアドレスがあれば、`@` より前を `xxx` に置き換えてから貼ってください（上の「実行の前に」）。
 
 ```sql
 select schemaname, tablename, policyname, roles, cmd, qual, with_check
@@ -181,6 +192,48 @@ from auth.mfa_factors;
 ```
 
 ```
+結果（そのまま貼り付け）:
+
+```
+
+## Q9. 登録されている利用者の件数と、最も古い登録日（件数と日付だけ）
+
+```sql
+select count(*)                          as total,
+       min(created_at)::date             as oldest,
+       count(*) filter (where email_confirmed_at is null and phone_confirmed_at is null) as unconfirmed
+from auth.users;
+```
+
+```
+結果（そのまま貼り付け）:
+
+```
+
+## Q10. 行ごとの権限制御を通らないロール
+
+```sql
+select rolname, rolsuper, rolbypassrls, rolcanlogin
+from pg_roles
+where rolsuper or rolbypassrls
+order by rolname;
+```
+
+```
+返ってきた行数:
+結果（そのまま貼り付け）:
+
+アプリがデータベースに直接つなぐときに使っているロールの名前（分かれば。パスワードは不要です）:
+```
+
+## Q11. 入っている拡張機能
+
+```sql
+select extname, extversion from pg_extension order by extname;
+```
+
+```
+返ってきた行数:
 結果（そのまま貼り付け）:
 
 ```

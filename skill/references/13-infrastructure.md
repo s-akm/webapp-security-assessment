@@ -10,10 +10,11 @@
 
 | 見つかったもの | 読む節 |
 |---|---|
-| `Dockerfile` / `docker-compose.yml` | 2 |
-| `*.tf` / `*.tfvars` / CloudFormation / CDK / Pulumi | 3 |
+| `Dockerfile` / `docker-compose.yml` / `compose.yaml` | 2 |
+| `*.tf` / `*.tfvars` / CloudFormation / CDK / Pulumi / Bicep（`*.bicep`） | 3 |
 | Kubernetes のマニフェスト / Helm チャート | 4 |
-| `serverless.yml` / SAM / `wrangler.toml` | 5 |
+| `serverless.yml` / SAM / `wrangler.toml` / `wrangler.json*` / SST（`sst.config.ts`） | 5 |
+| PaaS の定義（`render.yaml` / `fly.toml` / `app.yaml` / `netlify.toml` / `vercel.json`） | 5 と 6 |
 
 **設定項目の網羅的な一覧は CIS Benchmarks にある。** この資料は「AI で素早く作った構成で
 実際に空く穴」に絞ってあり、網羅を狙っていない。**取引先が CIS 準拠を求めてきたとき、または
@@ -30,9 +31,11 @@ cisecurity.org から取る（Docker / Kubernetes / PostgreSQL / 各クラウド
 
 ```bash
 # 定義ファイルの所在
-find . \( -name 'Dockerfile*' -o -name 'docker-compose*.y*ml' -o -name '*.tf' \
-       -o -name 'serverless.y*ml' -o -name 'template.y*ml' -o -name 'wrangler.toml' \
-       -o -name 'Chart.yaml' -o -name 'cdk.json' -o -name 'Pulumi.yaml' \) \
+find . \( -name 'Dockerfile*' -o -name 'docker-compose*.y*ml' -o -name 'compose*.y*ml' -o -name '*.tf' \
+       -o -name '*.tfvars' -o -name '*.bicep' -o -name 'serverless.y*ml' -o -name 'template.y*ml' \
+       -o -name 'wrangler.toml' -o -name 'wrangler.json*' -o -name 'sst.config.*' \
+       -o -name 'Chart.yaml' -o -name 'cdk.json' -o -name 'Pulumi.yaml' \
+       -o -name 'render.yaml' -o -name 'fly.toml' -o -name 'app.yaml' -o -name 'netlify.toml' -o -name 'vercel.json' \) \
   -not -path '*/node_modules/*' -not -path '*/.git/*' | head -30
 ```
 
@@ -56,6 +59,16 @@ grep -nE '^USER|privileged|--privileged|cap_add|securityContext' \
 - **`USER` の指定が無ければ root で動く。** 侵入されたときに、コンテナ内で何でもできる
 - `privileged: true` や広い `cap_add` があれば、ホスト側まで到達しうる
 - ホストのソケットやディレクトリを渡していないか（`/var/run/docker.sock` は特に危険）
+- **DB やキャッシュのポートを外へ公開していないか。** compose の `ports:` に `"5432:5432"` のように**待ち受けるアドレス無しで**
+  書くと、ホストのすべてのインターフェースで待ち受け、サーバーが公開されていればインターネットから届く。
+  Docker が公開したポートは、ホストの防火壁（ufw など）の規則より先に通されることがあるので、「ufw で閉じている」を根拠にしない。
+  コンテナ同士の通信だけなら `ports:` は要らない。ホストから使うだけなら `"127.0.0.1:5432:5432"` と書く
+
+```bash
+# 待ち受けるアドレスを書かずに公開しているポート（DB・キャッシュ・検索の既定のポートを先に見る）
+grep -nE '^[[:space:]]*-[[:space:]]*"?[0-9]+:[0-9]+' docker-compose*.y*ml compose*.y*ml 2>/dev/null
+grep -nE '"?(5432|3306|6379|27017|9200|11211):' docker-compose*.y*ml compose*.y*ml 2>/dev/null | grep -v '127\.0\.0\.1:'
+```
 
 ### 2-2. イメージに焼き込まれたもの
 
@@ -64,10 +77,18 @@ grep -nE '^USER|privileged|--privileged|cap_add|securityContext' \
 
 ```bash
 grep -nE 'ARG .*(KEY|SECRET|TOKEN|PASSWORD)|ENV .*(KEY|SECRET|TOKEN|PASSWORD)' Dockerfile* 2>/dev/null
+# 定義ファイルに平文で書いた秘密情報（compose の environment:、terraform.tfvars、K8s の ConfigMap）。
+# 名前と行番号だけを出し、値は画面に出さない
+grep -rnoiE '^[[:space:]]*-?[[:space:]]*"?[A-Za-z0-9_]*(KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Za-z0-9_]*"?[[:space:]]*[:=]' \
+  --include='docker-compose*.y*ml' --include='compose*.y*ml' --include='*.tfvars' --include='*.yaml' --include='*.yml' . 2>/dev/null \
+  | grep -v node_modules | head -20
 # .dockerignore が無ければ .env や .git がイメージに入る
 ls -la .dockerignore 2>/dev/null || echo "  .dockerignore が無い"
 ```
 
+- **compose の `environment:`、`terraform.tfvars`、K8s の `ConfigMap` に書いた値は平文で、リポジトリにある。**
+  値が `${DB_PASSWORD}` のような参照なら問題ない。値そのものが書かれていれば、秘密情報の入れ替え（`references/05-remediation-plan.md`）の対象になる。
+  `ConfigMap` は秘密情報を置く場所ではなく、`Secret` も暗号化ではない（4 節）
 - **`.dockerignore` が無い**と、`.env`・`.git`・鍵ファイルがそのまま入る。
   `.git` が入れば、履歴に残った秘密情報も一緒に配布される（C-2 と同じ話になる）
 - マルチステージビルドを使っていれば、最終段に開発用の道具が残っていないか
@@ -92,16 +113,25 @@ grep -nE 'npm (install|ci)|COPY .*\.npmrc|ARG .*TOKEN' Dockerfile* 2>/dev/null
 
 ## 3. クラウド資源の定義（Terraform / CloudFormation / CDK）
 
-**見るのは 4 つ。** どれも「既定のまま」で穴が空く。
+**見るのは 5 つ。** どれも「既定のまま」か、作りかけの設定のままで穴が空く。
 
 ### 3-1. 公開範囲
 
 ```bash
 grep -rnE '0\.0\.0\.0/0|::/0|public|acl.*public-read|allUsers|allAuthenticatedUsers' \
   --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
+# DB を外から直接つなげる設定と、インスタンスのメタデータの取得の方式
+grep -rnE 'publicly_accessible|PubliclyAccessible|http_tokens|HttpTokens|metadata_options|MetadataOptions' \
+  --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
 ```
 
-- 全開放の受信規則（`0.0.0.0/0`）が、管理用のポートに付いていないか
+- 全開放の受信規則（`0.0.0.0/0`）が、管理用のポート（SSH・RDP）や**DB・キャッシュのポート**
+  （PostgreSQL 5432・MySQL 3306・Redis 6379・MongoDB 27017・Elasticsearch 9200）に付いていないか
+- **RDS などのマネージド DB に `publicly_accessible = true` が付いていないか。** 受信規則と組み合わさると、
+  インターネットから DB へ直接つなげる
+- **EC2 のインスタンスメタデータを IMDSv2 に限っているか**（Terraform は `metadata_options` の `http_tokens = "required"`、
+  CloudFormation は `MetadataOptions` の `HttpTokens: required`）。指定が無ければ、作成時の既定（AMI やアカウントの設定）に任される。
+  IMDSv1 が残っていると、アプリの SSRF（`references/07-web-vulnerabilities.md` の 5 節）から、インスタンスの資格情報を取られやすくなる
 - ストレージが公開読み取りになっていないか
 - **意図した公開もある**（静的サイトの配信）。用途を確かめてから起票する
 - **既定値は作成時期で違う。** AWS の S3 は 2023-04 以降に作ったバケットだけ、公開ブロックが有効・ACL 無効が既定になった。
@@ -110,11 +140,17 @@ grep -rnE '0\.0\.0\.0/0|::/0|public|acl.*public-read|allUsers|allAuthenticatedUs
 ### 3-2. 権限の広さ
 
 ```bash
-grep -rnE '"Action"[[:space:]]*:[[:space:]]*"\*"|"Resource"[[:space:]]*:[[:space:]]*"\*"|roles/owner|Admin' \
-  --include='*.tf' --include='*.json' . 2>/dev/null | head -20
+# JSON の "Action": "*" と配列の ["*"]、Terraform の actions = ["*"]、サービス単位の "s3:*"、
+# 「これ以外すべて」を許す NotAction、ロールを渡せる iam:PassRole
+grep -rniE \
+  -e '"?(Action|Resource|actions|resources)"?[[:space:]]*[:=][[:space:]]*\[?[[:space:]]*"\*"' \
+  -e '"[a-z0-9-]+:\*"' -e 'NotAction|not_actions' -e 'iam:PassRole' -e 'roles/(owner|editor)|AdministratorAccess' \
+  --include='*.tf' --include='*.json' --include='*.y*ml' --include='*.ts' . 2>/dev/null | grep -v node_modules | head -20
 ```
 
-**`*` の権限は、その資格情報が漏れたときの被害範囲そのものになる。**
+**`*` の権限は、その資格情報が漏れたときの被害範囲そのものになる。** `"s3:*"` のようなサービス単位の `*` も、
+そのサービスの中では同じ。`NotAction` は「列挙したもの以外すべて」を許すので、`*` と同じ重さで読む。
+`iam:PassRole` を `Resource: "*"` で持つ資格情報は、より強いロールを別の資源に渡して、その権限で動かせる。
 CI に渡している資格情報が広い権限を持っていれば、`references/10-dependencies.md` の
 3-3 と合わせて重い指摘になる。
 
@@ -137,6 +173,25 @@ git log --all --oneline -- '*.tfstate' 2>/dev/null | head
 - リポジトリに入っていないか。**履歴に一度でも入っていれば、その鍵は失効が要る**
 - 遠隔に置いている場合、そのバケットが暗号化・非公開になっているか
 
+### 3-5. 消失への備え
+
+**定義ファイルで管理している資源は、`terraform destroy` や定義の書き換え 1 回で消える。** 本番の DB が、
+消されないように作られているかを見る。
+
+```bash
+grep -rnE 'backup_retention_period|skip_final_snapshot|deletion_protection|DeletionProtection|DeletionPolicy|prevent_destroy|deletion_window_in_days|BackupRetentionPeriod' \
+  --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
+```
+
+- `backup_retention_period = 0`（`BackupRetentionPeriod: 0`）なら、自動バックアップが取られていない
+- `skip_final_snapshot = true` なら、削除のときに最後のスナップショットを残さない
+- `deletion_protection` が無いか `false` なら、削除の操作がそのまま通る。Terraform の `lifecycle { prevent_destroy = true }`、
+  CloudFormation の `DeletionPolicy: Retain` / `Snapshot` も同じ役割
+- 暗号化に使う KMS の鍵を消すと、その鍵で暗号化したデータは読めなくなる。鍵の削除の待機期間（`deletion_window_in_days`）と、
+  鍵を消せる権限を誰が持っているか
+- **バックアップが同じアカウントの中にしか無いか。** アカウントの資格情報が漏れれば、バックアップも一緒に消せる。
+  復元を試したことがあるかは依頼者に聞く（`references/03-runtime-verification.md` の 4 節の「復元を一度でも試したことがあるか」）
+
 ---
 
 ## 4. Kubernetes
@@ -146,7 +201,12 @@ git log --all --oneline -- '*.tfstate' 2>/dev/null | head
 - **`Secret` は base64 であって暗号化ではない。** マニフェストがリポジトリにあれば、
   そこに書かれた値は平文と同じ扱いになる
 - `securityContext` — root で動いていないか、特権が付いていないか
+- **`hostNetwork: true`・`hostPID: true`・`hostPath` のボリュームが無いか。** ホストのネットワーク・プロセス・ファイルに
+  ポッドから届く。ログ収集などの基盤の部品以外で使っていれば、その理由を確かめる
+- **`automountServiceAccountToken` を `false` にしているか。** 既定ではポッドに API の資格情報が置かれ、
+  ポッドが侵されると、そのサービスアカウントの権限でクラスタを操作される。API を呼ばないポッドには要らない
 - **`NetworkPolicy` があるか。** 無ければ、どのポッドからどのポッドへも通る
+- **Ingress に `tls:` の指定があるか。** 無ければ、外から平文の HTTP で届く
 - RBAC の広さ。`cluster-admin` を配っていないか
 - リソース制限（`limits`）があるか。無ければ 1 つのポッドで全体が落ちる
 
@@ -154,7 +214,9 @@ git log --all --oneline -- '*.tfstate' 2>/dev/null | head
 
 ## 5. サーバーレスの定義
 
-`serverless.yml` / SAM / `wrangler.toml` などがある場合。
+`serverless.yml` / SAM / `wrangler.toml` / `wrangler.json*` / SST などがある場合。
+PaaS の定義（`render.yaml`・`fly.toml`・`app.yaml`・`netlify.toml`・`vercel.json`）も、環境変数の直書きと、
+公開するサービスと内部だけのサービスの分け方をここで見る。応答ヘッダやリダイレクトの設定は `references/07-web-vulnerabilities.md` の 4 節・7 節と突き合わせる。
 
 - **関数ごとの権限が分かれているか。** 全関数に同じ広い権限を渡していないか
 - 環境変数に秘密情報を直書きしていないか（**定義ファイルはリポジトリにある**）

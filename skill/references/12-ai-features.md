@@ -31,9 +31,15 @@
 ## まず使っているかを確かめる
 
 ```bash
-# LLM の SDK・API を呼んでいるか
-grep -rnE 'anthropic|openai|@ai-sdk|langchain|llamaindex|generativeai|bedrock|vertexai' \
-  --include='package.json' --include='requirements.txt' --include='*.ts' --include='*.py' .
+# LLM の SDK・API を呼んでいるか。事業者ごとの SDK の名前は増え続けるので、
+# SDK を使わずに HTTP で直接呼ぶ形（chat/completions・messages・generateContent のパス）も一緒に探す
+grep -rnE --exclude-dir=node_modules \
+  -e 'anthropic|openai|@ai-sdk|langchain|llamaindex|generativeai|google[-/.]genai|bedrock|vertexai' \
+  -e 'ollama|mistralai|groq|cohere|replicate|openrouter|together-ai|fireworks|deepseek|huggingface' \
+  -e '/v1/chat/completions|/v1/messages|/v1/responses|:generateContent' \
+  --include='package.json' --include='requirements*.txt' --include='pyproject.toml' --include='Gemfile' \
+  --include='go.mod' --include='composer.json' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
+  --include='*.py' --include='*.rb' --include='*.go' --include='*.php' . | head -30
 
 # エージェント・ツール実行の枠組み
 grep -rnE 'modelcontextprotocol|@modelcontextprotocol|mcp[_-]server|tool_choice|function_call|tools:\s*\[' \
@@ -206,11 +212,18 @@ LLM に渡した内容は、**出力として出てくる可能性がある**と
 - **他の利用者のデータが文脈に入っていないか。** 検索結果をそのまま渡す構成で、
   絞り込みが LLM 任せになっていると混ざる
 - 会話履歴の保存先と保持期間。個人情報が入るなら `references/08-privacy-compliance.md` の 4 節
+- **会話履歴を返す API が、持ち主を確かめているか。** `/api/chat/<会話の ID>` のような取得で、ID が自分の会話のものかを
+  サーバーで確かめていなければ、ID を変えるだけで他人の会話が読める（`references/02-code-audit.md` の A-3 と同じ形）
+- **応答のキャッシュのキーに、利用者やテナントが入っているか。** 入力の文面だけをキーにすると、別の利用者の文脈で
+  作られた応答（その人の個人情報を含む）が、同じ質問をした人に返る
+- **アプリのログにプロンプトや応答の全文を出していないか**（`console.log(messages)`、`logger.info(prompt)` など）。
+  ホスティングのログは保持期間と閲覧できる人が別に決まっていて、会話履歴の管理の外に個人情報が残る
 - **LLM の観測ツール**（Langfuse、LangSmith など）は、既定でプロンプト・応答・取得した文書をすべて記録する。
   保存先・保持期間・閲覧できる人を、会話履歴と同じ重さで見る
 - **会話の共有リンクがあるなら、検索エンジンに載らない指定（`noindex`）と、推測できない URL か。**
   共有された会話が大量に検索エンジンに索引された事例がある
-- **LLM の事業者が、送ったデータを学習に使わない設定・契約になっているか**（個人情報保護委員会の注意喚起 2023-06）
+- **LLM の事業者が、送ったデータを学習に使わない設定・契約になっているか**（個人情報保護委員会の注意喚起 2023-06）。
+  設定は事業者のコンソールにあるので、依頼者に `templates/client-console-checklist.md` の 10 で聞く
 - **外部の LLM 事業者への送信が、公表している内容と合っているか**（08 の 5 節）。
   委託先として書かれているか、越境移転の記載があるか
 
@@ -237,6 +250,9 @@ LLM がどれだけ堅くても他人の文書が文脈に入る。
 - **埋め込みを元の文書と同じ機密度で扱っているか。** 埋め込みから元の文章を復元する手法がある
 - **誰が検索対象に文書を入れられるか。** 利用者が投稿した文書がそのまま検索対象に入るなら、それは他の利用者への
   間接インジェクションの経路になる（LLM05）
+- **利用者のデータでモデルを追加学習（ファインチューニング）していないか。** 学習に入った内容は、テナントの絞り込みの
+  外で、別の利用者への出力に出てくることがある。権限の境界を検索の条件で守れないので、学習に入れた個人データの範囲と
+  利用目的（`references/08-privacy-compliance.md` の 4 節）を確かめる
 
 ```bash
 grep -rnE 'similarity|match_documents|embedding|pgvector|pinecone|qdrant|weaviate|chroma|milvus|namespace|filter:' \
@@ -257,7 +273,8 @@ grep -rnE 'similarity|match_documents|embedding|pgvector|pinecone|qdrant|weaviat
 - 1 回の入力長に上限があるか。無ければ、長文を投げるだけで費用が伸びる
 - 利用者あたり・時間あたりの回数制限があるか
 - **上限に達したときどうなるか。** 落ちるのか、静かに止まるのか、課金が伸び続けるのか
-- 使用量の監視と通知があるか。**気づく仕組みが無いことのほうが、単価より重い**
+- 使用量の監視と通知があるか。**気づく仕組みが無いことのほうが、単価より重い**。事業者のコンソールの月額の上限と
+  通知の設定は、依頼者に `templates/client-console-checklist.md` の 10 で聞く
 
 ## 5-2. 出力が判断や操作を駆動するとき（Misinformation）
 
@@ -340,6 +357,13 @@ grep -rnE 'Authorization.*(req|request)\.headers' --include='*.ts' --include='*.
 - SDK とエージェント枠組みの版が固定されているか
 - **プロキシ・ブリッジ系のパッケージ**を使っていないか。中継するものは権限が集まりやすい
 - モデル名・エンドポイントを設定で切り替えられる構成なら、**切り替え先を誰が決められるか**
+
+## 8. 欧州の利用者を想定する場合（EU AI 法）
+
+EU AI 法（規則 2024/1689）の 50 条 1 項は、**人と直接やり取りする AI システムを、相手が AI とやり取りしていると分かるように
+作る**ことを提供者に求めている（状況から明らかな場合を除く）。EEA の利用者を想定するかは事業判断で（`references/08-privacy-compliance.md` の 2 節）、
+想定するなら、チャットや自動応答の画面に **AI による応答であることの表示があるか**を事実として記録する。
+アプリがこの規則の「提供者」に当たるかは事業の形による。適用の開始時期も見直しの議論があって動く。どちらも評価者は断定せず、法務確認に回す。
 
 ---
 
