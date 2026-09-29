@@ -46,14 +46,19 @@ jobs:
           "$RUNNER_TEMP/venv/bin/pip" install --quiet -r requirements-dev.txt
           echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
 
-      - name: Linux の道具（dig・mawk・zip）
+      - name: Linux の道具（dig・mawk・zip・rg）
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends dnsutils mawk zip unzip
+          sudo apt-get install -y -qq --no-install-recommends dnsutils mawk zip unzip ripgrep
           sudo update-alternatives --set awk /usr/bin/mawk
           # mawk で実行されていなければ止める（失敗を黙って続けると、gawk で通ったのを mawk で通ったと誤る）
           test "$(readlink -f "$(command -v awk)")" = /usr/bin/mawk
+
+      - name: macOS の道具（rg）
+        if: runner.os == 'macOS'
+        # rg が無いと、rg と grep で同じ結果になるかの検査が省略され、README の件数と合わなくなる（2.23.0 の前から CI が失敗していた）
+        run: brew install --quiet ripgrep
 
       - name: macOS では bash 3.2 と BSD の grep / sed / awk で実行する
         if: runner.os == 'macOS'
@@ -76,6 +81,8 @@ jobs:
           # awk -W version は BSD の awk で標準入力を待つので使わない。実体の場所で見る
           for t in bash grep sed awk; do echo "$t -> $(command -v "$t") -> $(readlink -f "$(command -v "$t")" 2>/dev/null || true)"; done
           node --version
+          # rg が無ければ止める（省略されたまま進むと、README の件数とのずれで初めて気づくことになる）
+          rg --version | head -1
       - name: macOS の道具が BSD のものか確かめる
         if: runner.os == 'macOS'
         run: |

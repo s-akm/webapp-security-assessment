@@ -10,7 +10,7 @@
 FROM mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
 RUN apt-get update -qq \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-      git dnsutils python3 python3-openpyxl zip unzip perl mawk openssl \
+      git dnsutils python3 python3-openpyxl zip unzip perl mawk openssl ripgrep \
  && rm -rf /var/lib/apt/lists/* \
  && ln -sf /usr/bin/mawk /usr/local/bin/awk
 ENV LANG=C.UTF-8
