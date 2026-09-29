@@ -189,8 +189,11 @@ fi
 
 # 案件と、実地の評価の題材を特定できる語。公開するファイルと、すべてのコミットの文言を見る（文言も公開される）。
 # 語は build/identifying-words.sh が手元の非公開のファイルから作る（語そのものはここに出さない）
-IDW="$(bash "$ROOT/build/identifying-words.sh" "$ROOT" 2>/dev/null | paste -sd '|' -)"
-if [[ -z "$IDW" ]]; then
+IDW_RAW="$(bash "$ROOT/build/identifying-words.sh" "$ROOT" 2>/dev/null)"; idrc=$?
+IDW="$(printf '%s\n' "$IDW_RAW" | sed '/^$/d' | paste -sd '|' -)"
+if [[ $idrc -eq 2 ]]; then
+  ng "題材を特定できる語の一覧に、正規表現として読めない行がある" "tests/ngwords.local か tests/eval/local/ngwords を直す（語は出さない）"
+elif [[ -z "$IDW" ]]; then
   warn "題材を特定できる語の一覧が作れない" "tests/ngwords.local か tests/eval/local/ を置いた手元の環境で実行する"
 else
   f_hit="$(cd "$ROOT" && git ls-files -z | grep -zvE '^LICENSE$' | xargs -0 grep -liE "$IDW" 2>/dev/null || true)"

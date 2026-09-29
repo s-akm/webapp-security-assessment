@@ -761,7 +761,8 @@ GUARD="$GUARD"'|@PreAuthorize|@Secured|@RolesAllowed|SecurityFilterChain|hasRole
 GUARD="$GUARD"'|\[Authorize|RequireAuthorization|User\.Identity'
 GUARD="$GUARD"'|locals\.(user|session|getSession)|event\.context\.(user|auth)|ctx\.state\.(user|session)|state\.user'
 GUARD="$GUARD"'|RequireAuth|CheckAuth|MustAuth|WithAuth|AuthGuard|UseGuards|@Roles'
-GUARD="$GUARD"'|protectedProcedure|authedProcedure|preHandler|onRequest'
+# Fastify のフックの onRequest は、フックとして書く形に限る（Firebase の functions.https.onRequest( をガードと数えていた）
+GUARD="$GUARD"'|protectedProcedure|authedProcedure|preHandler|onRequest[[:space:]]*:|addHook\([[:space:]]*["'"'"'](onRequest|preHandler)'
 GUARD="$GUARD"'|plug[[:space:]]+:(require|ensure|authenticate)|require_authenticated_user'
 GUARD="$GUARD"'|AuthenticatedUser|BearerAuth|@Authenticated'
 GUARD="$GUARD"'|CRON_SECRET|WEBHOOK_SECRET|REVALIDATE_SECRET|API_SECRET'
@@ -770,6 +771,8 @@ GUARD="$GUARD"'|beforeHandle|sharedMap|grouped\(|authAction|AuthenticatedAction'
 GUARD="$GUARD"'|IS_AUTHENTICATED|SecurityRule|@Secured'
 # ルートの登録の行で呼ぶ認可の関数（isAuthorized()・Spring の denyAll() など）
 GUARD="$GUARD"'|isAuthorized|isAuthenticated|isLoggedIn|denyAll'
+# Firebase（Functions の中でトークンを検証する・呼び出し可能な関数は context.auth / request.auth で見る）
+GUARD="$GUARD"'|verifyIdToken|verifySessionCookie|(context|request)\.auth([^A-Za-z_]|$)'
 
 # ガードの一致は全ファイルをまとめて 1 回だけ取り（ファイル名:行:一致）、ファイルごとに
 # 「一致した語（重複なし・並べ替え）」と「一致した行の数」に集める。出す順は一覧の順。
@@ -1045,7 +1048,8 @@ PRIV_INPUT="$PRIV_INPUT|\\\$_(GET|POST|REQUEST)\[['\"]${PRIV_NAME}['\"]\]|\\\$re
 PRIV_INPUT="$PRIV_INPUT|\{[^}]*\b${PRIV_NAME}\b[^}]*\}[[:space:]]*=[[:space:]]*(await[[:space:]]+)?(req|request|ctx|c)\.(body|query|params|json\(\)|req\.json\(\))"
 # 受け取ったもの全体（req.body・body・dto・request.data）だけを拾い、項目を選んで読むもの（req.body.email・body['x']）は外す
 WHOLE='((await[[:space:]]+)?(req|request|c\.req)\.json\(\)|req\.body|request\.body|ctx\.request\.body|body|dto|request\.data|request\.json)([^.A-Za-z_[]|$)'
-WHOLE_INPUT='(update|updateOne|updateMany|findOneAndUpdate|findByIdAndUpdate|create|insert|save|merge|upsert|update_attributes|update!|assign_attributes|fill|forceFill)\([^)]{0,40}([^.A-Za-z_]|^)'"$WHOLE"'|\([^)]{0,40}(request\.get_json\(\)|\*\*request|\$request->all\(\)|\$_POST)'
+# 括弧の直後に受け取ったものを渡す形（update(body)）も拾う。以前は括弧と名前の間に 1 文字を求めていて、この形を取りこぼしていた
+WHOLE_INPUT='(update|updateOne|updateMany|findOneAndUpdate|findByIdAndUpdate|create|insert|save|merge|upsert|update_attributes|update!|assign_attributes|fill|forceFill)\(([^)]{0,40}[^.A-Za-z_])?'"$WHOLE"'|\([^)]{0,40}(request\.get_json\(\)|\*\*request|\$request->all\(\)|\$_POST)'
 WHOLE_INPUT="$WHOLE_INPUT"'|Object\.assign\([^,]+,[[:space:]]*'"$WHOLE"'|\{[[:space:]]*\.\.\.'"$WHOLE"'|permit!|to_unsafe_h'
 INCL=(--include='*.ts' --include='*.js' --include='*.mjs' --include='*.py' --include='*.rb' --include='*.php' --include='*.java' --include='*.kt' --include='*.cs' --include='*.go')
 echo "  --- 権限を示す値を、リクエストから読んでいる（判定に使っていれば、利用者が自分で権限を上げられる）"
@@ -1678,6 +1682,9 @@ echo "  --- 署名検証らしき処理 ---"
 {
   grep -rnE "${EXA[@]}" 'constructEvent|verifySignature|createHmac|hmac\.new|compare_digest|timingSafeEqual' . 2>/dev/null | lim 15
 } | show
+echo "  --- 秘密が未設定のときに検証を飛ばす形（★ は、環境変数を入れ忘れた本番で誰でも通知を投げられる）---"
+{ grep -rnE "${EXA[@]}" '[Ss]ecret[A-Za-z_]*[[:space:]]*(&&|and)[^;]{0,80}(verify|constructEvent|timingSafeEqual|compare_digest|hmac|[Ss]ignature)' "${CODE_INCL[@]}" . 2>/dev/null \
+    | sed 's|^\./||' | grep -vE "$TESTPATH" | pfx "  ★ " | lim 10; } | show
 echo "  ※ 受け口があって検証が無ければ、誰でも通知を投げられる。02 の M を参照"
 echo "  ※ シークレット未設定のときに検証を飛ばしていないかは、目で読んで確かめる"
 

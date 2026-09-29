@@ -28,8 +28,10 @@ jobs:
       matrix:
         # macOS は評価者の標準の環境（bash 3.2、BSD の grep / sed）。Linux は GNU の道具と mawk
         os: [ubuntu-24.04, macos-15]
+        # 週 1 回の検査の検査は、変異を 4 つに分けて並べる（変異が 200 件を超え、1 回では時間の上限の 6 時間に近かった）。
+        # push などでは分担を作らない（0 は「自己監査を実行する」の意味）
+        shard: ${{ fromJSON(github.event_name == 'schedule' && '[1, 2, 3, 4]' || '[0]') }}
     runs-on: ${{ matrix.os }}
-    # 週 1 回の検査の検査は変異ごとに検査を実行するので数時間かかる（ホスト型のランナーの上限は 6 時間）
     timeout-minutes: ${{ github.event_name == 'schedule' && 330 || 45 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -91,9 +93,14 @@ jobs:
           if sed --version >/dev/null 2>&1; then echo 'GNU の sed が使われている'; exit 1; fi   # 「! コマンド」は set -e で止まらない
 
       - name: 自己監査（検査を含む）
-        if: github.event_name != 'schedule'
+        if: matrix.shard == 0
         run: ./tests/self-audit.sh
 
-      - name: 自己監査（検査の検査を含む）
-        if: github.event_name == 'schedule'
-        run: ./tests/self-audit.sh --full
+      - name: 検査の検査（分担 ${{ matrix.shard }}/4）
+        if: matrix.shard != 0
+        run: |
+          out="$(./tests/mutations.sh --shard "${{ matrix.shard }}/4" 2>&1)"; st=$?
+          printf '%s\n' "$out"
+          # 生きていない検査が 1 件でもあれば失敗にする
+          printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*m//g' | grep -E '生きていない 0( |$)' >/dev/null || exit 1
+          exit $st

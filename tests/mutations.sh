@@ -14,9 +14,20 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="$ROOT/skill"
-ONLY="${2:-}"; [[ "${1:-}" == "--only" ]] || ONLY=""
+# --only <名前の一部> で絞る。--shard K/N で、変異を N 個に分けた K 番目だけを実行する（CI で並べて実行するため。
+# 変異が 200 件を超え、1 回では CI の時間の上限に近かった）
+ONLY=""; SHARD_K=0; SHARD_N=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --only) ONLY="${2:-}"; shift 2 ;;
+    --shard) SHARD_K="${2%%/*}"; SHARD_N="${2##*/}"; shift 2
+             [[ "$SHARD_K" =~ ^[0-9]+$ && "$SHARD_N" =~ ^[0-9]+$ && $SHARD_K -ge 1 && $SHARD_K -le $SHARD_N ]] \
+               || { echo "--shard は K/N（1 ≤ K ≤ N）で指定する" >&2; exit 2; } ;;
+    *) echo "使い方: tests/mutations.sh [--only <名前の一部>] [--shard K/N]" >&2; exit 2 ;;
+  esac
+done
 
-PASS=0; FAIL=0; SKIP=0
+PASS=0; FAIL=0; SKIP=0; MIDX=0; OUTSHARD=0
 BACKUPS=()
 
 # 実行中は skill/ に欠陥が入っている。その間に build や配布の同期を走らせると、
@@ -57,6 +68,8 @@ mutate() {
   local name="$1" rel="$2" expect="$3" code="$4"
   local target="$SKILL/$rel" bak
   if [[ -n "$ONLY" && "$name" != *"$ONLY"* ]]; then SKIP=$((SKIP+1)); return; fi
+  MIDX=$((MIDX+1))
+  if [[ $SHARD_N -gt 0 && $(( (MIDX - 1) % SHARD_N )) -ne $((SHARD_K - 1)) ]]; then OUTSHARD=$((OUTSHARD+1)); return; fi
   bak="$(mktemp)"; cp -p "$target" "$bak"; BACKUPS+=("$bak::$target")
 
   # 置換を適用。当たらなければ失敗
@@ -92,7 +105,7 @@ printf '\n\033[1m検査の検査 — スキルに欠陥を入れて、対応す�
 mutate "存在しない参照先を書く" "SKILL.md" "参照先が実在する" \
   's = s.replace("## 参照ファイル", "## 参照ファイル\n\n`references/99-nonexistent.md` を読む。\n", 1)'
 # 実行権限は内容の置換ではないので、mutate を通さず直接扱う
-if [[ -z "$ONLY" || "実行権限" == *"$ONLY"* ]]; then
+if [[ ( -z "$ONLY" || "実行権限" == *"$ONLY"* ) && $SHARD_K -le 1 ]]; then
   chmod 644 "$SKILL/scripts/scan_secrets.sh"
   out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   chmod 755 "$SKILL/scripts/scan_secrets.sh"
@@ -666,6 +679,7 @@ else
 fi
 
 printf '\n\033[1m結果\033[0m  生きている検査 %d / 生きていない %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIP"
+[[ $SHARD_N -gt 0 ]] && printf '  ※ 分担 %d/%d。ほかの分担の変異 %d 件は、この回では実行していない\n' "$SHARD_K" "$SHARD_N" "$OUTSHARD"
 if [[ $FAIL -gt 0 ]]; then
   echo "  「生きていない」検査は、通っていても何も確かめていない。検査か題材を直す。"
   exit 1

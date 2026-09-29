@@ -16,7 +16,10 @@ bad=0
 # 案件語（tests/ngwords.local）と、実地の評価の題材を特定できる語（tests/eval/local/）。build/identifying-words.sh が作る
 # 語の一覧を作る道具は、フックと同じリポジトリの build/ にある（push するリポジトリの根からではなく、フックの場所から探す）
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-words="$(bash "$HOOK_DIR/../identifying-words.sh" "$ROOT" 2>/dev/null | paste -sd '|' -)"
+words_raw="$(bash "$HOOK_DIR/../identifying-words.sh" "$ROOT")"; wst=$?
+# 語の一覧に正規表現として読めない行があると、照合が 1 つも行われない。止める
+[[ $wst -ne 0 ]] && { echo "pre-push: 照合の語の一覧を作れなかった（上の知らせを見る）。止める" >&2; exit 1; }
+words="$(printf '%s\n' "$words_raw" | sed '/^$/d' | paste -sd '|' -)"
 # 語の一覧が空なら止める。以前は注意を出すだけで通していて、手元の非公開のファイルが消えた環境（作業ツリーを作り直した直後など）で
 # 照合をせずに公開しうる状態だった。意図して照合なしで push するときだけ、WSA_ALLOW_NO_WORDS=1 を付ける
 if [[ -z "$words" && -z "${WSA_ALLOW_NO_WORDS:-}" ]]; then

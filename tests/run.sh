@@ -42,9 +42,11 @@ contains() {
 }
 
 # 出力に含まれてはいけない文字列。誤検出していないかを見るのに使う。
+# 探す相手が空なら失敗にする。節の切り出しが見出しの変更で空になると、どの absent も緑のまま素通りしていた
 absent() {
   local label="$1" needle="$2" hay="$3"
-  if printf '%s' "$hay" | grep -F -- "$needle" >/dev/null; then ng "$label" "「${needle}」を誤って出している"
+  if [[ -z "$hay" ]]; then ng "$label" "探す相手が空（節を切り出せていない）"
+  elif printf '%s' "$hay" | grep -F -- "$needle" >/dev/null; then ng "$label" "「${needle}」を誤って出している"
   else ok "$label"; fi
 }
 
@@ -169,6 +171,10 @@ if [[ -f "$ROOT/tests/ngwords.local" ]]; then
 else
   skip "案件固有語: tests/ngwords.local が無い（過去の案件を示す語は検査されない）"
 fi
+# 正規表現として読めない行があると、照合の全体が誤りになり 2>/dev/null の陰で「一致なし」になる
+printf '' | grep -E -- "$NGWORDS" >/dev/null 2>&1; ngrc=$?
+if [[ $ngrc -eq 2 ]]; then ng "案件固有語の一覧が、正規表現として読める" "tests/ngwords.local に読めない行がある（語は出さない）"
+else ok "案件固有語の一覧が、正規表現として読める"; fi
 hit="$(grep -rniE "$NGWORDS" "$SKILL" 2>/dev/null || true)"
 if [[ -z "$hit" ]]; then ok "案件固有語が含まれない"
 else ng "案件固有語が含まれない" "$(printf '%s' "$hit" | head -3)"; fi
@@ -180,7 +186,11 @@ if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   # 検査の検査が混ぜる語（カナリア）。手元の語の一覧が無い環境でも、この検査が生きていることを確かめる。
   # 語そのものがどのファイルにも現れないよう、分けて組み立てる（書いてあると、このファイル自身に当たる）
   IDCANARY="$(printf '%s-%s' 'IDW' 'CANARY-7Q')"
-  IDW="$(printf '%s\n' "$IDCANARY"; bash "$ROOT/build/identifying-words.sh" "$ROOT" 2>/dev/null)"
+  IDW_RAW="$(bash "$ROOT/build/identifying-words.sh" "$ROOT" 2>/dev/null)"; idrc=$?
+  # 語の一覧に正規表現として読めない行があると、つないだ照合の全体が誤りになり、すべて「一致なし」になる
+  if [[ $idrc -eq 2 ]]; then ng "題材を特定できる語の一覧が、正規表現として読める" "build/identifying-words.sh が止まった（語は出さない。ngwords の行を直す）"
+  else ok "題材を特定できる語の一覧が、正規表現として読める"; fi
+  IDW="$(printf '%s\n' "$IDCANARY"; printf '%s\n' "$IDW_RAW")"
   IDW="$(printf '%s\n' "$IDW" | paste -sd '|' -)"
   if [[ -n "$IDW" ]]; then
     idhit="$(cd "$ROOT" && git ls-files -z | grep -zvE '^LICENSE$' | xargs -0 grep -liE "$IDW" 2>/dev/null || true)"
@@ -425,20 +435,26 @@ while IFS=: read -r fw mark guard danger; do
   fixture_cp "$SRC" "$TMP/repo-$fw"
   F="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/repo-$fw" 2>&1)"
   # 中核はこの 3 つ。ハンドラを見つけ、ガードを読み、ガードの無いものを名指しできること。
-  contains "audit_grep[$fw]: ハンドラを見つける"     "$mark"            "$F"
-  contains "audit_grep[$fw]: ガードを読み取る"       "$guard"           "$F"
+  # 出力全体ではなく、2 節の表（と、装飾子で書く枠組みは 2f 節）を切り出して見る。以前は出力のどこかに語があれば通り、
+  # 2 節の表が壊れても気づけなかった
+  F2="$(printf '%s\n' "$F" | LC_ALL=C awk 'index($0, "=== 2. ") == 1 || index($0, "=== 2f.") == 1 { f = 1; next } f && /^=== / { f = 0 } f')"
+  contains "audit_grep[$fw]: ハンドラを見つける"     "$mark"            "$F2"
+  contains "audit_grep[$fw]: ガードを読み取る"       "$guard"           "$F2"
   # ガードの無いハンドラを名指しできるか。1 ファイルに全部入っている題材では
   # 「定義 N / ガード M」の差で示されるため、そちらを見る。
   # 単一の入口で自前にルーティングする構成は、ハンドラの数を機械的に数えられない。
   # 免除する代わりに、そのことを資料（02 の A-1）に書いてある。
+  # 定義とガードの併記は、定義の数がガードの数より多いときだけ「ガードの無いものを示した」と数える
   if [[ "$fw" == "cloudflare-workers" ]]; then
-    printf '  \033[33m-\033[0m audit_grep[%s]: 単一の入口のため数を数えない（設計どおり）\n' "$fw"
-  elif printf '%s' "$F" | grep -F "← ガード検出なし" >/dev/null; then
+    # 単一の入口の構成は、2i 節が分岐ごとに並べ、認可の語の無い分岐に ★ を付ける
+    F2I="$(printf '%s\n' "$F" | LC_ALL=C awk 'index($0, "=== 2i.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+    contains "audit_grep[$fw]: 単一の入口の分岐のうち、認可の無いものに ★ を付ける" "★ " "$F2I"
+  elif printf '%s\n' "$F2" | grep -F "← ガード検出なし" >/dev/null; then
     ok "audit_grep[$fw]: ガードの無いハンドラを名指しする"
-  elif printf '%s' "$F" | grep -E '\(定義 [0-9]+ / ガード [0-9]+\)' >/dev/null; then
+  elif printf '%s\n' "$F2" | LC_ALL=C awk 'match($0, /\(定義 [0-9]+ \/ ガード [0-9]+\)/) { t = substr($0, RSTART, RLENGTH); gsub(/[^0-9 ]/, "", t); split(t, a, " "); if (a[1] > a[2]) f = 1 } END { exit !f }'; then
     ok "audit_grep[$fw]: 定義数とガード数の差で示す"
   else
-    ng "audit_grep[$fw]: ガードの無いハンドラを示す" "空欄も定義／ガードの併記も出ていない"
+    ng "audit_grep[$fw]: ガードの無いハンドラを示す" "2 節に、空欄も、ガードより多い定義も出ていない"
   fi
   [[ -n "$danger" ]] && contains "audit_grep[$fw]: 危険な書き方を検出" "$danger" "$F"
 
@@ -481,6 +497,11 @@ if [[ -d "$ROOT/tests/fixtures/repo-realistic" ]]; then
   else ng "audit_grep[realistic]: Server Action のガードなしを関数単位で示す" "clearCart が空欄と出ない"; fi
   # export していない内部関数は入口ではないので出さない
   absent "audit_grep[realistic]: 内部関数を入口に数えない" "recalc" "$RE"
+  # README の「仕込んである問題」のうち、下拵えで拾えるもの（拾えないものは題材の README に書いてある）
+  contains "audit_grep[realistic]: ログインだけ見て持ち主を見ない取得に ★（IDOR）" "[2m.] ★ app/api/orders/[id]/route.ts" "$RE"
+  contains "audit_grep[realistic]: 受け取ったものを括弧の直後に更新へ渡す形を並べる" "members/[memberId]/route.ts:6:" \
+           "$(printf '%s\n' "$RE" | LC_ALL=C awk 'index($0, "=== 2g.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+  contains "audit_grep[realistic]: 秘密が未設定のとき検証を飛ばす Webhook に ★" "[11.] ★ app/api/webhooks/mailer/route.ts" "$RE"
   # ユーティリティをハンドラとして数えないこと（偽陽性）
   if printf '%s' "$RE" | sed -n '/=== 2\. /,/=== 2b/p' | grep -F "lib/db.ts" >/dev/null; then
     ng "audit_grep[realistic]: ユーティリティをハンドラに数えない" "lib/db.ts が一覧に出ている"
@@ -2393,18 +2414,22 @@ else ng "eval: run-eval.sh を実行の前に最後まで読み切る" "全体�
 
 # 版の比較（compare.py）。版を上げてよいかの判定に使うので、劣後を見逃さないか・足りない回数で「劣後なし」と言わないかを確かめる。
 # 架空の題材 t1 で、旧 9.9.0 と新 9.9.1 を比べる。コミットは git で解けない語にして、版の名前でまとめさせる
-cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル] [新の回ごとのモデル（空白区切り）]
+cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル] [新の回ごとのモデル（空白区切り）] [新の答えの数] [未コミットの回を足す]
   local d="$TMP/eval-cmp-$1"; mkdir -p "$d"
-  python3 - "$d" "$2" "$3" "$4" "${5:-m}" "${6:-}" <<'PY'
+  python3 - "$d" "$2" "$3" "$4" "${5:-m}" "${6:-}" "${7:-19}" "${8:-}" <<'PY'
 import sys
 d, found, viol, xfound, om = sys.argv[1], sys.argv[2].split(), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
 nm = sys.argv[6].split() or ['m'] * len(found)
+ninr, dirty = sys.argv[7], sys.argv[8]
 H = ['日付', 'スキルの版', 'スキルのコミット', '題材', '題材のコミット', 'モデル', '見つけた', 'うち行で指した', '範囲内', '保留', '見誤り',
      '範囲が広い', '見落とし', '一覧外', '違反', '費用（米ドル）', '分', '入力トークン', 'キャッシュ読みトークン', '出力トークン']
 hist, items = ['\t'.join(H)], ['\t'.join(['日付', 'スキルの版', 'スキルのコミット', '題材', '実行', '項目', '範囲', '状態', 'モデル'])]
 runs = [('9.9.0', 'zzold01', f, 0, 1, om) for f in ('10', '12')] + [('9.9.1', 'zznew01', f, viol, int(i < xfound), nm[i]) for i, f in enumerate(found)]
+if dirty:
+    runs.append(('9.9.1', 'zznew01+未コミット', '12', 0, 1, 'm'))
 for n, (ver, c, f, v, x, m) in enumerate(runs):
-    hist.append('\t'.join(['2026-01-01', ver, c, 't1', 'x', m, f, f, '19', '0', '0', '0', '0', '5', str(v), '2', '10', '1', '1', '1']))
+    inr = ninr if ver == '9.9.1' else '19'
+    hist.append('\t'.join(['2026-01-01', ver, c, 't1', 'x', m, f, f, inr, '0', '0', '0', '0', '5', str(v), '2', '10', '1', '1', '1']))
     items.append('\t'.join(['2026-01-01', ver, c, 't1', f'run{n}', 'X', 'in', '見つけた' if x else '見落とし', m]))
 open(d + '/history.tsv', 'w').write('\n'.join(hist) + '\n'); open(d + '/items.tsv', 'w').write('\n'.join(items) + '\n')
 PY
@@ -2432,6 +2457,14 @@ if [[ "$CMP_RC" -eq 3 ]] && grep -qF '版の差とモデルの差が混ざる' <
 else ng "eval[比較]: 旧が別のモデルの回しか無ければ、劣後の判定に使わず、劣後なしとも言わない" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 # 新に、元のモデルだけの回（m）と、途中で切り替えた回（m→f）が混ざるとき。条件ごとに分けて比べ、m の回で判定する
 # （混ぜると、切り替えた回の少ない数で平均が下がり、劣後と誤る）
+# 答えの数（分母）が旧と新で違えば、見つけた数を比べず、答えの一覧を揃えて当て直させる
+cmp_case den "11 12" 0 2 m "" 20 || true
+if [[ "$CMP_RC" -eq 3 ]] && grep -qF '答えの数が旧と新で違う' <<<"$CMP_OUT" && ! grep -qF '劣後なし' <<<"$CMP_OUT"; then
+  ok "eval[比較]: 答えの数が旧と新で違えば判定しない"
+else ng "eval[比較]: 答えの数が旧と新で違えば判定しない" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+# 未コミットの skill/ で当てた回は比べず、外したことを出す
+cmp_case dirty "11 12" 0 2 m "" 19 1 || true
+contains "eval[比較]: 未コミットの回を外したことを出す" "未コミットの skill/ で当てた回が 1 回あり" "$CMP_OUT"
 cmp_case cond "11 12 3" 0 2 m "m m m→f" || true
 if [[ "$CMP_RC" -eq 0 ]] && grep -qF '［m→f］' <<<"$CMP_OUT" && grep -qF '劣後なし' <<<"$CMP_OUT"; then
   ok "eval[比較]: 途中で切り替えた回を、元のモデルだけの回と分けて比べる"
@@ -2450,6 +2483,13 @@ fi
 # ==========================================================================
 printf '\n\033[1m結果\033[0m  成功 %d / 失敗 %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIPPED"
 [[ $LOCAL_PASS -gt 0 ]] && printf '  ※ ほかに手元の題材の検査が成功 %d 件（公開の件数には入れていない）\n' "$LOCAL_PASS"
-[[ $SKIPPED -gt 0 ]] && printf '  ※ 省略した検査がある。道具（node・playwright・dig・openpyxl）を入れて全件を回す\n'
-if [[ $FAIL -gt 0 ]]; then exit 1; fi
+# 省略の数は、道具が無くて飛ばした塊の数で、塊の中の検査の数ではない（dig が無いと 40 件ほど、playwright が無いと 30 件ほどが実行されない）
+[[ $SKIPPED -gt 0 ]] && printf '  ※ 省略した検査の塊がある（数は塊の数で、中の検査はもっと多い）。道具（node・playwright・dig・openpyxl・rg）を入れて全件を実行する\n'
+if [[ $FAIL -gt 0 ]]; then
+  # 失敗を調べるために写しは残すが、エージェントの設定（題材の .claude/・.mcp.json など。許可を広げる設定を含む）は消す。
+  # 残すと、tests/tmp の下を作業ディレクトリにしたときに読み込まれうる
+  find "$TMP" \( -name .claude -o -name .cursor -o -name .gemini \) -type d -prune -exec rm -rf {} + 2>/dev/null
+  find "$TMP" \( -name .mcp.json -o -name CLAUDE.md -o -name AGENTS.md -o -name GEMINI.md -o -name .cursorrules \) -type f -delete 2>/dev/null
+  exit 1
+fi
 rm -rf "$TMP"

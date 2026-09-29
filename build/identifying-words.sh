@@ -13,7 +13,9 @@ set -uo pipefail
 ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOCAL="$ROOT/tests/eval/local"
 
-python3 - "$ROOT" "$LOCAL" <<'PY'
+# 語は grep -E の選択肢としてつなげて使う。正規表現として読めない行が 1 行でもあると、つないだ全体が誤りになり、
+# 呼び出し側の 2>/dev/null の陰で照合が 1 つも行われない（すべて「一致なし」になる）。先に 1 行ずつ確かめて、読めなければ止める
+words="$(python3 - "$ROOT" "$LOCAL" <<'PY'
 import json, pathlib, re, sys
 root, local = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 out = []
@@ -63,3 +65,16 @@ for w in out:
         seen.add(w)
         print(w)
 PY
+)"
+bad=0
+while IFS= read -r w; do
+  [[ -z "$w" ]] && continue
+  printf '' | grep -E -- "$w" >/dev/null 2>&1; [[ $? -eq 2 ]] && bad=$((bad + 1))
+done <<<"$words"
+if [[ $bad -gt 0 ]]; then
+  # 語そのものは出さない（案件や題材を特定する情報なので）
+  echo "identifying-words: 正規表現として読めない行が ${bad} 行ある（tests/ngwords.local か tests/eval/local/ngwords を直す）" >&2
+  exit 2
+fi
+[[ -n "$words" ]] && printf '%s\n' "$words"
+exit 0
