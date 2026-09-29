@@ -49,7 +49,7 @@ if [[ $FULL -eq 1 ]]; then
   if printf '%s' "$mres" | grep -E '生きていない 0' >/dev/null; then ok "tests/mutations.sh: $mres"
   else ng "tests/mutations.sh: $mres" "$(printf '%s' "$mout" | grep -E '✗|\?' | head -5 | tr '\n' ' ')"; fi
 else
-  warn "tests/mutations.sh は省略（--full で実行。1 回で 20 時間ほどかかる。CI の週 1 回は 4 つに分けて並べている）" \
+  warn "tests/mutations.sh は省略（--full で実行。1 回で 20 時間ほどかかる。CI の週 1 回は 8 つに分けて並べている）" \
        "検査が「通る」ことと「壊れたときに失敗する」ことは別。配布前には一度は実行する"
 fi
 
