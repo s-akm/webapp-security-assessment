@@ -172,7 +172,8 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 ### 検査の検査
 
 ```bash
-./tests/mutations.sh            # 変異ごとに検査を実行するので 2〜3 時間かかる。--only <名前の一部> で絞れる
+./tests/mutations.sh            # 変異ごとに検査を実行するので、1 回で 20 時間ほどかかる。--only <名前の一部> で絞れる
+./tests/mutations.sh --shard 1/4   # 4 つに分けた 1 番目だけ。写しの作業ツリーで並べて実行すると速い（CI の週 1 回もこの形）
 ```
 
 **検査は「通ること」しか示さない。** 通る検査が、壊れたときに失敗するかどうかは別の話で、
