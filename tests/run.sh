@@ -98,6 +98,12 @@ if grep -qF '攻撃の手順と、そのまま動く攻撃の文字列（ペイ�
   ok "成果物に攻撃の手順と動く攻撃の文字列を書かないと決めている"
 else ng "成果物に攻撃の手順と動く攻撃の文字列を書かないと決めている" "SKILL.md の 3 から決まりが消えている"; fi
 
+# 複数のハンドラにまたがる指摘の場所は、ハンドラごとに分けて並べる（実地の評価で、コントローラー全体を 1 つの範囲で示し、
+# どのハンドラを直せばよいかが読めない指摘があった）
+if grep -qF '複数のハンドラにまたがる指摘は、1 つの範囲にまとめず、ハンドラごとに場所を分けて並べる' "$SKILL/references/04-findings-register.md"; then
+  ok "複数のハンドラにまたがる指摘の場所を、ハンドラごとに分けると決めている"
+else ng "複数のハンドラにまたがる指摘の場所を、ハンドラごとに分けると決めている" "04 の「台帳の列」の該当箇所から決まりが消えている"; fi
+
 # 題材の依存の定義ファイルは .fixture を付けて置く（fixture_cp の説明を参照）
 raw="$(git -C "$ROOT" ls-files tests/fixtures 2>/dev/null | grep -E '(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Gemfile|Gemfile\.lock|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|pom\.xml|Package\.swift)$' || true)"
 if [[ -z "$raw" ]]; then ok "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）"

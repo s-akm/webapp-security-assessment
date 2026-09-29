@@ -467,6 +467,8 @@ mutate "台帳: 観点の一覧の空欄を数えない" "scripts/make_register.
   's = s.replace("checks.append((\"観点の一覧で、結果が空欄の行\"", "checks.append((\"観点の一覧で、結果の欄\"", 1)'
 mutate "台帳: 観点の一覧から節を落とす" "scripts/make_register.py" "02 と 07 の節の見出しをすべて持つ" \
   's = s.replace("\"07 5. SSRF\",", "", 1)'
+mutate "04: 複数のハンドラをまとめた範囲を許す" "references/04-findings-register.md" "ハンドラごとに分けると決めている" \
+  's = s.replace("複数のハンドラにまたがる指摘は、1 つの範囲にまとめず、ハンドラごとに場所を分けて並べる", "複数のハンドラにまたがる指摘は、1 つの範囲にまとめてよい", 1)'
 mutate "scan_secrets: 記号を含む値を見ない" "scripts/scan_secrets.sh" "記号を含む値の SECRET_KEY" \
   's = s.replace("([bruf]?[\"\x27\"\x27\"\x27`][^\"\x27\"\x27\"\x27`<…[:space:]]{16,}|", "([bruf]?[\"\x27\"\x27\"\x27`][A-Za-z0-9_/+=-]{16,}|", 1)'
 mutate "scan_secrets: 差し込みの書き方を値とみなす" "scripts/scan_secrets.sh" "誤検出しない" \
