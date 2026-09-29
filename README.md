@@ -256,7 +256,8 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 版は、変更のたびではなく、**登録したすべての題材で実地の評価を行い、前の版に劣後していないと確かめてから**上げる。
 1. 題材ごとに 1 回、今の HEAD を当てる（`./tests/eval/run-eval.sh <題材> --record`。[tests/eval/README.md](tests/eval/README.md)）
 2. `./tests/eval/compare.py` が「劣後なし」で終わること（終了コード 0）。前の版のタグと、skill/ の中身で比べる。
-   「要再確認」の題材は、もう 1 回当ててから判定する。違反が出た回は、原因を調べて CHANGELOG に残す
+   「要再確認」の題材は、もう 1 回当ててから判定する。違反が出た回は、原因を調べて CHANGELOG に残す。
+   途中で別のモデルに切り替わった回しか無く「同じ条件の旧が無い」題材は、前の版を `--skill-ref` で当てて同じ条件の基準を作る
 3. `./tests/self-audit.sh` に赤が無いこと
 4. CHANGELOG の「未リリース」を版の見出しに変え、評価の結果（題材は構成だけで書く）を添える
 5. `VERSION` を上げて `./build/build.sh`、タグを付けて push する
