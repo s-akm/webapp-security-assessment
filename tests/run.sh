@@ -2081,6 +2081,14 @@ contains "audit_grep[19]: Prisma のマイグレーションの表の RLS も見
 contains "audit_grep[19]: 書き込みの条件が true のポリシーに ★"            '★ create policy "w"'         "$R19"
 absent   "audit_grep[19]: 読み取りの条件が true のポリシーには ★ を付けない" '★ create policy "r"'       "$R19"
 contains "audit_grep[21]: 有無を持たないロックファイルでは判定できないと書く" "判定できない"             "$R21"
+# 実在の OSS で見つけた誤検出（試験・模擬のパス、離れた資格情報の許可、設定の読み出しの :id、TSX の {!!…}、renderToStaticMarkup）
+R9="$(sec '9. ')"
+absent   "audit_grep[2k]: 試験のファイルの CORS を並べない"                  "src/test/cors.test.js"       "$R2K"
+contains "audit_grep[2k]: 資格情報の許可が離れていれば ★ を付けずに並べる"  "    src/cors-split.js:1:"      "$R2K"
+absent   "audit_grep[2m]: 模擬のサーバーを並べない"                          "src/mock/server.js"          "$R2M"
+absent   "audit_grep[2m]: 設定の読み出しの :id と配列の添字を ID の受け取りと取り違えない" "src/cfg.js"      "$R2M"
+absent   "audit_grep[3]: TSX の {!!…} と renderToStaticMarkup を生の出力と取り違えない" "src/toggle.tsx"   "$R3"
+contains "audit_grep[9]: LINE Tag を計測タグに数える"                        "web/line.html:1:"            "$R9"
 # 途中で止まったら知らせる（C-37）
 AGX="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/no-such-dir-$$" 2>&1)"
 contains "audit_grep[中断]: 途中で止まったら、出力が途中までであることを出す" "=== 中断 ==="          "$AGX"

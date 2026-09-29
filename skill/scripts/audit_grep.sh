@@ -408,7 +408,7 @@ hr "0. 構成の判定（どの資料が要るかを決める）"
 # エラー監視（Sentry）とチャット（Intercom）も、利用者の端末から第三者へ送る点は同じなので含める
 # （電気通信事業法の外部送信規律は目的を問わない。08 の 1 節）。短い関数名（ytag・twq・ttq）は、
 # keytag( のような別の語に一致しないよう前に語の境界を置き、汎用の CDN（s.yimg.jp）はタグの配信パスまで見る。
-TAGPAT='googletagmanager|google-analytics|analytics\.google\.com|gtag\(|adsbygoogle|pagead2|googlesyndication|googleadservices|doubleclick|connect\.facebook|fbq\(|clarity\.ms|@microsoft/clarity|hotjar|analytics\.tiktok|(^|[^A-Za-z0-9_$.])ttq\.|snap\.licdn|_linkedin_partner_id|ads-twitter|(^|[^A-Za-z0-9_$.])twq\(|s\.yimg\.jp/images/listing/tool/cv/ytag\.js|(^|[^A-Za-z0-9_$.])ytag\(|yjads|widget\.intercom\.io|intercomSettings|@intercom/|(^|[^A-Za-z0-9_$.])Intercom\(|@sentry/|sentry\.io|sentry-cdn\.com|Sentry\.init|logrocket|LogRocket|fullstory|FullStory|posthog|datadogRum|browser-rum|mouseflow|_mfq|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts'
+TAGPAT='googletagmanager|google-analytics|analytics\.google\.com|gtag\(|adsbygoogle|pagead2|googlesyndication|googleadservices|doubleclick|connect\.facebook|fbq\(|clarity\.ms|@microsoft/clarity|hotjar|analytics\.tiktok|(^|[^A-Za-z0-9_$.])ttq\.|snap\.licdn|_linkedin_partner_id|ads-twitter|(^|[^A-Za-z0-9_$.])twq\(|s\.yimg\.jp/images/listing/tool/cv/ytag\.js|(^|[^A-Za-z0-9_$.])ytag\(|yjads|widget\.intercom\.io|intercomSettings|@intercom/|(^|[^A-Za-z0-9_$.])Intercom\(|@sentry/|sentry\.io|sentry-cdn\.com|Sentry\.init|logrocket|LogRocket|fullstory|FullStory|posthog|datadogRum|browser-rum|mouseflow|_mfq|GoogleTagManager|GoogleAnalytics|@next/third-parties|@vercel/analytics|SpeedInsights|react-ga|vue-gtag|nuxt/scripts|bat\.bing\.com|px\.ads\.linkedin|tr\.line\.me|d\.line-scdn\.net|karte\.io|yjtag|bam\.nr-data\.net|js-agent\.newrelic|mixpanel|@amplitude/|cdn\.amplitude|amplitude\.com|cdn\.segment\.com|@segment/analytics|hs-scripts\.com|hs-analytics'
 # タグを探すファイル。画面の部品と、サーバー側のテンプレート（EJS・Handlebars・Pug・Nunjucks・Razor・Jinja など）
 TAG_INCL=(--include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' --include='*.mjs' --include='*.cjs'
   --include='*.vue' --include='*.svelte' --include='*.html' --include='*.htm' --include='*.astro' --include='*.php'
@@ -1130,6 +1130,9 @@ echo "    完全一致の許可リストに入っているかを確かめてい�
 echo "    枠組みの既定で外部への転送を拒むもの（Rails 7 以降の raise_on_open_redirects など）は、設定が有効かも確かめる"
 
 hr "2k. CSRF と CORS（07 の 2・3 節）"
+# 試験・模擬のサーバー・e2e・文書の中の書き方は並べない（実在の OSS で、試験のコードの CORS の設定が ★ に並んだ）
+TESTPATH='(^|/)(test|tests|__tests__|spec|specs|e2e|mocks?|__mocks__|mirage|fixtures?|stories|docs?|examples?)/|\.(test|spec|stories|e2e)\.[a-z]+:'
+
 # どちらも枠組みの設定で決まる。既定で守る枠組み（Rails・Django・Laravel・Spring Security・ASP.NET）は「外している箇所」を、
 # 既定で守らない枠組み（Express・Fastify・Hono・Flask・FastAPI・Go）は「対策があるか」を見る。書き方の表で拾う
 CSRF_OFF='csrf_exempt|skip_forgery_protection|skip_before_action[[:space:]]+:verify_authenticity_token|protect_from_forgery[[:space:]]+with:[[:space:]]*:null_session|validateCsrfTokens\([[:space:]]*except|csrf\(\)\.disable\(\)|csrf\([^)]*disable|WTF_CSRF_ENABLED[[:space:]]*=[[:space:]]*False|IgnoreAntiforgeryToken|DisableAntiforgery|ignoringRequestMatchers|checkOrigin[[:space:]]*:[[:space:]]*false|csrf[[:space:]]*:[[:space:]]*false'
@@ -1137,7 +1140,7 @@ CSRF_LIB='csurf|csrf-csrf|lusca|@fastify/csrf|koa-csrf|hono/csrf|flask_wtf|CSRFP
 COOKIE_SESS='express-session|cookie-session|cookieParser|SessionMiddleware|flask_login|gorilla/sessions|res\.cookie\(|cookies\(\)\.set\(|setCookie\(|set_cookie\(|http\.SetCookie'
 echo "  --- CSRF の対策を外している（既定の対策の除外・無効化）---"
 { grep -rnE "${EXA[@]}" "$CSRF_OFF" "${CODE_INCL[@]}" --include='*.cs' --include='*.config.*' . 2>/dev/null | sed 's|^\./||' \
-    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | pfx "  ★ " | lim 20; } | show
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE "$TESTPATH" | pfx "  ★ " | lim 20; } | show
 n_sess="$(grep -rlE "${EXA[@]}" "$COOKIE_SESS" "${CODE_INCL[@]}" . 2>/dev/null | wc -l | tr -d ' ')"
 n_csrf="$(grep -rlE "${EXA[@]}" "$CSRF_LIB" "${CODE_INCL[@]}" . 2>/dev/null | wc -l | tr -d ' ')"
 # 既定で CSRF を守る枠組みの印
@@ -1153,9 +1156,10 @@ echo "  --- CORS: どのオリジンからでも読める設定（★ は資格�
 CORS_ANY='Access-Control-Allow-Origin["'"'"']?[[:space:]]*[,:=][[:space:]]*["'"'"']\*|origin[[:space:]]*:[[:space:]]*(true|["'"'"']\*["'"'"'])|cors\(\)|CORS\([[:space:]]*app[[:space:]]*\)|CORS_ALLOW_ALL_ORIGINS[[:space:]]*=[[:space:]]*True|CORS_ORIGIN_ALLOW_ALL[[:space:]]*=[[:space:]]*True|allow_origins[[:space:]]*=[[:space:]]*\[[[:space:]]*["'"'"']\*|AllowAnyOrigin\(\)|allowedOrigins\([[:space:]]*["'"'"']\*|@CrossOrigin([[:space:]]*$|\([[:space:]]*\)|\([^)]*["'"'"']\*)|origins[[:space:]]+["'"'"']\*|allowed_origins["'"'"']?[[:space:]]*=>[[:space:]]*\[[[:space:]]*["'"'"']\*|SetIsOriginAllowed\([^)]*=>[[:space:]]*true|Allow-Origin[^;]*(req|request)\.(headers?|get)|callback\([[:space:]]*null[[:space:]]*,[[:space:]]*true[[:space:]]*\)'
 CORS_CRED='credentials[[:space:]]*:[[:space:]]*true|allow_credentials[[:space:]]*=[[:space:]]*True|CORS_ALLOW_CREDENTIALS[[:space:]]*=[[:space:]]*True|AllowCredentials\(\)|Allow-Credentials|supports_credentials|allowCredentials|credentials[[:space:]]+true'
 { grep -rnE "${EXA[@]}" "$CORS_ANY" "${CODE_INCL[@]}" --include='*.json' --include='*.php' . 2>/dev/null | sed 's|^\./||' \
-    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(package|package-lock|tsconfig)\.json:' \
-    | while IFS= read -r l; do f="${l%%:*}"
-        if grep -qE "$CORS_CRED" "$f" 2>/dev/null; then printf '  ★ %s\n' "$l"; else printf '    %s\n' "$l"; fi
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(package|package-lock|tsconfig)\.json:' | grep -vE "$TESTPATH" \
+    | while IFS= read -r l; do f="${l%%:*}"; r="${l#*:}"; n="${r%%:*}"
+        # 資格情報の許可は、同じ設定の近く（その行から 3 行先まで）にあるときだけ組み合わせとみなす
+        if grep -qE "$CORS_CRED" <<<"$(sed -n "${n},$((n + 3))p" "$f" 2>/dev/null)"; then printf '  ★ %s\n' "$l"; else printf '    %s\n' "$l"; fi
       done | lim 20; } | show
 echo "  ※ 公開の API（認証の無い読み取り）なら、どのオリジンから読めても問題ない。資格情報（Cookie）を送らせる設定と"
 echo "    組み合わさると、別のサイトから利用者の権限で読める（07 の 3 節）。vercel.json・next.config の headers() も確かめる"
@@ -1183,10 +1187,10 @@ echo "  ※ 6 桁の番号は 100 万通り。1 つのコードへの試行に�
 hr "2m. ID を受け取るのに、持ち主を照らし合わせていないハンドラ（候補。02 の A-3）"
 # リソースの ID をリクエストから読むハンドラのうち、同じファイルに「持ち主」を表す語（利用者の ID・所有者・テナント）が
 # 1 つも無いものを ★ で出す。ファイル単位の目安なので、★ の無いファイルも、照合がその ID に掛かっているかを読む
-ID_IN='req\.params\.[A-Za-z_]*([iI]d|Id)\b|req\.params\[|params\[:[a-z_]*id\]|params\.[a-z_]*[iI]d\b|request\.args\.get\(["'"'"'][a-z_]*id|/\{[a-z_]*[iI]d\}|:id([/"'"'"'`]|$)|\[id\]|@PathVariable|@Param\(["'"'"'][a-z_]*[iI]d|kwargs\[["'"'"'](pk|id)|<(int:)?(pk|id)>|c\.Param\(["'"'"'][a-z_]*id|PathValue\(["'"'"'][a-z_]*id|route_param|\[FromRoute\]'
+ID_IN='req\.params\.[A-Za-z_]*([iI]d|Id)\b|req\.params\[|params\[:[a-z_]*id\]|params\.[a-z_]*[iI]d\b|request\.args\.get\(["'"'"'][a-z_]*id|/\{[a-z_]*[iI]d\}|/:[a-z_]*[iI]d([/"'"'"'`?]|$)|@PathVariable|@Param\(["'"'"'][a-z_]*[iI]d|kwargs\[["'"'"'](pk|id)|<(int:)?(pk|id)>|c\.Param\(["'"'"'][a-z_]*id|PathValue\(["'"'"'][a-z_]*id|route_param|\[FromRoute\]'
 OWNER='user_?id|userId|UserId|owner|author|created_?by|createdBy|auth\.uid|currentUser|current_user|req\.user|request\.user|ctx\.state\.user|session\.user|getUser|get_current_user|User\.Identity|principal|tenant|org_?id|orgId|workspace|account_?id|accountId|policy|authorize|can\?|Gate::|abilit'
 { tr '\n' '\0' < "$HF_LIST" | xargs -0 grep -nE "$ID_IN" -- /dev/null 2>/dev/null \
-    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | awk -F: '!seen[$1]++' | while IFS= read -r l; do f="${l%%:*}"
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE "$TESTPATH" | awk -F: '!seen[$1]++' | while IFS= read -r l; do f="${l%%:*}"
         if grep -qE "$OWNER" "$f" 2>/dev/null; then printf '    %s\n' "$l"; else printf '  ★ %s\n' "$l"; fi
       done | cut -c1-200 | lim 25; } | show
 echo "  ※ ★ は、ID で行を取り出しているのに、持ち主の語がファイルに無い。他人の ID に変えて取れるかを 1 本ずつ読む"
@@ -1261,7 +1265,8 @@ UNESC='dangerouslySetInnerHTML|(^|[^A-Za-z0-9_-])v-html[[:space:]]*=|\[innerHTML
 UNESC="$UNESC"'|bypassSecurityTrust(Html|Script|Url|ResourceUrl)[[:space:]]*\(|\{@html[[:space:]]|@Html\.Raw[[:space:]]*\(|\|[[:space:]]*(safe|raw)([^A-Za-z0-9_]|$)'
 # 文字列の HTML を応答にそのまま返す形（res.send('<h1>' + 値)）と、jQuery の HTML を差し込む関数
 UNESC="$UNESC"'|res\.(send|end|write)[[:space:]]*\([[:space:]]*["'"'"'`][[:space:]]*<|\)\.(html|append|prepend|after|before|replaceWith)[[:space:]]*\([[:space:]]*[^)[:space:]]'
-UNESC="$UNESC"'|\.html_safe|<%=[[:space:]]*raw[[:space:](]|(^|[^.:A-Za-z0-9_])raw[[:space:]]*\(|<%-|\{!!|th:utext|mark_safe[[:space:]]*\(|Markup[[:space:]]*\(|SafeString[[:space:]]*\(|template\.HTML[[:space:]]*\(|\{\{\{|\{\{&'
+# Blade の生の出力は {!! … !!} の対で見る（TSX の {!!flag} を取り違えていた）。Markup( は renderToStaticMarkup( と取り違えないよう左に切れ目を置く
+UNESC="$UNESC"'|\.html_safe|<%=[[:space:]]*raw[[:space:](]|(^|[^.:A-Za-z0-9_])raw[[:space:]]*\(|<%-|\{!![^}]*!!\}|th:utext|mark_safe[[:space:]]*\(|(^|[^A-Za-z0-9_])(Markup|SafeString)[[:space:]]*\(|template\.HTML[[:space:]]*\(|\{\{\{|\{\{&'
 {
   grep -rnE "${EXA[@]}" --exclude='*.lock' --exclude='*-lock.json' --exclude='*.lockb' "$UNESC" . 2>/dev/null | sed 's|^\./||' \
     | LC_ALL=C awk '
@@ -1305,12 +1310,12 @@ UNESC="$UNESC"'|\.html_safe|<%=[[:space:]]*raw[[:space:](]|(^|[^.:A-Za-z0-9_])ra
         # jQuery: .html( は値なら数える。.append( などは要素も渡せるので、HTML の文字列を連結して渡す形だけを数える
         if (c ~ /\)\.html[ \t]*\(/ && !lit(after("\\)\\.html[ \t]*\\("))) v = 1
         if (c ~ /\)\.(append|prepend|after|before|replaceWith)[ \t]*\([ \t]*["\047`][^"\047`]*</) { a = after("\\)\\.(append|prepend|after|before|replaceWith)[ \t]*\\("); if (!lit(a)) v = 1 }
-        if (c ~ /(bypassSecurityTrust[A-Za-z]+|@Html\.Raw|mark_safe|Markup|SafeString|template\.HTML)[ \t]*\(/ \
+        if (c ~ /(bypassSecurityTrust[A-Za-z]+|@Html\.Raw|mark_safe|(^|[^A-Za-z0-9_])Markup|(^|[^A-Za-z0-9_])SafeString|template\.HTML)[ \t]*\(/ \
             && !lit(after("(bypassSecurityTrust[A-Za-z]+|@Html\\.Raw|mark_safe|Markup|SafeString|template\\.HTML)[ \t]*\\("))) v = 1
         if (c ~ /<%=[ \t]*raw[ \t(]/ && !lit(after("<%=[ \t]*raw[ \t]*"))) v = 1
         if (c ~ /(^|[^.:A-Za-z0-9_])raw[ \t]*\(/ && c !~ /<%=[ \t]*raw/ && !lit(after("(^|[^.:A-Za-z0-9_])raw[ \t]*\\("))) v = 1
         # テンプレートの式そのものを生で出す書き方は、固定の文字列を書くことがまず無いので、すべて値を流し込む側に数える
-        if (c ~ /\{@html[ \t]|\|[ \t]*(safe|raw)([^A-Za-z0-9_]|$)|\{!!|th:utext|\{\{\{|\{\{&/) v = 1
+        if (c ~ /\{@html[ \t]|\|[ \t]*(safe|raw)([^A-Za-z0-9_]|$)|\{!![^}]*!!\}|th:utext|\{\{\{|\{\{&/) v = 1
         # <%- は EJS では生の出力、ERB では前の空白を詰める記号。ERB のファイルでは数えない
         if (c ~ /<%-/ && f !~ /\.(erb|rhtml)$/) v = 1
         # ERB で <%- にだけ一致した行（出力ではない）は出さない
@@ -1320,7 +1325,8 @@ UNESC="$UNESC"'|\.html_safe|<%=[[:space:]]*raw[[:space:](]|(^|[^.:A-Za-z0-9_])ra
         # ファイルは、アプリのコードの後に並べる。同梱のライブラリの行が枠を使い切り、テンプレートの本物の候補が
         # 一覧から消えていた（実測。jQuery のプラグインの 20 行が先に並んだ）
         if (++nf[f] > 3) { more[f]++; next }
-        if (f ~ /(^|\/)(assets|static|public|lib|libs|javascripts|js)\//) star2[++ns2] = "  ★ " $0; else star[++ns] = "  ★ " $0
+        # 試験・文書のファイルも後に並べる
+        if (f ~ /(^|\/)(assets|static|public|lib|libs|javascripts|js|test|tests|__tests__|spec|e2e|docs?|examples?|stories)\// || f ~ /\.(test|spec|stories)\.[a-z]+$|\.mdx?$/) star2[++ns2] = "  ★ " $0; else star[++ns] = "  ★ " $0
       }
       END {
         for (i = 1; i <= ns2; i++) star[++ns] = star2[i]
