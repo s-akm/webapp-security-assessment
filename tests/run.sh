@@ -2064,6 +2064,9 @@ if printf '%s\n' "$R2" | grep -E '^  src/app\.js +← ガード検出なし +\(�
 else ng "audit_grep[2 節]: コメントの unauthenticated をガードに数えない" "$(printf '%s\n' "$R2" | grep 'src/app.js')"; fi
 if printf '%s\n' "$R2" | grep -E '^  py/app\.py +← ガード検出なし' >/dev/null; then ok "audit_grep[2 節]: Depends(get_db) をガードに数えない"
 else ng "audit_grep[2 節]: Depends(get_db) をガードに数えない" "$(printf '%s\n' "$R2" | grep 'py/app.py')"; fi
+# 大小文字を区別しないファイルシステムでは、表の ./app/controllers と ./app/Controllers が同じファイルを 2 行で並べていた
+if [[ "$(printf '%s\n' "$R2" | grep -c 'pages_controller\.rb')" -eq 1 ]]; then ok "audit_grep[2 節]: 同じファイルを 1 行だけ並べる（大小文字だけが違うパス）"
+else ng "audit_grep[2 節]: 同じファイルを 1 行だけ並べる（大小文字だけが違うパス）" "$(printf '%s\n' "$R2" | grep 'pages_controller' | tr '\n' ' ')"; fi
 absent   "audit_grep[2 節]: 再エクスポートだけの index を並べない"         "src/index.ts"                "$R2"
 contains "audit_grep[2c]: lib/actions の Server Actions も関数ごとに見る"  "lib/actions/items.ts: removeItem" "$R2C"
 contains "audit_grep[2d]: SvelteKit の hooks.server を出す"                "src/hooks.server.ts"         "$R2D"
@@ -2075,7 +2078,7 @@ contains "audit_grep[2k]: 資格情報を許す全オリジンの CORS に ★" 
 contains "audit_grep[2l]: 秘密の照合の無い定期実行の入口に ★"              "★ app/api/cron/purge/route.ts" "$R2L"
 contains "audit_grep[2l]: 試行の上限の無い確認コードの検証に ★"            "★ src/app.js:13:"            "$R2L"
 contains "audit_grep[2m]: 持ち主の語の無い ID の取り出しに ★"              "★ src/app.js:10:"            "$R2M"
-absent   "audit_grep[2m]: Ruby の文字列の埋め込み #{id} を経路と取り違えない" "py/helper.rb"            "$R2M"
+absent   "audit_grep[2m]: Ruby の文字列の埋め込み #{id} を経路と取り違えない" "pages_controller.rb"     "$R2M"
 # 3・3b 節（C-18〜C-21・C-30・R-07）
 contains "audit_grep[3]: HTML を連結して返す res.send に ★"                "★ src/app.js:2:"             "$R3"
 contains "audit_grep[3]: jQuery の .html(値) に ★"                         "★ src/widget.js:1:"          "$R3"

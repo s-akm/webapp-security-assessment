@@ -608,7 +608,30 @@ echo "  ※ 判定はファイルの有無による。手作業で作った資�
 HF_LIST="$(mktemp "${TMPDIR:-/tmp}/audit_grep.XXXXXX")"
 HF_DEF="$HF_LIST.def"; HF_GRD="$HF_LIST.grd"
 trap 'rm -f "$HF_LIST" "$HF_LIST".*' EXIT
-handler_files | sort -u | drop_glue > "$HF_LIST"
+# 大小文字を区別しないファイルシステム（macOS の既定）では、表の ./app/controllers と ./app/Controllers が同じ場所を指し、
+# 同じファイルが 2 行で並ぶ。大小文字だけが違う隣り合う行のうち、同じファイルを指すものは 1 つにする
+# 重なった組は、実際の綴りに直して出す。区切りごとに、ディレクトリの一覧から大小文字を無視して一致する名前を選ぶ
+# （bash の pwd -P は打った綴りのまま返すので使えない）
+real_case() {
+  local p="$1" cur="." out="" part real IFS=/
+  for part in $p; do
+    real="$(ls -1 "$cur" 2>/dev/null | grep -ixF -- "$part" | head -1)"; [[ -n "$real" ]] || real="$part"
+    out="${out:+$out/}$real"; cur="$cur/$real"
+  done
+  printf '%s' "$out"
+}
+same_file_once() {
+  local prev="" l
+  while IFS= read -r l; do
+    if [[ -n "$prev" && "$(printf '%s' "$l" | tr 'A-Z' 'a-z')" == "$(printf '%s' "$prev" | tr 'A-Z' 'a-z')" && "$l" -ef "$prev" ]]; then
+      prev="$(real_case "$l")"; continue
+    fi
+    [[ -n "$prev" ]] && printf '%s\n' "$prev"
+    prev="$l"
+  done
+  [[ -n "$prev" ]] && printf '%s\n' "$prev"
+}
+handler_files | sort -u | LC_ALL=C sort -f | same_file_once | LC_ALL=C sort | drop_glue > "$HF_LIST"
 # ファイルごとの数は、全ファイルをまとめて grep に渡して 1 回で数える。ファイルごとに grep を起動すると、
 # ハンドラの多い大きなリポジトリで、1 節と 2 節だけで数分かかっていた。
 # /dev/null を足すのは、xargs が分けて起動したどの回も「ファイル名:数」の形で出させるため（1 本だけだと名前が付かない）。

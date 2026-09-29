@@ -53,6 +53,8 @@
 - **2 節のガードの語の表: Firebase の `verifyIdToken`・`context.auth` を足し、Fastify のフックの `onRequest` はフックとして書く形に限った。**
   `functions.https.onRequest(` をガードと数え、ガードの無い関数を見落としていた（検査を締めたことで分かった）
 - 2g 節: `update(body)` のように括弧の直後に受け取ったものを渡す形を拾う。11 節: 秘密が未設定のとき検証を飛ばす形（`if (secret && !verify…)`）に ★
+- 大小文字を区別しないファイルシステム（macOS の既定）で、表の `./app/controllers` と `./app/Controllers` が同じファイルを 2 行で並べていた。
+  1 行にまとめ、実際の綴りで出す
 - 実在の OSS に当てて見つけた誤検出を直した: 試験・模擬のサーバー・e2e のパス（2k・2m）、配列の添字と設定の読み出しの `:id`（2m）、
   TSX の `{!!flag}` を Blade と取り違える・`renderToStaticMarkup(` を `Markup(` と取り違える（3 節）。計測タグの表を recon.sh・browser_probe.mjs と揃えた
 
@@ -80,7 +82,7 @@
 - 検査が失敗したとき、tests/tmp の写しからエージェントの設定を消す。省略の数が塊の数であることを出す
 - secret scanning の除外を、架空の鍵を置いたディレクトリに絞った
 - compare.py: 答えの数が旧と新で違えば判定しない。未コミットの回を外したことを出す
-- 架空の題材 `review-fixes` と、検査 169 件（うちスクリプトの担当 65 件）・変異 88 件を足した
+- 架空の題材 `review-fixes` と、検査 170 件（うちスクリプトの担当 65 件）・変異 88 件を足した
 
 ### 直さなかったもの
 
