@@ -435,7 +435,7 @@ mutate "10: 検証付きの PyJWT も検証なしに並べる" "scripts/audit_gr
 mutate "4: 環境変数の読み込みも直書きに数える" "scripts/audit_grep.sh" "環境変数からの読み込みを直書きに数えない" \
   's = s.replace("    | grep -vE \x27[:=][[:space:]]*(process\\.env|", "    | grep -vE \x27[:=][[:space:]]*(processX\\.env|", 1)'
 mutate "2m: 文字列の埋め込みを経路と取り違える" "scripts/audit_grep.sh" "Ruby の文字列の埋め込み" \
-  's = s.replace("|/\\{[a-z_]*[iI]d\\}|", "|\\{[a-z_]*[iI]d\\}|", 1)'
+  's = s.replace("|/\\\\{${n}(:[^}]*)?\\\\}|", "|\\\\{${n}(:[^}]*)?\\\\}|", 1)'
 mutate "中断: 途中で止まっても知らせない" "scripts/audit_grep.sh" "途中で止まったら、出力が途中までであること" \
   's = s.replace("printf \x27\\n=== 中断 ===\\n", "printf \x27\\n=== X ===\\n", 1)'
 # 正規表現を緩める・節を丸ごと消す（「1 語を置き換える」形だけでは、検査が表の中身まで確かめているかが分からない）
@@ -456,7 +456,36 @@ mutate "2k: 試験のパスも並べる" "scripts/audit_grep.sh" "試験のフ�
 mutate "2k: 資格情報の許可をファイル全体で探す" "scripts/audit_grep.sh" "資格情報の許可が離れていれば" \
   's = s.replace("<<<\"$(sed -n \"${n},$((n + 3))p\" \"$f\" 2>/dev/null)\"", "\"$f\"", 1)'
 mutate "2m: 経路の区切りでない :id も拾う" "scripts/audit_grep.sh" "設定の読み出しの :id" \
-  's = s.replace("|/:[a-z_]*[iI]d([/", "|:[a-z_]*[iI]d([/", 1)'
+  's = s.replace("r=\"$r|/:${n}([/", "r=\"$r|:${n}([/", 1)'
+# 2m. ハンドラの範囲ごとの持ち主の照合（題材 owner-check）
+mutate "2m: ログインの語を照合と数える" "scripts/audit_grep.sh" "現在の利用者を変数に入れるだけの代入を照合と数えない" \
+  's = s.replace("if (t ~ ENVIRON[\"M_AUTHZ\"] || t ~ ENVIRON[\"M_EQCUR\"]) chk = 1", "if (t ~ ENVIRON[\"M_AUTHZ\"] || t ~ ENVIRON[\"M_EQCUR\"] || t ~ ENVIRON[\"M_CUR\"]) chk = 1", 1)'
+mutate "2m: ハンドラの範囲で分けない" "scripts/audit_grep.sh" "本文の id で更新する形に" \
+  's = s.replace("else if (t ~ ENVIRON[\"M_START\"]) { if (deco) deco = 0; else flush() }", "else if (t ~ ENVIRON[\"M_START\"]) { if (deco) deco = 0 }", 1)'
+mutate "2m: ID を読む行でも持ち主の列を数える" "scripts/audit_grep.sh" "受け取った ID の名前を持ち主の列と取り違えない" \
+  's = s.replace("if (t !~ ENVIRON[\"M_ID\"]) { u = t;", "if (1) { u = t;", 1)'
+mutate "2m: 引用符の中の current_user も数える" "scripts/audit_grep.sh" "引用符の中の current_user を現在の利用者と数えない" \
+  's = s.replace("M_CUR=\x27req\\.user|request\\.user|(^|[^\"\x27\"\x27\"\x27A-Za-z0-9_])current_?user|", "M_CUR=\x27req\\.user|request\\.user|current_?user|", 1)'
+mutate "2m: 空白を挟んだ代入も照合と数える" "scripts/audit_grep.sh" "現在の利用者を変数に入れるだけの代入を照合と数えない" \
+  's = s.replace("([[:space:]]*(==|!=|=>|:)=?=?[[:space:]]*|=)(", "([[:space:]]*(==|!=|=>|:|=)=?=?[[:space:]]*)(", 1)'
+mutate "2m: 本文の参照先の ID も読む" "scripts/audit_grep.sh" "本文の参照先の ID を並べない" \
+  's = s.replace("r=\"$r|\\\\{([^}]*[^A-Za-z0-9_])?${o}(", "r=\"$r|\\\\{([^}]*[^A-Za-z0-9_])?${n}(", 1)'
+mutate "2m: slug を読むだけでも数える" "scripts/audit_grep.sh" "slug で読むだけのハンドラに" \
+  's = s.replace("if (!idl && idwl && mut)", "if (!idl && idwl)", 1)'
+mutate "2m: 本体の無い登録も判定する" "scripts/audit_grep.sh" "処理を別の関数に渡すだけの登録に" \
+  's = s.replace("if (idl > 0 && !body) dlg++", "if (idl > 0 && body < 0) dlg++", 1)'
+mutate "2m: 装飾子と下の関数を別の範囲にする" "scripts/audit_grep.sh" "複数行の装飾子の経路で受ける ID に" \
+  's = s.replace("{ if (deco) deco = 0; else flush() }", "{ deco = 0; flush() }", 1)'
+mutate "2m: Ruby の @ を装飾子と見る" "scripts/audit_grep.sh" "受け取った ID の名前を持ち主の列と取り違えない" \
+  's = s.replace("if (t ~ ENVIRON[\"M_DECO\"] && !(f ~ /\\.rb$/ && t ~ /^[ \\t]*@/))", "if (t ~ ENVIRON[\"M_DECO\"])", 1)'
+mutate "2m: 並べ替えの引数の id も読む" "scripts/audit_grep.sh" "並べ替えの引数の id を ID の読み取りと取り違えない" \
+  's = s.replace("\\\\([[:space:]]*[\\\"\x27]${n}[\\\"\x27][[:space:]]*\\\\)|URLParam", "\\\\(([^,)]*,[[:space:]]*)?[\\\"\x27]${n}[\\\"\x27]|URLParam", 1)'
+mutate "2m: 文中の <名前> も経路と読む" "scripts/audit_grep.sh" "文中の <名前> を経路の書き方と取り違えない" \
+  's = s.replace("|[/\\\"\x27]<([a-z]+:)?${n}>", "|<([a-z]+:)?${n}>", 1)'
+mutate "2m: denyAll を認可に数えない" "scripts/audit_grep.sh" "誰にも通さない登録に" \
+  's = s.replace("M_AUTHZ=\x27authorize[!(]|denyAll|deny_all|DenyAll|", "M_AUTHZ=\x27authorize[!(]|", 1)'
+mutate "2m: ログインを確かめているものを先に並べない" "scripts/audit_grep.sh" "ログインを確かめているものを先に並べる" \
+  's = s.replace("grep -F \x27← ログインは確かめている\x27; grep \x27^s\x27 \"$M_OUT\" | grep -vF \x27← ログインは確かめている\x27; }", "grep -vF \x27← ログインは確かめている\x27; grep \x27^s\x27 \"$M_OUT\" | grep -F \x27← ログインは確かめている\x27; }", 1)'
 mutate "3: Blade の {!! を対で見ない" "scripts/audit_grep.sh" "TSX の" \
   's = s.replace("|\\{!![^}]*!!\\}|th:utext|mark_safe", "|\\{!!|th:utext|mark_safe", 1)'
 mutate "3: 試験のファイルもアプリのコードと並べる" "scripts/audit_grep.sh" "静的な資産の置き場の ★ は" \

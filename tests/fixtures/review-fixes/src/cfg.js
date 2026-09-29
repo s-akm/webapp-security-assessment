@@ -1,3 +1,2 @@
-const cfg = { botId: config.get('docsbot:id') };
-counts[id] = 1;
-app.get('/cfg', (req, res) => res.json(cfg));
+app.get('/cfg', (req, res) => res.json({ botId: config.get('docsbot:id') }));
+app.post('/count', (req, res) => { counts[id] = 1; res.end(); });

@@ -1963,6 +1963,38 @@ if printf '%s' "$S2G" | sed -n '/--- 受け取ったもの/,$p' | grep -F 'route
   ng "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない" "routes.js:2 が並んだ"
 else ok "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない"; fi
 
+# 2m. ID を受け取るハンドラの、持ち主の照合。ハンドラの範囲ごとに判定する（Express・Rails・Django・FastAPI）。
+# 以前はファイル単位で、ログインの語（req.user・current_user）がファイルのどこかにあれば ★ を付けていなかった
+OC="$TMP/owner-check"
+fixture_cp "$ROOT/tests/fixtures/owner-check" "$OC"
+S2M="$(bash "$SKILL/scripts/audit_grep.sh" "$OC" 2>&1 | LC_ALL=C awk 'index($0, "=== 2m.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2m]: ログインだけ確かめて持ち主を見ない取り出しに ★"       "★ routes.js:2:"                 "$S2M"
+contains "audit_grep[2m]: ログインは確かめていると注記する"                     "routes.js:2:router.get('/notes/:id', requireAuth, async (req, res) => {  ← ログインは確かめている" "$S2M"
+contains "audit_grep[2m]: 本文の id で更新する形に ★"                           "★ routes.js:21:"                "$S2M"
+contains "audit_grep[2m]: 現在の利用者を変数に入れるだけの代入を照合と数えない" "★ routes.js:24:"                "$S2M"
+contains "audit_grep[2m]: 受け取った ID の名前を持ち主の列と取り違えない"       "★ orders_controller.rb:10:"     "$S2M"
+contains "audit_grep[2m]: 引用符の中の current_user を現在の利用者と数えない"   "★ views.py:6:"                  "$S2M"
+contains "audit_grep[2m]: 複数行の装飾子の経路で受ける ID に ★"                 "★ items.py:7:"                  "$S2M"
+absent   "audit_grep[2m]: 条件に持ち主を書いた取り出しに ★ を付けない"          "routes.js:6:"                   "$S2M"
+absent   "audit_grep[2m]: SQL の持ち主の列と別の行の現在の利用者を照合と読む"    "routes.js:10:"                  "$S2M"
+absent   "audit_grep[2m]: 誰にも通さない登録に ★ を付けない"                    "routes.js:29:"                  "$S2M"
+absent   "audit_grep[2m]: 本文の参照先の ID を並べない"                         "routes.js:17:"                  "$S2M"
+absent   "audit_grep[2m]: 現在の利用者から辿った取り出しに ★ を付けない"        "orders_controller.rb:5:"        "$S2M"
+absent   "audit_grep[2m]: 持ち主の列と現在の利用者の比べ合わせを照合と読む"      "orders_controller.rb:14:"       "$S2M"
+absent   "audit_grep[2m]: 持ち主を現在の利用者で絞る取り出しに ★ を付けない"    "views.py:13:"                   "$S2M"
+absent   "audit_grep[2m]: 装飾子の下の関数の比べ合わせを同じ範囲で読む"          "items.py:17:"                   "$S2M"
+contains "audit_grep[2m]: 照合のあるハンドラの数を出す"                         "照合らしい書き方のあるハンドラは 7 本" "$S2M"
+absent   "audit_grep[2m]: 処理を別の関数に渡すだけの登録に ★ を付けない"        "routes.js:30:"                  "$S2M"
+contains "audit_grep[2m]: 処理を別の関数に渡すだけの登録の数を出す"             "処理を別の関数に渡すだけの登録 1 本" "$S2M"
+absent   "audit_grep[2m]: slug で読むだけのハンドラに ★ を付けない"             "routes.js:31:"                  "$S2M"
+contains "audit_grep[2m]: slug で削除するハンドラに ★"                          "★ routes.js:34:"                "$S2M"
+contains "audit_grep[2m]: 認証の無いハンドラの ID の取り出しにも ★"            "★ routes.js:38:"                "$S2M"
+absent   "audit_grep[2m]: 文中の <名前> を経路の書き方と取り違えない"            "routes.js:40:"                  "$S2M"
+absent   "audit_grep[2m]: 並べ替えの引数の id を ID の読み取りと取り違えない"   "routes.js:41:"                  "$S2M"
+if printf '%s\n' "$S2M" | LC_ALL=C awk '/← ログインは確かめている/ { if (n) bad = 1 } /★/ && !/← ログインは確かめている/ { n = 1 } END { exit bad }'; then
+  ok "audit_grep[2m]: ログインを確かめているものを先に並べる"
+else ng "audit_grep[2m]: ログインを確かめているものを先に並べる" "並びが違う"; fi
+
 # 3 節（SQL 以外の問い合わせ・テンプレートを組み立てる）。架空の題材 query-injection。
 # 問い合わせの書き方の表と「差し込み」の組み合わせで、値を差し込む行に ★ を付ける
 QI="$TMP/query-injection"
@@ -2190,7 +2222,7 @@ contains "audit_grep[★一覧]: 3b 節の ★ も集める"                    
 # rg があれば再帰の検索を rg で行う。grep と同じ結果になるか（並び順は除く）。
 # 正規表現の方言が違う書き方（角括弧の中の [）は rg が誤りで終わるので、grep でやり直していること
 if command -v rg >/dev/null 2>&1; then
-  for fx in client-authz output-and-upload size-param query-injection redirect-and-password review-fixes; do
+  for fx in client-authz output-and-upload size-param query-injection redirect-and-password review-fixes owner-check; do
     RGT="$TMP/rgcmp-$fx"; fixture_cp "$ROOT/tests/fixtures/$fx" "$RGT"
     ga="$(AUDIT_GREP_NO_RG=1 bash "$SKILL/scripts/audit_grep.sh" "$RGT" 2>&1 | sort)"
     ra="$(bash "$SKILL/scripts/audit_grep.sh" "$RGT" 2>&1 | sort)"

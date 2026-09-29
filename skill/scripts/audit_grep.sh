@@ -1213,16 +1213,116 @@ OTP_VERIFY='verify_?otp|verifyOtp|verify_?code|verifyCode|check_?otp|checkOtp|ve
 echo "  ※ 6 桁の番号は 100 万通り。1 つのコードへの試行に上限が無ければ、総当たりで通る。上限は番号ごと・アカウントごとに掛ける"
 
 hr "2m. ID を受け取るのに、持ち主を照らし合わせていないハンドラ（候補。02 の A-3）"
-# リソースの ID をリクエストから読むハンドラのうち、同じファイルに「持ち主」を表す語（利用者の ID・所有者・テナント）が
-# 1 つも無いものを ★ で出す。ファイル単位の目安なので、★ の無いファイルも、照合がその ID に掛かっているかを読む
-ID_IN='req\.params\.[A-Za-z_]*([iI]d|Id)\b|req\.params\[|params\[:[a-z_]*id\]|params\.[a-z_]*[iI]d\b|request\.args\.get\(["'"'"'][a-z_]*id|/\{[a-z_]*[iI]d\}|/:[a-z_]*[iI]d([/"'"'"'`?]|$)|@PathVariable|@Param\(["'"'"'][a-z_]*[iI]d|kwargs\[["'"'"'](pk|id)|<(int:)?(pk|id)>|c\.Param\(["'"'"'][a-z_]*id|PathValue\(["'"'"'][a-z_]*id|route_param|\[FromRoute\]'
-OWNER='user_?id|userId|UserId|owner|author|created_?by|createdBy|auth\.uid|currentUser|current_user|req\.user|request\.user|ctx\.state\.user|session\.user|getUser|get_current_user|User\.Identity|principal|tenant|org_?id|orgId|workspace|account_?id|accountId|policy|authorize|can\?|Gate::|abilit'
-{ tr '\n' '\0' < "$HF_LIST" | xargs -0 grep -nE "$ID_IN" -- /dev/null 2>/dev/null \
-    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE "$TESTPATH" | awk -F: '!seen[$1]++' | while IFS= read -r l; do f="${l%%:*}"
-        if grep -qE "$OWNER" "$f" 2>/dev/null; then printf '    %s\n' "$l"; else printf '  ★ %s\n' "$l"; fi
-      done | cut -c1-200 | lim 25; } | show
-echo "  ※ ★ は、ID で行を取り出しているのに、持ち主の語がファイルに無い。他人の ID に変えて取れるかを 1 本ずつ読む"
-echo "    ★ の無いファイルも、照合がその ID の取り出しに掛かっているか（別の関数にあるだけではないか）を確かめる"
+# ハンドラの範囲（関数の定義・ルートの登録・装飾子から、次の定義の手前まで）ごとに、リソースの ID をリクエストから読んでいるかと、
+# 持ち主の照合があるかを見る。以前はファイル単位で、ログインしているかの語（req.user・current_user）やリクエストの ID の名前
+# （params[:user_id] の user_id）がファイルのどこかにあれば ★ を付けず、1 ファイル 1 行しか出していなかった。実地の評価の題材 6 つで、
+# 持ち主を照らし合わせない取り出し（IDOR）の答えのどれにも ★ が付いていなかった
+M_E='([^A-Za-z0-9_]|$)'
+# リクエストから ID を読む書き方の表（枠組みを問わず）を、ID の名前の表から作る。
+#   $1 ID の名前、$2 本文（body）から読む名前。本文の doctor_id・productId のような ID は、別のリソースへの参照を渡すだけのことが
+#   多い（予約の相手・注文する商品）。本文からは、そのリソース自身を指す名前（id・_id・pk）と、持ち主の名前の ID（UserId: req.body.UserId
+#   のように、持ち主を利用者が送った値で決める形）だけを読む
+m2_id_re() {
+  local n="$1" o="$2" r
+  r="(^|[^A-Za-z0-9_])params\\.${n}${M_E}|(req|request|ctx|event|context)\\.(query|params)\\.${n}${M_E}|(req|request|ctx|event|context)\\.body\\.${o}${M_E}"
+  r="$r|params\\[:?[\"']?${n}[\"']?\\]"
+  r="$r|\\{([^}]*[^A-Za-z0-9_])?${n}([^A-Za-z0-9_][^}]*)?\\}[[:space:]]*=[[:space:]]*(await[[:space:]]+)?([A-Za-z_][A-Za-z0-9_.]*\\.)?(params|query)${M_E}"
+  r="$r|\\{([^}]*[^A-Za-z0-9_])?${o}([^A-Za-z0-9_][^}]*)?\\}[[:space:]]*=[[:space:]]*(await[[:space:]]+)?([A-Za-z_][A-Za-z0-9_.]*\\.)?body${M_E}"
+  # Django・Flask の request.GET.get('id')・self.kwargs['pk']。data.get(…) だけでは、ほかの辞書の読み出しと区別できない
+  r="$r|request\\.(args|form|values|GET|POST|query_params|data)\\.get\\([[:space:]]*[\"']${n}[\"']|kwargs(\\.get\\(|\\[)[[:space:]]*[\"']${n}[\"']"
+  # 名前だけを受け取る呼び出し（c.Param("id")・c.req.param('id')・$request->input('id')・getParameter("id")）。
+  # .query('orderBy', 'id') や router.param('slug', 処理) を取り違えないよう、名前の直後で閉じるものだけ。chi は 2 つ目の引数
+  r="$r|\\.(query|params|param|Param|Query|PathValue|FormValue|QueryParam|DefaultQuery|getParameter|input|route)\\([[:space:]]*[\"']${n}[\"'][[:space:]]*\\)|URLParam\\([^,)]*,[[:space:]]*[\"']${n}[\"']"
+  r="$r|Vars\\([^)]*\\)\\[[\"']${n}[\"']\\]|@(Param|Query)\\([[:space:]]*[\"']${n}[\"']"
+  # 経路の書き方（/:id・/{id}・"{id}"・/<int:id>）。Ruby の文字列の埋め込み（#{id}）・設定の読み出し（'bot:id'）・文中の <chainId> を
+  # 取り違えないよう、区切りを見る
+  r="$r|/:${n}([/\"'\`?]|$)|/\\{${n}(:[^}]*)?\\}|[\"']\\{${n}(:[^}]*)?\\}[\"']|[/\"']<([a-z]+:)?${n}>"
+  # 関数の引数で受け取る形（Django のビューの def f(request, user_id)・Laravel の function show($id)）
+  r="$r|def[[:space:]]+[A-Za-z_][A-Za-z0-9_]*\\((self,[[:space:]]*)?request[^)]*,[[:space:]]*${n}([[:space:]]*[:=,)]|$)|function[[:space:]]+[A-Za-z_][A-Za-z0-9_]*\\([^)]*\\\$${n}[[:space:],)=]"
+  printf '%s' "$r"
+}
+# ID の名前（id・pk と、userId・user_id のように ID で終わるもの）。valid・paid のような語を拾わないよう、区切りで見る
+M_ONAME='(_?id|pk|[Uu]ser(_id|Id|ID)|[Oo]wner(_id|Id|ID)|[Aa]uthor(_id|Id|ID)|[Aa]ccount(_id|Id|ID)|[Tt]enant(_id|Id|ID)|[Oo]rg(_id|Id|ID)|[Oo]rganization(_id|Id|ID)|[Cc]ustomer(_id|Id|ID)|[Mm]ember(_id|Id|ID))'
+M_ID="$(m2_id_re '(id|pk|[A-Za-z_]*(Id|ID|_id|_pk))' "$M_ONAME")|@(PathVariable|RequestParam)|\\[FromRoute\\]|route_param"
+# slug・uuid は、公開の中身（記事の表示・プレビュー）を読む識別子として使うことが多い。書き換え・削除をするハンドラのときだけ数える
+M_IDW="$(m2_id_re '(slug|uuid|[A-Za-z_]*(Slug|_slug|Uuid|_uuid))' '(uuid|_uuid)')"
+M_MUT='(^|[^A-Za-z0-9_])(delete|put|patch|Delete|Put|Patch|DELETE|PUT|PATCH|destroy|remove|update)[A-Za-z_]*[[:space:]]*\(|Http(Delete|Put|Patch)|(Delete|Put|Patch)Mapping|methods=\[[^]]*(DELETE|PUT|PATCH)'
+# 処理の本体の印（=>・function・) {・def・do）。登録の行が別の関数を渡すだけ（router.get('/x/:id', auth, ctrl.show)）なら、
+# 照合の有無はその範囲では分からないので ★ にしない（登録の行の認可は 2b 節、渡した先の関数はその定義の範囲で見る）
+M_BODY='=>|function[[:space:]]*[A-Za-z0-9_]*[[:space:]]*\(|\)[[:space:]]*(\{|:|->)|^[[:space:]]*(export[[:space:]]+)?(async[[:space:]]+)?(def|fn|func|fun|function)[[:space:]]|[[:space:]]do[[:space:]]*(\|[^|]*\|)?[[:space:]]*$|[^A-Za-z0-9_]end[[:space:]]*$'
+# ハンドラの始まり（関数・メソッドの定義、ルートの登録、クラス、装飾子・注釈）
+M_START='^[[:space:]]*(export[[:space:]]+)?(default[[:space:]]+)?(pub(\([a-z]+\))?[[:space:]]+)?(async[[:space:]]+)?(def|function|func|fn|fun)[[:space:]]'
+M_START="$M_START"'|^[[:space:]]*((public|private|protected|internal|static|override|suspend|async|virtual|final)[[:space:]]+)+[^=;]*\(|^[[:space:]]*export[[:space:]]+(const|let)[[:space:]]+[A-Za-z_]'
+M_START="$M_START"'|^[[:space:]]*((public|private|export|abstract|final|data|open|internal|sealed)[[:space:]]+)*class[[:space:]]|'"$ROUTE_REG"
+# パスを最初に受け取る登録（router.use('/x/:id', …)・app.all(…)）も、1 つの範囲の始まりにする
+M_START="$M_START"'|(^|[^A-Za-z0-9_$.])[A-Za-z_][A-Za-z0-9_]*\.(use|all|any)\([[:space:]]*["'"'"'`]/'
+# Ruby の @order = … はインスタンス変数なので、.rb では @ を装飾子と見ない（見ると、次の def までを 1 つの範囲にまとめてしまう）
+M_DECO='^[[:space:]]*(@[A-Za-z]|#\[[A-Z]|\[(Http|Route|Authorize|AllowAnonymous))'
+# 現在の利用者を指す書き方（ログインしているかの確かめにも使うので、これだけでは照合とみなさない）
+M_CUR0='req\.user|request\.user|current_?user|currentUser|CurrentUser|session\.user|session\[:user_id\]|session\[["'"'"']user_?id["'"'"']\]|ctx\.state\.user|locals\.user|g\.user|auth\.uid|auth\(\)->(id|user)|Auth::(id|user)\(|getUser\(|get_current_user|getCurrentUser|getSession\(|getServerSession\(|User\.Identity|User\.FindFirst|GetUserId|[Pp]rincipal|claims|context\.auth|request\.auth|auth\.user'
+# 引用符の中の current_user（テンプレートに渡す辞書のキー）は、現在の利用者の参照と数えない
+M_CUR='req\.user|request\.user|(^|[^"'"'"'A-Za-z0-9_])current_?user|(^|[^"'"'"'A-Za-z0-9_])currentUser|CurrentUser|session\.user|session\[:user_id\]|session\[["'"'"']user_?id["'"'"']\]|ctx\.state\.user|locals\.user|g\.user|auth\.uid|auth\(\)->(id|user)|Auth::(id|user)\(|getUser\(|get_current_user|getCurrentUser|getSession\(|getServerSession\(|User\.Identity|User\.FindFirst|GetUserId|[Pp]rincipal|claims|context\.auth|request\.auth|auth\.user'
+# 認可の呼び出し（持ち主やロールを確かめる関数・ポリシー）
+M_AUTHZ='authorize[!(]|denyAll|deny_all|DenyAll|authorize_resource|load_and_authorize|Gate::|->can\(|can\?|cannot\?|[Pp]olicy|[Aa]bilit(y|ies)|[Pp]ermission|IsOwner|is_?[Oo]wner|[Oo]wner[Oo]nly|ensure_?[Oo]wner|assert_?[Oo]wner|[Oo]wnership|check_?[Oo]wner|verify_?[Oo]wner|@PreAuthorize|@PostAuthorize|AuthorizeAsync|can[A-Z][A-Za-z]*\('
+# 持ち主の列の語。条件のキーの位置（user_id = $2・userId: uid・where(owner_id: uid)）にあるものだけを数え、ID を読む行では数えない
+# （受け取った値を入れた変数 user_id を、持ち主の列と取り違えていた）。現在の利用者の書き方は取り除いてから探す
+M_OWNF='(user|owner|author|creator|tenant|org|organization|account|customer|member|profile)(_id|Id|ID)["'"'"'`]?[[:space:]]*(=[^=>]|==|:[^:]|=>|!=|IN[[:space:]]|in[[:space:]])|(^|[^A-Za-z0-9_])(owner|author|creator|created_?by|createdBy|tenant)["'"'"'`]?[[:space:]]*(=[^=>]|==|:[^:]|=>|!=)'
+# 持ち主の値を現在の利用者と結ぶ書き方（user=request.user・user: current_user・userId: req.user.id・order.userId !== req.user.id）。
+# 空白を挟んだ = は代入（const user = getUser(req)）で、現在の利用者を変数に入れるだけなので数えない
+M_EQCUR='(user|owner|author|creator|tenant|account|org|organization)[A-Za-z_]*([[:space:]]*(==|!=|=>|:)=?=?[[:space:]]*|=)('"$M_CUR0"')'
+M_OUT="$(mktemp "${TMPDIR:-/tmp}/audit_grep.XXXXXX")"
+# shellcheck disable=SC2016
+tr '\n' '\0' < "$HF_LIST" | xargs -0 env M_ID="$M_ID" M_IDW="$M_IDW" M_MUT="$M_MUT" M_BODY="$M_BODY" M_START="$M_START" M_DECO="$M_DECO" M_CUR="$M_CUR" M_AUTHZ="$M_AUTHZ" \
+    M_OWNF="$M_OWNF" M_EQCUR="$M_EQCUR" M_GUARD="$GUARD" M_TEST="$TESTPATH" LC_ALL=C awk '
+  function flush() {
+    if (!idl && idwl && mut) { idl = idwl; idt = idwt }
+    if (idl > 0 && !body) dlg++
+    else if (idl > 0 && f !~ ENVIRON["M_TEST"]) {
+      if (chk || (cur && own)) printf "c\t%s:%d:%s\n", f, idl, idt
+      else printf "s\t%s:%d:%s%s\n", f, idl, idt, ((cur || grd) ? "  ← ログインは確かめているが、持ち主の照合が見当たらない" : "")
+    }
+    idl = 0; idt = ""; idwl = 0; idwt = ""; chk = 0; cur = 0; own = 0; grd = 0; mut = 0; body = 0
+  }
+  # 現在の利用者から辿った取り出し（current_user.orders.find・request.user.items.get）。req.user.id のような自分の属性は数えない
+  function scoped(t,   m, k) {
+    while (match(t, "(" ENVIRON["M_CUR"] ")\\.[A-Za-z_]+[.(]")) {
+      m = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH)
+      k = m; sub(/[.(]$/, "", k); sub(/.*\./, "", k)
+      if (k !~ /^(id|_id|uid|pk|email|role|roles|name|username|sub|is_admin|admin|isAdmin|toString|to_s|get|equals|present|nil)$/) return 1
+    }
+    return 0
+  }
+  FNR == 1 { flush(); f = FILENAME; sub(/^\.\//, "", f); deco = 0 }
+  {
+    t = $0
+    if (t ~ /^[ \t]*(\/\/|#([^[]|$)|\*|\/\*|<!--)/) next
+    if (t ~ ENVIRON["M_DECO"] && !(f ~ /\.rb$/ && t ~ /^[ \t]*@/)) { if (!deco) { flush(); deco = 1 } }
+    else if (t ~ ENVIRON["M_START"]) { if (deco) deco = 0; else flush() }
+    if (!idl && t ~ ENVIRON["M_ID"]) { idl = FNR; idt = t; sub(/^[ \t]+/, "", idt) }
+    if (!idwl && t ~ ENVIRON["M_IDW"]) { idwl = FNR; idwt = t; sub(/^[ \t]+/, "", idwt) }
+    if (t ~ ENVIRON["M_MUT"]) mut = 1
+    if (t ~ ENVIRON["M_BODY"]) body = 1
+    if (t ~ ENVIRON["M_AUTHZ"] || t ~ ENVIRON["M_EQCUR"]) chk = 1
+    if (t ~ ENVIRON["M_GUARD"]) grd = 1
+    if (t ~ ENVIRON["M_CUR"]) {
+      cur = 1
+      # 読み取った ID を、同じ行で現在の利用者と比べている（params[:id] != current_user.id）
+      if (t ~ ENVIRON["M_ID"] || scoped(t)) chk = 1
+    }
+    if (t !~ ENVIRON["M_ID"]) { u = t; gsub(ENVIRON["M_CUR"], " ", u); if (u ~ ENVIRON["M_OWNF"]) own = 1 }
+  }
+  END { flush(); if (dlg) printf "d\t%d\n", dlg }' 2>/dev/null > "$M_OUT"
+n_chk="$(grep -c '^c' "$M_OUT")"
+n_dlg="$(awk -F'\t' '$1 == "d" { n += $2 } END { print n + 0 }' "$M_OUT")"
+# ログインを確かめているもの（他人の ID に変えれば取れる形）を先に並べる。確かめていないものは 2 節の空欄と合わせて読む
+{ { grep '^s' "$M_OUT" | grep -F '← ログインは確かめている'; grep '^s' "$M_OUT" | grep -vF '← ログインは確かめている'; } \
+    | cut -f2- | pfx "  ★ " | cut -c1-240 | lim 30; } | show
+echo "  （照合らしい書き方のあるハンドラは ${n_chk} 本。並べない。処理を別の関数に渡すだけの登録 ${n_dlg} 本は、渡した先の関数の行で判定する）"
+rm -f "$M_OUT"
+echo "  ※ ★ は、ハンドラの中で ID を読んでいるのに、持ち主の照合（認可の呼び出し・現在の利用者から辿った取り出し・"
+echo "    持ち主の列と現在の利用者の組み合わせ）が見当たらない。ログインの確かめだけでは、他人の ID に変えれば取れる"
+echo "    照合が別の関数（before_action・依存・前段のミドルウェア）にある構成もあるので、他人の ID に変えて取れるかを 1 本ずつ読む"
+echo "  ※ 照合らしい書き方があっても、照合が取り出しと同じ行に掛かっているか（取り出した後に比べずに返していないか）を確かめる"
 
 hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）"
 # 'use server' のファイルでは、export された関数 1 つ 1 つが入口になる。
