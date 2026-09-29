@@ -2113,6 +2113,8 @@ absent   "audit_grep[19]: 読み取りの条件が true のポリシーには �
 contains "audit_grep[21]: 有無を持たないロックファイルでは判定できないと書く" "判定できない"             "$R21"
 # 実在の OSS で見つけた誤検出（試験・模擬のパス、離れた資格情報の許可、設定の読み出しの :id、TSX の {!!…}、renderToStaticMarkup）
 R9="$(sec '9. ')"
+# 0 節の「有」は別のファイル（web/line.html）でも立つので、Handlebars のファイルを探していることは 9 節の行で確かめる
+contains "audit_grep[9]: Handlebars のテンプレートのタグの行を並べる"   "views/layout.hbs:1:"         "$R9"
 absent   "audit_grep[2k]: 試験のファイルの CORS を並べない"                  "src/test/cors.test.js"       "$R2K"
 contains "audit_grep[2k]: 資格情報の許可が離れていれば ★ を付けずに並べる"  "    src/cors-split.js:1:"      "$R2K"
 absent   "audit_grep[2m]: 模擬のサーバーを並べない"                          "src/mock/server.js"          "$R2M"
