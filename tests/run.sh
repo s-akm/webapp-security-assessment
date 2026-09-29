@@ -1858,14 +1858,15 @@ else
     # CSP に unsafe-inline を持たず、セキュリティヘッダを揃えてある。
     # 追加パス（/admin）も渡す。渡された URL にパス（/clean）があっても、追加パスはサイトの根から開く（recon.sh と同じ）
     C="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/clean" /admin 2>&1 || true)"
-    contains "browser_probe[誤検出]: 同意前の送信が無いことを言える" "送信は観測されなかった" "$C"
+    contains "browser_probe[誤検出]: 同意前の送信が無いことを言える" "第三者オリジンへの送信は観測されなかった" "$C"
     absent   "browser_probe[誤検出]: HttpOnly のある Cookie を咎めない" "**HttpOnly なし**" "$C"
     absent   "browser_probe[誤検出]: 健全な CSP を咎めない"           "unsafe-inline がある" "$C"
     absent   "browser_probe[誤検出]: 揃ったヘッダを欠如と言わない"     "[無] x-frame-options" "$C"
     absent   "browser_probe[誤検出]: x-powered-by が無ければ触れない"  "実装情報が露出"       "$C"
-    # 別ホストへ転送されたら、転送先を自サイトとして数える（recon.sh と同じ）
+    # 別ホストへ転送されたら、転送先を自サイトとして数える（recon.sh と同じ）。「送信は観測されなかった」だけで探すと、
+    # 別の節の「切り替えのあとの第三者への送信は観測されなかった」に一致し、Linux では変異を入れても成功していた
     C2="$(node "$SKILL/scripts/browser_probe.mjs" "http://127.0.0.1:$PORT/to-clean" 2>&1 || true)"
-    contains "browser_probe[誤検出]: 転送先のホストを第三者と言わない" "送信は観測されなかった" "$C2"
+    contains "browser_probe[誤検出]: 転送先のホストを第三者と言わない" "第三者オリジンへの送信は観測されなかった" "$C2"
     # コンソールの文言（CSP の違反）に載った URL のクエリを出さない
     C3="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/csp-query" 2>&1 || true)"
     contains "browser_probe: CSP の違反を拾う"                         "CSP 違反: 1"          "$C3"
@@ -2091,6 +2092,8 @@ contains "audit_grep[伏字]: 種類の名前（application/…）は伏せな�
 contains "audit_grep[伏字]: 設定のキーは伏せない"                          '"ConnectionStrings"'         "$R4"
 contains "audit_grep[伏字]: 入れ子のオブジェクトのキーは伏せない"          '{"verify_signature": False}' "$R10"
 # 対象の写し（R-05）: 制御文字を落とし、写しの中の ★ を ☆ にする
+# 制御文字を含む行が出力に出ていなければ、下の検査は何も確かめずに通る（8 分担の手動の実行の Linux で、変異を入れても成功した回があった）
+contains "audit_grep[写し]: 制御文字を含む行も、制御文字を落として並べる"  "src/ansi.js:1:eval(y) // [2Kline" "$RFALL"
 if printf '%s' "$RFALL" | LC_ALL=C grep -q $'\x1b'; then ng "audit_grep[写し]: 対象の制御文字を出力に残さない" "ESC が残っている"
 else ok "audit_grep[写し]: 対象の制御文字を出力に残さない"; fi
 contains "audit_grep[写し]: 対象のコメントの ★ を ☆ に変える"             "document.write(x) // ☆ ok"   "$R3"

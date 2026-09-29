@@ -358,7 +358,7 @@ mutate "recon: パイプで grep -Eq に渡す（確率的に誤る書き方）"
 mutate "資料: コマンド例でスクリプトの中の変数を使う" "references/02-code-audit.md" "スクリプトの中の変数に頼らない" \
   's = s.replace("grep -rnE --exclude-dir=node_modules --exclude-dir=vendor \x27Math", "grep -rnE \"${EX}\" \x27Math", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
-  's = s.replace("evaluateJavascript\x27 \\\n  -e \x27javaScriptEnabled", "evaluateJavascript|\njavaScriptEnabled", 1)'
+  's = s.replace("grep -rnE \x27intent-filter|CFBundleURLSchemes|associatedDomains|", "grep -rnE \x27intent-filter|CFBundleURLSchemes|\nassociatedDomains|", 1)'
 
 mutate "資料: 未確認事項が止める相手を ID で書くと決めない" "references/04-findings-register.md" "台帳にある ID で書くと決めている" \
   's = s.replace("。**台帳にある ID（S-x・U-x）だけを書く**。相手がまだ指摘になっていなければ、先に「判断保留」の指摘として載せる", "", 1)'
@@ -568,7 +568,7 @@ mutate "eval: 範囲にも前後の許容を付ける" "../tests/eval/score.py" 
 mutate "eval: 1 行をいちばん近い答え以外にも一致させる" "../tests/eval/score.py" "範囲は含む答えにだけ一致" \
   's = s.replace("    return abs(line - lo) <= min(abs(x - lo) for x in others)\n", "    return True\n")'
 mutate "eval: スキルを置いてから audit_grep を実行する" "../tests/eval/run-eval.sh" "audit_grep をスキルを置く前に実行する" \
-  's = s.replace("# スキルを題材の中に置く。", "mkdir -p \"$SRC/.claude/skills\"; cp -R \"$ROOT/skill\" \"$SRC/.claude/skills/x\"\n# スキルを題材の中に置く。", 1).replace("EVID=\"$WORK/evidence\"; mkdir -p \"$EVID\"", "mkdir -p \"$SRC/.claude/skills\"; cp -R \"$ROOT/skill\" \"$SRC/.claude/skills/y\"\nEVID=\"$WORK/evidence\"; mkdir -p \"$EVID\"", 1)'
+  's = s.replace("( cd \"$APP\" && bash \"$SKILL_SRC/scripts/audit_grep.sh\" . )", "mkdir -p \"$APP/.claude/skills\"; cp -R \"$SKILL_SRC\" \"$APP/.claude/skills/x\"\n( cd \"$APP\" && bash \"$SKILL_SRC/scripts/audit_grep.sh\" . )", 1)'
 mutate "eval: 未確認事項どうしの依存を咎める" "../tests/eval/score.py" "未確認事項どうしの依存は咎めない" \
   's = s.replace("    ids |= {u.get(\x27id\x27) for u in unconfirmed}\n", "")'
 mutate "eval: 行をつなぐのに paste -sd を使う" "../tests/eval/run-eval.sh" "macOS で失敗する paste" \
@@ -588,7 +588,7 @@ mutate "audit_grep: 2b で設定の読み出しを外さない" "scripts/audit_g
   's = s.replace("&& t !~ /(^|[^A-Za-z0-9_$.])(app|router|r|e|mux|srv|api|fastify|server|routes?|group|g)", "&& 0 && t !~ /(^|[^A-Za-z0-9_$.])(app|router|r|e|mux|srv|api|fastify|server|routes?|group|g)")'
 
 mutate "audit_grep: ★ の一覧を出さない" "scripts/audit_grep.sh" "最後に ★ を集めて出す" \
-  's = s.replace("  [[ \"$st\" -eq 0 ]] && star_list < \"$ALL_OUT\"\n", "")'
+  's = s.replace("if [[ \"$st\" -eq 0 ]]; then star_list < \"$ALL_OUT\"", "if [[ \"$st\" -eq 0 ]]; then :", 1)'
 mutate "audit_grep: ★ の一覧に説明文の ★ も入れる" "scripts/audit_grep.sh" "説明文の ★ を数えない" \
   's = s.replace("&& $0 !~ /※/ && $0 !~ /★ (の|が|は|を)/ {", "{")'
 
@@ -687,7 +687,7 @@ mutate "scan_secrets: npm の鍵を見ない（recon とずれる）" "scripts/s
 
 # ---- browser_probe（部品の検査。node があれば Playwright が無くても回る）----
 if command -v node >/dev/null 2>&1; then
-  mutate "browser_probe: 送信先を末尾で照合しない（旧不具合）" "scripts/browser_probe.mjs" "既知タグのラベル付け" \
+  mutate "browser_probe: 送信先を末尾で照合しない（旧不具合）" "scripts/browser_probe.mjs" "既知タグと同意管理のラベル付け" \
     's = s.replace("[\"Hotjar\", \"(^|\\\\.)hotjar\\\\.(com|io)$\"]", "[\"Hotjar\", \"hotjar\\\\.(com|io)\"]")'
   mutate "browser_probe: script-src-elem を script-src と取り違える（旧不具合）" "scripts/browser_probe.mjs" "CSP を実際に適用される指令で判定する" \
     's = s.replace("const name = tokens[0].toLowerCase();", "const name = tokens[0].toLowerCase().replace(/^script-src-(elem|attr)$/, \"script-src\");")'
@@ -721,7 +721,7 @@ if node -e 'import("playwright")' >/dev/null 2>&1; then
     's = s.replace("const pick = (s) => { try { return Object.keys(s); } catch { return []; } };", "const pick = (s) => { try { return Object.keys(s).map(k => k + \"=\" + s.getItem(k)); } catch { return []; } };")'
   mutate "browser_probe: HttpOnly の判定を反転する（誤検出）" "scripts/browser_probe.mjs" "HttpOnly のある Cookie を咎めない" \
     's = s.replace("c.httpOnly ? \"HttpOnly\" : \"**HttpOnly なし**\"", "!c.httpOnly ? \"HttpOnly\" : \"**HttpOnly なし**\"")'
-  mutate "browser_probe: 既知タグのラベルを取り違える" "scripts/browser_probe.mjs" "既知タグのラベル付け" \
+  mutate "browser_probe: 既知タグのラベルを取り違える" "scripts/browser_probe.mjs" "既知タグと同意管理のラベル付け" \
     's = s.replace("[\"Microsoft Clarity\", \"(^|\\\\.)clarity", "[\"Hotjar\", \"(^|\\\\.)clarity")'
   mutate "browser_probe: 転送先を自サイトに含めない" "scripts/browser_probe.mjs" "転送先のホストを第三者と言わない" \
     's = s.replace("  try { own.add(new URL(page.url()).hostname); } catch { /* 同上 */ }\n", "")'
