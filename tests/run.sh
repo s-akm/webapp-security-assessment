@@ -2019,6 +2019,8 @@ contains "audit_grep[★一覧]: 2j 節の ★ も集める"                    
 # 各節の取りこぼしと誤検出を、節を切り出して確かめる
 RF="$TMP/review-fixes"
 fixture_cp "$ROOT/tests/fixtures/review-fixes" "$RF"
+# .env は .gitignore で無視されてコミットされないので、写しの中に作る（深い階層の .env を 4c 節が並べるかを確かめる）
+mkdir -p "$RF/deep/a/b/c"; printf 'DB_PASSWORD=fake-deep-env-0006\n' > "$RF/deep/a/b/c/.env"
 RFALL="$(bash "$SKILL/scripts/audit_grep.sh" "$RF" 2>&1)"
 sec() { printf '%s\n' "$RFALL" | LC_ALL=C awk -v h="=== $1" 'index($0, h) == 1 { f = 1; next } f && /^=== / { exit } f'; }
 nonempty() { if [[ -n "$2" ]]; then return 0; fi; ng "$1" "節を切り出せなかった（見出しが変わった）"; return 1; }
