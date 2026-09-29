@@ -106,7 +106,9 @@ jobs:
       - name: 検査の検査（分担 ${{ matrix.shard }}/8）
         if: matrix.shard != 0
         run: |
-          out="$(./tests/mutations.sh --shard "${{ matrix.shard }}/8" 2>&1)"; st=$?
+          # 段は bash -e で動く。代入が 0 以外で終わった時点で止まると、出力を出さずに終わり、どの変異が生きていないかが
+          # 分からない（分担にした最初の実行で起きた）。|| で終了コードを受ける
+          st=0; out="$(./tests/mutations.sh --shard "${{ matrix.shard }}/8" 2>&1)" || st=$?
           printf '%s\n' "$out"
           # 生きていない検査が 1 件でもあれば失敗にする
           printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*m//g' | grep -E '生きていない 0( |$)' >/dev/null || exit 1
