@@ -111,5 +111,6 @@ jobs:
           st=0; out="$(./tests/mutations.sh --shard "${{ matrix.shard }}/8" 2>&1)" || st=$?
           printf '%s\n' "$out"
           # 生きていない検査が 1 件でもあれば失敗にする
-          printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*m//g' | grep -E '生きていない 0( |$)' >/dev/null || exit 1
+          # grep にはパイプで渡さない（出力先が /dev/null だと最初の一致で止まり、書き手が SIGPIPE で終わることがある）
+          grep -E '生きていない 0( |$)' <<<"$(printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*m//g')" >/dev/null || exit 1
           exit $st

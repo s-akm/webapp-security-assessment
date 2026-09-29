@@ -46,7 +46,7 @@ head_ "2. 検査が生きているか"
 if [[ $FULL -eq 1 ]]; then
   mout="$(bash "$ROOT/tests/mutations.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   mres="$(printf '%s' "$mout" | grep -oE '生きている検査 [0-9]+ / 生きていない [0-9]+' | tail -1)"
-  if printf '%s' "$mres" | grep -E '生きていない 0' >/dev/null; then ok "tests/mutations.sh: $mres"
+  if grep -E '生きていない 0' <<<"$mres" >/dev/null; then ok "tests/mutations.sh: $mres"
   else ng "tests/mutations.sh: $mres" "$(printf '%s' "$mout" | grep -E '✗|\?' | head -5 | tr '\n' ' ')"; fi
 else
   warn "tests/mutations.sh は省略（--full で実行。1 回で 20 時間ほどかかる。CI の週 1 回は 8 つに分けて並べている）" \

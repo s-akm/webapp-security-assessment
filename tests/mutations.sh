@@ -53,7 +53,7 @@ trap restore_all EXIT
 # 土台が壊れていると（出力が化けて節を切り出せない、など）、誤検出の検査は何も見ずに通り、
 # 「生きている」「生きていない」の両方が誤った結論になる（実際に起きた）。
 base="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-if printf '%s' "$base" | grep '✗' >/dev/null; then
+if grep '✗' <<<"$base" >/dev/null; then
   echo "変異を入れる前の run.sh が失敗している。先に直す:" >&2
   printf '%s\n' "$base" | grep '✗' | head -5 >&2
   exit 1
@@ -90,7 +90,7 @@ PY
   local out; out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   cp -p "$bak" "$target"; rm -f "$bak"; BACKUPS=("${BACKUPS[@]/$bak::$target/}")
 
-  if printf '%s' "$out" | grep -E "✗ .*${expect}" >/dev/null; then
+  if grep -E "✗ .*${expect}" <<<"$out" >/dev/null; then
     printf '  \033[32m✓\033[0m %-52s → 「%s」が失敗した（欠陥を見つけた）\n' "$name" "$expect"
     PASS=$((PASS+1))
   else
@@ -109,7 +109,7 @@ if [[ ( -z "$ONLY" || "実行権限" == *"$ONLY"* ) && $SHARD_K -le 1 ]]; then
   chmod 644 "$SKILL/scripts/scan_secrets.sh"
   out="$(bash "$ROOT/tests/run.sh" 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
   chmod 755 "$SKILL/scripts/scan_secrets.sh"
-  if printf '%s' "$out" | grep -E "✗ .*実行権限: scan_secrets.sh" >/dev/null; then
+  if grep -E "✗ .*実行権限: scan_secrets.sh" <<<"$out" >/dev/null; then
     printf '  \033[32m✓\033[0m %-52s → 「%s」が失敗した（欠陥を見つけた）\n' "スクリプトの実行権限を外す" "実行権限"; PASS=$((PASS+1))
   else
     printf '  \033[31m✗\033[0m %-52s → 失敗しなかった\n' "スクリプトの実行権限を外す"; FAIL=$((FAIL+1))
@@ -357,6 +357,8 @@ mutate "recon: パイプで grep -Eq に渡す（確率的に誤る書き方）"
   's = s.replace("| grep -E \"$sig\" >/dev/null", "| grep -Eq \"$sig\"", 1)'
 mutate "資料: コマンド例でスクリプトの中の変数を使う" "references/02-code-audit.md" "スクリプトの中の変数に頼らない" \
   's = s.replace("grep -rnE --exclude-dir=node_modules --exclude-dir=vendor \x27Math", "grep -rnE \"${EX}\" \x27Math", 1)'
+mutate "道具: パイプで grep に渡して出力を捨てる" "../tests/self-audit.sh" "検査の道具で、パイプで grep に渡して出力を捨てていない" \
+  's = s.replace("if grep -E \x27生きていない 0\x27 <<<\"$mres\" >/dev/null; then", "if printf \x27%s\x27 \"$mres\" | grep -E \x27生きていない 0\x27 >/dev/null; then", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("grep -rnE \x27intent-filter|CFBundleURLSchemes|associatedDomains|", "grep -rnE \x27intent-filter|CFBundleURLSchemes|\nassociatedDomains|", 1)'
 
