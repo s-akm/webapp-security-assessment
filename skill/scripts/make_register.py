@@ -68,6 +68,7 @@ try:
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.worksheet.views import Selection
 except ImportError:  # noqa: BLE001
     import shutil
     import subprocess
@@ -184,6 +185,19 @@ def title_block(ws, title, subtitle, width):
     ws["A2"].alignment = Alignment(vertical="top", wrap_text=True)
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=width)
     ws.row_dimensions[2].height = 44
+
+
+def fix_views(wb):
+    """枠の固定を外したシートの表示を正す。
+
+    openpyxl は freeze_panes を None にすると窓枠（pane）を消すが、選択範囲の pane="bottomLeft" を残す。
+    Excel は存在しない窓枠を指す選択範囲を壊れた表示と見なし、開くたびに「修復されたレコード: … パーツ内のビュー」を出す
+    （実案件で、総合評価のシートがこの形になっていた。見出しの行を作る関数が枠を固定し、その直後に外していた）。
+    """
+    for ws in wb.worksheets:
+        sv = ws.sheet_view
+        if sv.pane is None and any(sel.pane for sel in sv.selection):
+            sv.selection = [Selection(activeCell="A1", sqref="A1")]
 
 
 def header_row(ws, row, headers, widths):
@@ -933,6 +947,7 @@ def main():
     wb.remove(wb.active)
     for key in names:
         builders[key]()
+    fix_views(wb)
     try:
         wb.save(args.output)
     except OSError as e:

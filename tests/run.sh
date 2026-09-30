@@ -1196,6 +1196,23 @@ else
   absent "make_register: --api（owasp）で一般の Top 10 と両方を並べない" "7_枠組みへの当てはめ" "$M4"
   M5="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api-none.xlsx" --frameworks none --api 2>&1)"
   contains "make_register: --api（none）で API のシートが 1 枚増える" "シート 7 枚" "$M5"
+  # 窓枠（pane）の無いシートで、選択範囲が窓枠を指していないこと。openpyxl は枠の固定を外しても選択範囲の pane を残し、
+  # Excel が開くたびに「修復されたレコード: … パーツ内のビュー」を出していた（実案件の台帳で、総合評価のシートがこの形だった）。
+  # openpyxl で読み直すと見えないので、中の XML を直接読む。生成したすべての組み合わせの台帳で確かめる
+  VW="$("$PY_BIN" - "$TMP"/r-*.xlsx <<'PYEOF' 2>&1
+import re, sys, zipfile
+bad = []
+for f in sys.argv[1:]:
+    z = zipfile.ZipFile(f)
+    for n in z.namelist():
+        if not re.match(r"xl/worksheets/sheet\d+\.xml$", n): continue
+        for v in re.findall(r"<sheetView .*?</sheetView>", z.read(n).decode("utf-8"), re.S):
+            if "<pane " not in v and re.search(r"<selection [^>]*pane=", v): bad.append(f"{f.rsplit('/', 1)[-1]}:{n}")
+print("NG " + " ".join(bad) if bad else f"ALL OK {len(sys.argv) - 1}")
+PYEOF
+)"
+  if grep -E '^ALL OK [1-9]' <<<"$VW" >/dev/null; then ok "make_register: 窓枠の無いシートの選択範囲が、無い窓枠を指さない（Excel の修復を出さない）"
+  else ng "make_register: 窓枠の無いシートの選択範囲が、無い窓枠を指さない（Excel の修復を出さない）" "$VW"; fi
   V2="$("$PY_BIN" - "$TMP/r-2021.xlsx" "$TMP/r-full.xlsx" "$TMP/r-api.xlsx" <<'PYEOF' 2>&1
 import sys
 from openpyxl import load_workbook

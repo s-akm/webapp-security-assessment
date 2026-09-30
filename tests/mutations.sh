@@ -361,6 +361,8 @@ mutate "道具: パイプで grep に渡して出力を捨てる" "../tests/self
   's = s.replace("if grep -E \x27生きていない 0\x27 <<<\"$mres\" >/dev/null; then", "if printf \x27%s\x27 \"$mres\" | grep -E \x27生きていない 0\x27 >/dev/null; then", 1)'
 mutate "道具: 環境変数を挟んで grep -q に渡す" "../tests/self-audit.sh" "パイプで grep -q に渡していない" \
   's = s.replace("if grep -E \x27生きていない 0\x27 <<<\"$mres\" >/dev/null; then", "if printf \x27%s\x27 \"$mres\" | LC_ALL=C grep -qE \x27生きていない 0\x27; then", 1)'
+mutate "台帳: 枠の固定を外したシートの表示を正さない" "scripts/make_register.py" "窓枠の無いシートの選択範囲が" \
+  's = s.replace("    fix_views(wb)\n", "", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("grep -rnE \x27intent-filter|CFBundleURLSchemes|associatedDomains|", "grep -rnE \x27intent-filter|CFBundleURLSchemes|\nassociatedDomains|", 1)'
 
