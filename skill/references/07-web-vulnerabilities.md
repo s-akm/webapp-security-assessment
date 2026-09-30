@@ -6,7 +6,7 @@
 
 **この資料の grep の例は、書き方の手がかりを示すもの。** 多くは TypeScript / JavaScript の書き方で、`--include` もそれに合わせてある。
 Python・Ruby・PHP・Go・Java の案件では、対象の言語の拡張子と書き方を足して実行する。**例の grep が 0 件でも「該当なし」にしない。**
-枠組みを問わない下拵えが `scripts/audit_grep.sh` にある観点（2g 節のマスアサインメント、2j 節のリダイレクト、3 節・3b 節）は、そちらの出力を正とする。
+枠組みを問わない事前の洗い出しが `scripts/audit_grep.sh` にある観点（2g 節のマスアサインメント、2j 節のリダイレクト、3 節・3b 節）は、そちらの出力を正とする。
 
 ## 目次
 
@@ -540,7 +540,7 @@ grep -A1 -E '"node_modules/(@sveltejs/adapter-vercel|next|nuxt|astro)"' package-
 
 ```bash
 # 更新系で、受け取ったオブジェクトをそのまま渡していないか（マスアサインメント）。
-# 枠組みを問わない下拵えは scripts/audit_grep.sh の 2g 節。これは TS の書き方を補う例
+# 枠組みを問わない事前の洗い出しは scripts/audit_grep.sh の 2g 節。これは TS の書き方を補う例
 grep -rnE '\.update\(\s*(body|req\.body|data|input)\s*\)|\.update\(\{\s*\.\.\.' --include='*.ts' --include='*.js' .
 ```
 

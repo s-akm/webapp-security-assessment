@@ -18,7 +18,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVAL="$ROOT/tests/eval"
-# 題材ごとの情報（取得元・下拵え・前提・結果）は手元の置き場に置く。題材を特定できる情報を公開リポジトリに入れないため
+# 題材ごとの情報（取得元・題材の前処理・前提・結果）は手元の置き場に置く。題材を特定できる情報を公開リポジトリに入れないため
 LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
 # 見落としを減らすため、知識の多いモデルで当てる。別名（opus）は CLI の版で指すモデルが変わり、比較が切れるので完全な ID で固定する
 # モデルは更新されていくので、確認日から半年を過ぎたら tests/run.sh が知らせる。新しいモデルが出ていれば、知識と費用と
@@ -112,15 +112,15 @@ line="$(grep -v '^#' "$LOCAL/targets.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' 
 [[ -n "$line" || ! -f "$LOCAL/audits.tsv" ]] || line="$(grep -v '^#' "$LOCAL/audits.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
 [[ -n "$line" ]] || { echo "題材 $TARGET が targets.tsv にも audits.tsv にも無い" >&2; exit 2; }
 REPO="$(printf '%s' "$line" | cut -f2)"; COMMIT="$(printf '%s' "$line" | cut -f3)"; PREP="$(printf '%s' "$line" | cut -f5)"
-# 下拵えの列は「スクリプト名 [引数]」（例: prep_anchors.py 題材.json）。スクリプトは手元の置き場から探し、無ければ
-# 公開の tests/eval/ から探す。引数の相対パスは手元の置き場から見る（下拵えは手元の置き場で動かす）
+# 前処理の列は「スクリプト名 [引数]」（例: prep_anchors.py 題材.json）。スクリプトは手元の置き場から探し、無ければ
+# 公開の tests/eval/ から探す。引数の相対パスは手元の置き場から見る（前処理は手元の置き場で動かす）
 PREP_SCRIPT="${PREP%% *}"; PREP_ARGS="${PREP#"$PREP_SCRIPT"}"
 if [[ -f "$LOCAL/$PREP_SCRIPT" ]]; then PREP_PATH="$LOCAL/$PREP_SCRIPT"; else PREP_PATH="$EVAL/$PREP_SCRIPT"; fi
 # 前提の列（6 列目）。無ければ premise/<題材の名前>.md
 PREMISE="$(printf '%s' "$line" | cut -f6)"; [[ -n "$PREMISE" ]] || PREMISE="premise/$TARGET.md"
 # 当てるディレクトリ（7 列目）。モノレポは対象のアプリのディレクトリだけを渡す（SKILL.md の「スクリプト」）
 SUBDIR="$(printf '%s' "$line" | cut -f7)"
-# 下拵えの列が「-」なら、答えの無い題材（実在の OSS）。採点せず、指摘の一覧だけを出す
+# 前処理の列が「-」なら、答えの無い題材（実在の OSS）。採点せず、指摘の一覧だけを出す
 NO_ANSWERS=0; [[ "$PREP" == "-" ]] && NO_ANSWERS=1
 
 # 作業場所はリポジトリの外。題材には本物の形をした鍵や穴のあるコードがあるので、リポジトリに混ぜない
@@ -164,7 +164,7 @@ fi
 # 出力の置き場は題材の外で、答えの一覧（$OUT）とも分ける。スキルを題材の中に置く前に実行する
 # （後で実行すると、スキル自身のファイルまで監査の対象に混ざる。2.20.1 までの実測で recon.sh の行が出ていた）
 EVID="$WORK/evidence"; mkdir -p "$EVID"
-# 当てるスキル。--skill-ref なら、その版の skill/ と VERSION を git から取り出す（下拵えの audit_grep.sh もその版のものを使う）
+# 当てるスキル。--skill-ref なら、その版の skill/ と VERSION を git から取り出す（事前の洗い出しの audit_grep.sh もその版のものを使う）
 SKILL_SRC="$ROOT/skill"; SKILL_VERSION_FILE="$ROOT/VERSION"
 if [[ -n "$SKILL_REF" ]]; then
   mkdir -p "$WORK/skill-ref"
@@ -185,7 +185,7 @@ else { git -C "$ROOT" rev-parse --short HEAD; git -C "$ROOT" diff --quiet HEAD -
 
 
 if [[ "$PREP_ONLY" -eq 1 ]]; then
-  echo "下拵えだけで止めた: ${SRC}（答えの一覧は ${OUT}/answers.json）"
+  echo "題材の前処理だけで止めた: ${SRC}（答えの一覧は ${OUT}/answers.json）"
   exit 0
 fi
 
@@ -209,7 +209,7 @@ args=(-p "$prompt"
   --setting-sources project --strict-mcp-config --no-session-persistence
   --max-budget-usd "$BUDGET"
   --permission-mode dontAsk
-  # 読むこととスキルの下拵えのスクリプトだけを許す。書き込み・ネットワーク・下位のエージェントは止める
+  # 読むこととスキルの事前の洗い出しのスクリプトだけを許す。書き込み・ネットワーク・下位のエージェントは止める
   --allowedTools Read Grep Glob Skill
     "Bash(bash *audit_grep.sh*)" "Bash(grep *)" "Bash(ls *)" "Bash(wc *)" "Bash(head *)" "Bash(sed -n *)" "Bash(cat *)"
   --disallowedTools WebFetch WebSearch Write Edit NotebookEdit Agent)

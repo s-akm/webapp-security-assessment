@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""アンカーの表から答えの一覧を作り、答えの手掛かりを消す（題材に依らない下拵え）。
+"""アンカーの表から答えの一覧を作り、答えの手掛かりを消す（題材に依らない前処理）。
 
   prep_anchors.py <表.json> <写しのディレクトリ> <答えの一覧の出力先.json>
 
@@ -82,7 +82,7 @@ def main():
     out = pathlib.Path(sys.argv[3])
     for rel in spec.get('require', []):
         if not (root / rel).exists():
-            sys.exit(f'{rel} が無い: {root}（表と題材が合っていないか、下拵え済み）')
+            sys.exit(f'{rel} が無い: {root}（表と題材が合っていないか、前処理済み）')
 
     # 1. アンカーから答えの場所を決める（手掛かりを消す前。行番号は消した後も変わらない）
     items = []

@@ -513,7 +513,7 @@ if [[ -d "$ROOT/tests/fixtures/repo-realistic" ]]; then
   else ng "audit_grep[realistic]: Server Action のガードなしを関数単位で示す" "clearCart が空欄と出ない"; fi
   # export していない内部関数は入口ではないので出さない
   absent "audit_grep[realistic]: 内部関数を入口に数えない" "recalc" "$RE"
-  # README の「仕込んである問題」のうち、下拵えで拾えるもの（拾えないものは題材の README に書いてある）
+  # README の「仕込んである問題」のうち、事前の洗い出しで拾えるもの（拾えないものは題材の README に書いてある）
   contains "audit_grep[realistic]: ログインだけ見て持ち主を見ない取得に ★（IDOR）" "[2m.] ★ app/api/orders/[id]/route.ts" "$RE"
   contains "audit_grep[realistic]: 受け取ったものを括弧の直後に更新へ渡す形を並べる" "members/[memberId]/route.ts:6:" \
            "$(printf '%s\n' "$RE" | LC_ALL=C awk 'index($0, "=== 2g.") == 1 { f = 1; next } f && /^=== / { exit } f')"
@@ -833,7 +833,7 @@ for fw in iac mobile; do
   esac
 
   # 資料に「見る」と書いた観点を、機械的にも拾えること。
-  # 資料だけあって下拵えが無いと、毎回すべて手で探すことになる。
+  # 資料だけあって事前の洗い出しが無いと、毎回すべて手で探すことになる。
   case "$fw" in
     iac)
       contains "audit_grep[iac]: root で動くコンテナ"        "USER の指定が無い"    "$C"
@@ -2302,7 +2302,7 @@ if [[ "$(printf '%s\n' "$RTALL" | grep -c '=== ★ の一覧')" == "1" ]] && gre
 else ng "audit_grep[★一覧]: 出力の最後に 1 回だけ出す" "無いか、最後でないか、2 回出ている"; fi
 
 # ==========================================================================
-head_ "4. 実地の評価の道具 — 下拵えと採点が正しいか（tests/eval/。ネットワークには出ない）"
+head_ "4. 実地の評価の道具 — 題材の前処理と採点が正しいか（tests/eval/。ネットワークには出ない）"
 # 実地の評価（tests/eval/run-eval.sh）は費用がかかるのでここでは回さない。
 # 見るのは、答えの一覧を正しく取り出せるか、手掛かりを消せるか、採点の規則どおりに数えるか。
 # ここが壊れていると、見つけた割合の数字そのものが信用できなくなる。
@@ -2420,42 +2420,42 @@ SF="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr.json
 contains "eval[採点]: 途中で別のモデルに切り替えた回を、元→切り替え先と記録する" "mA→mB" "$SF"
 absent   "eval[採点]: 切り替えの無い回には切り替えを書かない"   "→" "$(grep '^費用' <<<"$ST")"
 
-# 汎用の下拵え（prep_anchors.py）。題材ごとの表（アンカー・消すもの・手掛かりの語）は手元に置くので、
+# 汎用の題材の前処理（prep_anchors.py）。題材ごとの表（アンカー・消すもの・手掛かりの語）は手元に置くので、
 # ここでは架空の題材と表で、答えの行を決められるか・手掛かりのコメントだけを行を保って消せるかを見る
 PA="$TMP/eval-anchors"
 cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PA"
 if PAO="$(python3 -B "$ROOT/tests/eval/prep_anchors.py" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$PA" "$TMP/eval-pa.json" 2>&1)"; then
-  ok "eval[下拵え]: アンカーの表で下拵えが通る"
-else ng "eval[下拵え]: アンカーの表で下拵えが通る" "$PAO"; fi
-contains "eval[下拵え]: アンカーから答えの行を決める"       '"line": 5'                    "$(cat "$TMP/eval-pa.json" 2>/dev/null)"
-contains "eval[下拵え]: 題材に埋め込まれた値を答えに持たせる" '"dummy-embedded-value"'      "$(cat "$TMP/eval-pa.json" 2>/dev/null)"
+  ok "eval[前処理]: アンカーの表で前処理が通る"
+else ng "eval[前処理]: アンカーの表で前処理が通る" "$PAO"; fi
+contains "eval[前処理]: アンカーから答えの行を決める"       '"line": 5'                    "$(cat "$TMP/eval-pa.json" 2>/dev/null)"
+contains "eval[前処理]: 題材に埋め込まれた値を答えに持たせる" '"dummy-embedded-value"'      "$(cat "$TMP/eval-pa.json" 2>/dev/null)"
 PAS="$(cat "$PA/app/server.js" 2>/dev/null || true)"
-absent   "eval[下拵え]: 手掛かりのコメントを消す"           "SQL injection"                "$PAS"
-contains "eval[下拵え]: 手掛かりの無いコメントは残す"       "// 取得先の一覧"              "$PAS"
-contains "eval[下拵え]: URL の中の // を壊さない"           "'https://example.com/weak-list' // 参照先" "$PAS"
+absent   "eval[前処理]: 手掛かりのコメントを消す"           "SQL injection"                "$PAS"
+contains "eval[前処理]: 手掛かりの無いコメントは残す"       "// 取得先の一覧"              "$PAS"
+contains "eval[前処理]: URL の中の // を壊さない"           "'https://example.com/weak-list' // 参照先" "$PAS"
 if [[ "$(wc -l < "$PA/app/server.js" | tr -d ' ')" == "$(wc -l < "$ROOT/tests/fixtures/eval-anchors/target/app/server.js" | tr -d ' ')" ]] \
    && grep -F 'SELECT id FROM items' <<<"$(sed -n 5p "$PA/app/server.js")" >/dev/null; then
-  ok "eval[下拵え]: 行番号を保つ（答えの行と、評価者が見る行が一致する）"
-else ng "eval[下拵え]: 行番号を保つ（答えの行と、評価者が見る行が一致する）" "行がずれた"; fi
-if [[ ! -e "$PA/docs" ]]; then ok "eval[下拵え]: 答えの置き場を消す"
-else ng "eval[下拵え]: 答えの置き場を消す" "docs が残っている"; fi
+  ok "eval[前処理]: 行番号を保つ（答えの行と、評価者が見る行が一致する）"
+else ng "eval[前処理]: 行番号を保つ（答えの行と、評価者が見る行が一致する）" "行がずれた"; fi
+if [[ ! -e "$PA/docs" ]]; then ok "eval[前処理]: 答えの置き場を消す"
+else ng "eval[前処理]: 答えの置き場を消す" "docs が残っている"; fi
 # 答えを処理の範囲で持つ（until）。次の処理の装飾子の手前で止まり、無ければファイルの終わりまで
 if python3 -c "import json,sys; d={x['id']:x for x in json.load(open(sys.argv[1]))['items']}; l=d['list-handler']['ranges'][0]; r=d['run-handler']['ranges'][0]; sys.exit(0 if (l['start'],l['end'])==(3,7) and r['start']==8 and r['end']>=11 and not d['run-handler']['locations'] else 1)" "$TMP/eval-pa.json" 2>/dev/null; then
-  ok "eval[下拵え]: 答えを処理の範囲で持つ（次の装飾子の手前まで）"
-else ng "eval[下拵え]: 答えを処理の範囲で持つ（次の装飾子の手前まで）" "範囲が期待どおりでない"; fi
+  ok "eval[前処理]: 答えを処理の範囲で持つ（次の装飾子の手前まで）"
+else ng "eval[前処理]: 答えを処理の範囲で持つ（次の装飾子の手前まで）" "範囲が期待どおりでない"; fi
 PH="$(cat "$PA/app/header.html.erb" 2>/dev/null || true)"
 if [[ "$(wc -l < "$PA/app/header.html.erb" | tr -d ' ')" == "7" ]] && ! grep -F 'VULNERABLE' <<<"$PH" >/dev/null \
    && grep -F 'html_safe' <<<"$(sed -n 5p "$PA/app/header.html.erb")" >/dev/null && grep -F '<!-- 見出しの部品 -->' <<<"$PH" >/dev/null; then
-  ok "eval[下拵え]: 複数行にまたがる手掛かりのコメントを、行を保って消す"
-else ng "eval[下拵え]: 複数行にまたがる手掛かりのコメントを、行を保って消す" "消えていないか、行がずれたか、ほかのコメントまで消えた"; fi
-if [[ ! -e "$PA/app/routes.desc.ts" && -e "$PA/app/routes.ts" ]]; then ok "eval[下拵え]: ワイルドカードで指定したファイルだけを消す"
-else ng "eval[下拵え]: ワイルドカードで指定したファイルだけを消す" "消えていないか、消しすぎた"; fi
+  ok "eval[前処理]: 複数行にまたがる手掛かりのコメントを、行を保って消す"
+else ng "eval[前処理]: 複数行にまたがる手掛かりのコメントを、行を保って消す" "消えていないか、行がずれたか、ほかのコメントまで消えた"; fi
+if [[ ! -e "$PA/app/routes.desc.ts" && -e "$PA/app/routes.ts" ]]; then ok "eval[前処理]: ワイルドカードで指定したファイルだけを消す"
+else ng "eval[前処理]: ワイルドカードで指定したファイルだけを消す" "消えていないか、消しすぎた"; fi
 # 消し残しがあれば止まる（表の residual_regex に、残っている語を入れて確かめる）
 PB="$TMP/eval-anchors-residual"; cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PB"
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d['residual_regex']='取得先'; json.dump(d,open(sys.argv[2],'w'),ensure_ascii=False)" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$TMP/eval-pb-spec.json"
 if python3 -B "$ROOT/tests/eval/prep_anchors.py" "$TMP/eval-pb-spec.json" "$PB" "$TMP/eval-pb.json" >/dev/null 2>&1; then
-  ng "eval[下拵え]: 手掛かりの消し残しがあれば止まる" "止まらなかった"
-else ok "eval[下拵え]: 手掛かりの消し残しがあれば止まる"; fi
+  ng "eval[前処理]: 手掛かりの消し残しがあれば止まる" "止まらなかった"
+else ok "eval[前処理]: 手掛かりの消し残しがあれば止まる"; fi
 # コメントの形ごとに、手掛かりのコメントだけを消す（行は保つ）
 ZH="$(cd "$ROOT/tests/eval" && python3 -B - <<'PY' 2>&1
 import re
@@ -2476,8 +2476,8 @@ bad = [(a, f(a, s, h), e) for a, s, e in cases if f(a, s, h) != e]
 print("ALL OK" if not bad else bad)
 PY
 )"
-if [[ "$ZH" == "ALL OK" ]]; then ok "eval[下拵え]: 手掛かりのコメントだけを消す（7 例）"
-else ng "eval[下拵え]: 手掛かりのコメントだけを消す（7 例）" "$ZH"; fi
+if [[ "$ZH" == "ALL OK" ]]; then ok "eval[前処理]: 手掛かりのコメントだけを消す（7 例）"
+else ng "eval[前処理]: 手掛かりのコメントだけを消す（7 例）" "$ZH"; fi
 if grep -F '{{premise}}' "$ROOT/tests/eval/prompt.md" >/dev/null && grep -F 'premise_file="$LOCAL/$PREMISE"' "$ROOT/tests/eval/run-eval.sh" >/dev/null; then
   ok "eval: 題材ごとの前提を、手元の置き場から指示に差し込む"
 else ng "eval: 題材ごとの前提を、手元の置き場から指示に差し込む" "prompt.md の {{premise}} か run-eval.sh の読み込みが無い"; fi

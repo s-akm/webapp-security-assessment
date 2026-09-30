@@ -153,7 +153,7 @@ def main():
         if old:
             print(line('旧', old))
         print(line('新', new))
-        # 答えの数（分母）が旧と新で違えば、答えの一覧か下拵えが変わっている。見つけた数をそのまま比べない
+        # 答えの数（分母）が旧と新で違えば、答えの一覧か題材の前処理が変わっている。見つけた数をそのまま比べない
         dens = {r['範囲内'] for r in old} | {r['範囲内'] for r in new}
         if old and len(dens) > 1:
             print(f'  注意: 答えの数が旧と新で違う（{"・".join(sorted(dens))}）。答えの一覧を揃えて当て直すまで判定しない')
