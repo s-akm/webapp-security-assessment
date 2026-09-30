@@ -1,0 +1,8 @@
+{
+  "name": "web",
+  "private": true,
+  "dependencies": {
+    "next": "15.5.4",
+    "sharp": "0.34.0"
+  }
+}

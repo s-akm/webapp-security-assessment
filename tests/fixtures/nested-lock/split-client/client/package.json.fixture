@@ -1,0 +1,10 @@
+{
+  "name": "client",
+  "private": true,
+  "dependencies": {
+    "react-router": "6.26.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.21.5"
+  }
+}

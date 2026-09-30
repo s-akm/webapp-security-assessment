@@ -375,6 +375,16 @@ mutate "19: 根の supabase/ しか見ない" "scripts/audit_grep.sh" "根に無
   's = s.replace(" || [[ -n \"$(nested_dir supabase)\" ]] \\\n  || [[ -n \"$(nested_pkg \x27\"@supabase/\x27)\" ]]; } && baas=\"$baas Supabase\"", "; } && baas=\"$baas Supabase\"", 1)'
 mutate "19: RLS の突き合わせをプロジェクトで分けない" "scripts/audit_grep.sh" "RLS の突き合わせをプロジェクトごとに行う" \
   's = s.replace("projkey() { sed -E \x27s#/(supabase", "projkey() { sed -E \x27s#.*##; s#/(supabase", 1)'
+mutate "0: 根に無いロックファイルを見ない" "scripts/audit_grep.sh" "根に無いロックファイルも見る" \
+  's = s.replace("if [[ -z \"$lock\" ]]; then\n  nl=", "if false; then\n  nl=", 1)'
+mutate "1b: 下の階層のロックファイルを置き場に入れない" "scripts/audit_grep.sh" "根と別に画面の側のロックファイルも見る" \
+  's = s.replace("               nested_files package-lock.json pnpm-lock.yaml yarn.lock | while", "               : | while", 1)'
+mutate "1b: 根でない置き場の名前を添えない" "scripts/audit_grep.sh" "下の階層のロックファイルで枠組みの版を引く" \
+  's = s.replace("where=\"\"; [[ \"$d\" != \".\" ]] && where=\"（${d#./}）\"", "where=\"\"", 1)'
+mutate "21: 根の依存しか見ない" "scripts/audit_grep.sh" "下の階層の依存もインストール時の防御を見る" \
+  's = s.replace("do [[ -n \"$d\" && -f \"$d/package.json\" ]] && printf", "do [[ \"$d\" == \".\" && -f \"$d/package.json\" ]] && printf", 1)'
+mutate "21: 省いた節を根の package.json で決める" "scripts/audit_grep.sh" "下の階層に依存があれば 21 節を省いたと言わない" \
+  's = s.replace("[[ -n \"$DIRS21\" ]] || skipped=", "[[ -f package.json ]] || skipped=", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("grep -rnE \x27intent-filter|CFBundleURLSchemes|associatedDomains|", "grep -rnE \x27intent-filter|CFBundleURLSchemes|\nassociatedDomains|", 1)'
 

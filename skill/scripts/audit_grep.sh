@@ -592,10 +592,24 @@ twilio_direct="$(grep -rlE "${EXA[@]}" 'messages\.create\(' --include='*.ts' --i
 sms_cfg="$(grep -nE '^\[auth\.sms' supabase/config.toml 2>/dev/null | head -1)"
 if [[ -n "$sms_hit$sms_cfg" ]]; then say "SMS の送信" "有 → 02 の F-4・03 の 3 節（24 節）"; else say "SMS の送信" "無"; fi
 
+# 下の階層にある名前のファイル（根は除く。依存と履歴の下は見ない）。-mindepth を使わないのは、-prune が深さ 1 の node_modules に働かなくなるため
+nested_files() {
+  local expr=() n
+  for n in "$@"; do [[ ${#expr[@]} -gt 0 ]] && expr+=(-o); expr+=(-name "$n"); done
+  find . -maxdepth 4 \( -name node_modules -o -name .git -o -name vendor \) -prune -o -type f \( "${expr[@]}" \) -print 2>/dev/null \
+    | sed 's#^\./##' | grep '/' | sort
+}
+LOCKFILES=(package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Gemfile.lock go.sum composer.lock Cargo.lock)
 lock=""
-for f in package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Gemfile.lock go.sum composer.lock Cargo.lock; do
+for f in "${LOCKFILES[@]}"; do
   [[ -e "$f" ]] && lock="$lock $f"
 done
+# 根に無ければ下の階層も見る（web/ や apps/x/ にアプリを置く構成）。根だけを見ていて、そうした構成で「無い」と出し、
+# 1b 節の枠組みの版の照合と 21 節を丸ごと省いていた（実地の評価で分かった）
+if [[ -z "$lock" ]]; then
+  nl="$(nested_files "${LOCKFILES[@]}" | head -5 | tr '\n' ' ')"
+  [[ -n "$nl" ]] && lock=" ${nl% }（根には無い）"
+fi
 say "ロックファイル" "${lock:-★ 無い。監査した版と本番の版が違いうる（10 の 2 節）}"
 
 echo
@@ -679,15 +693,15 @@ hr "1b. 枠組みの版（ロックファイルの解決結果。公式アドバ
 # 下の判定表を公式の勧告と照合した日。表を直したら更新する（tests/run.sh が半年を超えたら知らせる）
 ADVISORIES_REVIEWED="2026-09-28"
 pkgver() {
-  local name="$1" v=""
-  if [[ -f package-lock.json ]]; then
-    v="$(awk -v k="\"node_modules/$name\": {" 'index($0,k){f=1;next} f&&/"version"/{gsub(/[",]/,"",$2);print $2;exit}' package-lock.json 2>/dev/null)"
+  local name="$1" d="${2:-.}" v=""
+  if [[ -f "$d/package-lock.json" ]]; then
+    v="$(awk -v k="\"node_modules/$name\": {" 'index($0,k){f=1;next} f&&/"version"/{gsub(/[",]/,"",$2);print $2;exit}' "$d/package-lock.json" 2>/dev/null)"
   fi
-  if [[ -z "$v" && -f pnpm-lock.yaml ]]; then
-    v="$(grep -oE "^  '?/?$name@[0-9][0-9A-Za-z.+-]*" pnpm-lock.yaml 2>/dev/null | head -1 | sed -E "s/.*@//")"
+  if [[ -z "$v" && -f "$d/pnpm-lock.yaml" ]]; then
+    v="$(grep -oE "^  '?/?$name@[0-9][0-9A-Za-z.+-]*" "$d/pnpm-lock.yaml" 2>/dev/null | head -1 | sed -E "s/.*@//")"
   fi
-  if [[ -z "$v" && -f package.json ]]; then
-    v="$(grep -oE "\"$name\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" package.json 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"([^"]+)"/\1/')"
+  if [[ -z "$v" && -f "$d/package.json" ]]; then
+    v="$(grep -oE "\"$name\"[[:space:]]*:[[:space:]]*\"[^\"]+\"" "$d/package.json" 2>/dev/null | head -1 | sed -E 's/.*:[[:space:]]*"([^"]+)"/\1/')"
     [[ -n "$v" ]] && v="${v}（package.json の宣言。解決結果ではない）"
   fi
   printf '%s' "$v"
@@ -697,60 +711,70 @@ verlt() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)
 # 範囲 [lo, hi) に入るか
 inrange() { ! verlt "$1" "$2" && verlt "$1" "$3"; }
 
+# 依存の置き場。根と、自分のロックファイルを持つ下の階層（0 節と同じ理由）。どちらも無ければ下の階層の package.json
+NODE_DIRS="$({ { [[ -f package.json || -f package-lock.json || -f pnpm-lock.yaml ]] && echo .; }
+               nested_files package-lock.json pnpm-lock.yaml yarn.lock | while IFS= read -r f; do printf './%s\n' "$(dirname "$f")"; done
+             } | awk 'NF && !seen[$0]++' | head -10)"
+[[ -n "$NODE_DIRS" ]] || NODE_DIRS="$(nested_files package.json | head -5 | while IFS= read -r f; do printf './%s\n' "$(dirname "$f")"; done)"
 fw_found=""
-for name in next react-server-dom-webpack react-server-dom-turbopack react-server-dom-parcel \
-            nuxt astro @sveltejs/kit @sveltejs/adapter-vercel react-router @remix-run/node; do
-  v="$(pkgver "$name")"
-  [[ -z "$v" ]] && continue
-  fw_found=1
-  note=""
-  pure="$(printf '%s' "$v" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
-  # canary などのプレリリースは、修正の範囲が安定版と別に決まっている。機械的には判定しない
-  if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+- && "$v" != *宣言* ]]; then
-    note=" （プレリリース版。勧告の canary の範囲を公式で確かめる）"; pure=""
-  fi
-  if [[ -n "$pure" && "$v" != *宣言* ]]; then
-    case "$name" in
-      next)
-        major="${pure%%.*}"
-        [[ "$major" -lt 15 ]] && note="$note ★ サポート外（14 以前には 2026 年の修正が出ていない）"
-        if ! verlt "$pure" 11.1.4 && { verlt "$pure" 12.3.5 || inrange "$pure" 13.0.0 13.5.9 \
-             || inrange "$pure" 14.0.0 14.2.25 || inrange "$pure" 15.0.0 15.2.3; }; then
-          note="$note ★ ミドルウェア迂回 CVE-2025-29927 の修正前（02 の A-5）"
-        fi
-        mm="$(printf '%s' "$pure" | cut -d. -f1-2)"
-        fix=""
-        case "$mm" in
-          15.0) fix=15.0.5 ;; 15.1) fix=15.1.9 ;; 15.2) fix=15.2.6 ;; 15.3) fix=15.3.6 ;;
-          15.4) fix=15.4.8 ;; 15.5) fix=15.5.7 ;; 16.0) fix=16.0.7 ;;
-        esac
-        # App Router の有無。モノレポ（apps/web/app など）も見る
-        approuter="$(find . -maxdepth 4 -type d \( -path '*/app' -o -path '*/src/app' \) -not -path '*/node_modules/*' -not -path '*/.next/*' 2>/dev/null | head -1)"
-        if [[ -n "$fix" ]] && verlt "$pure" "$fix" && [[ -n "$approuter" ]]; then
-          note="$note ★ React2Shell（CVE-2025-55182。Next.js の案内では取り下げ済みの 66478）の修正前。版上げと秘密情報の入れ替えの二段（02 の H）"
-        fi
-        # 2026-09-08 の critical 2 件（修正は 15.5.24 / 16.3.3）と、2026-07-22 の勧告群（high を含む。修正は 15.5.21 / 16.2.11）。
-        # 14 以前はサポート外として上で知らせている
-        if [[ "$major" -ge 15 ]]; then
-          if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.24; } || inrange "$pure" 16.0.0 16.3.3; then
-            note="$note ★ 認証なしでコードを実行される critical の勧告（GHSA-2xp9-vwfh-vxw4・GHSA-p293-qw3h-jr36。2026-09-08）の修正前。15.5.24 / 16.3.3 以上へ（02 の H）"
+while IFS= read -r d; do
+  [[ -n "$d" ]] || continue
+  # 根でない置き場は、その場所を添える
+  where=""; [[ "$d" != "." ]] && where="（${d#./}）"
+  for name in next react-server-dom-webpack react-server-dom-turbopack react-server-dom-parcel \
+              nuxt astro @sveltejs/kit @sveltejs/adapter-vercel react-router @remix-run/node; do
+    v="$(pkgver "$name" "$d")"
+    [[ -z "$v" ]] && continue
+    fw_found=1
+    note=""
+    pure="$(printf '%s' "$v" | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' || true)"
+    # canary などのプレリリースは、修正の範囲が安定版と別に決まっている。機械的には判定しない
+    if [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+- && "$v" != *宣言* ]]; then
+      note=" （プレリリース版。勧告の canary の範囲を公式で確かめる）"; pure=""
+    fi
+    if [[ -n "$pure" && "$v" != *宣言* ]]; then
+      case "$name" in
+        next)
+          major="${pure%%.*}"
+          [[ "$major" -lt 15 ]] && note="$note ★ サポート外（14 以前には 2026 年の修正が出ていない）"
+          if ! verlt "$pure" 11.1.4 && { verlt "$pure" 12.3.5 || inrange "$pure" 13.0.0 13.5.9 \
+               || inrange "$pure" 14.0.0 14.2.25 || inrange "$pure" 15.0.0 15.2.3; }; then
+            note="$note ★ ミドルウェア迂回 CVE-2025-29927 の修正前（02 の A-5）"
           fi
-          if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.21; } || inrange "$pure" 16.0.0 16.2.11; then
-            note="$note ★ 2026-07-22 の勧告群（SSRF・Proxy の迂回・DoS。high を含む）の修正前。15.5.21 / 16.2.11 以上へ"
+          mm="$(printf '%s' "$pure" | cut -d. -f1-2)"
+          fix=""
+          case "$mm" in
+            15.0) fix=15.0.5 ;; 15.1) fix=15.1.9 ;; 15.2) fix=15.2.6 ;; 15.3) fix=15.3.6 ;;
+            15.4) fix=15.4.8 ;; 15.5) fix=15.5.7 ;; 16.0) fix=16.0.7 ;;
+          esac
+          # App Router の有無。モノレポ（apps/web/app など）も見る
+          approuter="$(find . -maxdepth 4 -type d \( -path '*/app' -o -path '*/src/app' \) -not -path '*/node_modules/*' -not -path '*/.next/*' 2>/dev/null | head -1)"
+          if [[ -n "$fix" ]] && verlt "$pure" "$fix" && [[ -n "$approuter" ]]; then
+            note="$note ★ React2Shell（CVE-2025-55182。Next.js の案内では取り下げ済みの 66478）の修正前。版上げと秘密情報の入れ替えの二段（02 の H）"
           fi
-        fi ;;
-      react-server-dom-*)
-        case "$pure" in
-          19.0.0|19.1.0|19.1.1|19.2.0) note=" ★ React2Shell（CVE-2025-55182）の対象。版上げと秘密情報の入れ替え" ;;
-          *) if inrange "$pure" 19.0.0 19.0.4 || inrange "$pure" 19.1.0 19.1.5 || inrange "$pure" 19.2.0 19.2.4; then
-               note=" ★ 後続の DoS・ソース露出の勧告の修正前（CVE-2025-55183 / 55184 / 67779、CVE-2026-23864。すべて直るのは 19.0.4 / 19.1.5 / 19.2.4）"; fi ;;
-        esac ;;
-      @sveltejs/adapter-vercel)
-        verlt "$pure" 6.3.2 && note=" ★ 認証済みの応答がキャッシュされる CVE-2026-27118 の修正前（07 の 7 節）" ;;
-    esac
-  fi
-  printf '  %-28s %s%s\n' "$name" "$v" "$note"
-done
+          # 2026-09-08 の critical 2 件（修正は 15.5.24 / 16.3.3）と、2026-07-22 の勧告群（high を含む。修正は 15.5.21 / 16.2.11）。
+          # 14 以前はサポート外として上で知らせている
+          if [[ "$major" -ge 15 ]]; then
+            if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.24; } || inrange "$pure" 16.0.0 16.3.3; then
+              note="$note ★ 認証なしでコードを実行される critical の勧告（GHSA-2xp9-vwfh-vxw4・GHSA-p293-qw3h-jr36。2026-09-08）の修正前。15.5.24 / 16.3.3 以上へ（02 の H）"
+            fi
+            if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.21; } || inrange "$pure" 16.0.0 16.2.11; then
+              note="$note ★ 2026-07-22 の勧告群（SSRF・Proxy の迂回・DoS。high を含む）の修正前。15.5.21 / 16.2.11 以上へ"
+            fi
+          fi ;;
+        react-server-dom-*)
+          case "$pure" in
+            19.0.0|19.1.0|19.1.1|19.2.0) note=" ★ React2Shell（CVE-2025-55182）の対象。版上げと秘密情報の入れ替え" ;;
+            *) if inrange "$pure" 19.0.0 19.0.4 || inrange "$pure" 19.1.0 19.1.5 || inrange "$pure" 19.2.0 19.2.4; then
+                 note=" ★ 後続の DoS・ソース露出の勧告の修正前（CVE-2025-55183 / 55184 / 67779、CVE-2026-23864。すべて直るのは 19.0.4 / 19.1.5 / 19.2.4）"; fi ;;
+          esac ;;
+        @sveltejs/adapter-vercel)
+          verlt "$pure" 6.3.2 && note=" ★ 認証済みの応答がキャッシュされる CVE-2026-27118 の修正前（07 の 7 節）" ;;
+      esac
+    fi
+    printf '  %-28s %s%s%s\n' "$name" "$v" "$where" "$note"
+  done
+done <<<"$NODE_DIRS"
 [[ -z "$fw_found" ]] && echo "  （判定対象の枠組みは無い）"
 echo "  ※ ★ が無くても安全とは限らない。2026 年だけで同種の勧告が多数出ている。"
 echo "    github.com の各リポジトリの security/advisories で、この版に該当するものを確かめる"
@@ -2213,38 +2237,47 @@ if [[ -d .github/workflows ]]; then
   echo "  ※ 組織の設定（SHA 固定の強制、実行できる人とイベントの制限）はコードから見えない。取材で聞く"
 fi
 
-if [[ -f package.json ]]; then
+# 根と、自分のロックファイルを持つ下の階層（1b 節と同じ置き場）。package.json のある置き場だけ
+DIRS21="$(while IFS= read -r d; do [[ -n "$d" && -f "$d/package.json" ]] && printf '%s\n' "$d"; done <<<"$NODE_DIRS")"
+if [[ -n "$DIRS21" ]]; then
   hr "21. 依存のインストール時の防御（10 の 3-1）"
-  if [[ -f package-lock.json ]]; then
-    n_is="$(grep -c '"hasInstallScript": true' package-lock.json 2>/dev/null || true)"
-    echo "  インストール時にスクリプトが走る依存: ${n_is:-0} 件"
-    # 名前は直前に現れた "node_modules/<名前>" のキー。間の行数は決まっていないので -B では取れない
-    awk '/^[[:space:]]*"node_modules\//{k=$1} /"hasInstallScript": true/{gsub(/[":]/,"",k); sub(/.*node_modules\//,"",k); print k}' \
-      package-lock.json 2>/dev/null | sort -u | lim 15 | sed 's/^/    /'
-    # スキームの付いた取得元だけを見る（ワークスペースの "resolved": "packages/ui" は除く）
-    nonreg="$(grep -E '"resolved": "[a-z+]+:' package-lock.json 2>/dev/null | grep -vE 'registry\.npmjs\.org|registry\.yarnpkg\.com' | lim 5)"
-    # URL に認証情報（user:token@）が入っていることがあるので伏せる
-    [[ -n "$nonreg" ]] && { echo "  ★ 公式レジストリ以外から取っている依存:"; printf '%s\n' "$nonreg" | sed -E 's/^[[:space:]]*/    /; s#://[^/@"]+@#://<伏字>@#'; }
-  elif [[ -f pnpm-lock.yaml ]] && grep -q 'requiresBuild: true' pnpm-lock.yaml 2>/dev/null; then
-    echo "  インストール時にスクリプトが走る依存（pnpm-lock.yaml の requiresBuild）: $(grep -c 'requiresBuild: true' pnpm-lock.yaml) 件"
-  else
-    # yarn.lock・bun.lock・新しい pnpm のロックファイルは、スクリプトの有無を持たない。0 件と書かない
-    echo "  インストール時にスクリプトが走る依存: 判定できない（このロックファイルは有無を持たない。node_modules があれば、"
-    echo "    各 package.json の scripts の preinstall・install・postinstall を数える）"
-  fi
-  echo "  --- 防御の設定（無ければ「無い」と出る）---"
-  {
-    grep -nE 'ignore-scripts|min-release-age|allow-(git|remote|scripts)|strict-allow-scripts|dangerously-allow-all-scripts' .npmrc 2>/dev/null | sed 's/^/  .npmrc:/'
-    grep -nE '"(allowScripts|overrides|resolutions|packageManager)"' package.json 2>/dev/null | sed 's/^/  package.json:/'
-    grep -nE 'minimumReleaseAge|allowBuilds|onlyBuiltDependencies|dangerouslyAllowAllBuilds|blockExoticSubdeps|npmMinimalAgeGate|enableScripts' \
-      pnpm-workspace.yaml .yarnrc.yml bunfig.toml 2>/dev/null | sed 's/^/  /'
-    grep -nE '"pnpm"[[:space:]]*:' package.json 2>/dev/null | sed 's/^/  package.json:/'
-    grep -nE 'cooldown' .github/dependabot.y*ml 2>/dev/null | sed 's/^/  dependabot:/'
-    grep -nE 'installCommand' vercel.json 2>/dev/null | sed 's/^/  vercel.json:/'
-  } | show
-  # 依存の欄だけを見る（repository / homepage / $schema の URL は依存ではない）
-  gitdeps="$(awk '/"(dev|optional|peer)?[Dd]ependencies"[[:space:]]*:/{f=1;next} f&&/}/{f=0} f&&/:[[:space:]]*"(git\+|git:|github:|https?:\/\/|file:)/{print}' package.json 2>/dev/null | mask)"
-  [[ -n "$gitdeps" ]] && { echo "  ★ package.json に git や URL から取る依存がある:"; printf '%s\n' "$gitdeps" | sed 's/^[[:space:]]*/    /'; }
+  while IFS= read -r d; do
+    # 根でない置き場は見出しを付けて、その置き場で見る
+    [[ "$d" != "." ]] && echo "  === ${d#./} ==="
+    (
+      cd "$d" || exit 0
+      if [[ -f package-lock.json ]]; then
+        n_is="$(grep -c '"hasInstallScript": true' package-lock.json 2>/dev/null || true)"
+        echo "  インストール時にスクリプトが走る依存: ${n_is:-0} 件"
+        # 名前は直前に現れた "node_modules/<名前>" のキー。間の行数は決まっていないので -B では取れない
+        awk '/^[[:space:]]*"node_modules\//{k=$1} /"hasInstallScript": true/{gsub(/[":]/,"",k); sub(/.*node_modules\//,"",k); print k}' \
+          package-lock.json 2>/dev/null | sort -u | lim 15 | sed 's/^/    /'
+        # スキームの付いた取得元だけを見る（ワークスペースの "resolved": "packages/ui" は除く）
+        nonreg="$(grep -E '"resolved": "[a-z+]+:' package-lock.json 2>/dev/null | grep -vE 'registry\.npmjs\.org|registry\.yarnpkg\.com' | lim 5)"
+        # URL に認証情報（user:token@）が入っていることがあるので伏せる
+        [[ -n "$nonreg" ]] && { echo "  ★ 公式レジストリ以外から取っている依存:"; printf '%s\n' "$nonreg" | sed -E 's/^[[:space:]]*/    /; s#://[^/@"]+@#://<伏字>@#'; }
+      elif [[ -f pnpm-lock.yaml ]] && grep -q 'requiresBuild: true' pnpm-lock.yaml 2>/dev/null; then
+        echo "  インストール時にスクリプトが走る依存（pnpm-lock.yaml の requiresBuild）: $(grep -c 'requiresBuild: true' pnpm-lock.yaml) 件"
+      else
+        # yarn.lock・bun.lock・新しい pnpm のロックファイルは、スクリプトの有無を持たない。0 件と書かない
+        echo "  インストール時にスクリプトが走る依存: 判定できない（このロックファイルは有無を持たない。node_modules があれば、"
+        echo "    各 package.json の scripts の preinstall・install・postinstall を数える）"
+      fi
+      echo "  --- 防御の設定（無ければ「無い」と出る）---"
+      {
+        grep -nE 'ignore-scripts|min-release-age|allow-(git|remote|scripts)|strict-allow-scripts|dangerously-allow-all-scripts' .npmrc 2>/dev/null | sed 's/^/  .npmrc:/'
+        grep -nE '"(allowScripts|overrides|resolutions|packageManager)"' package.json 2>/dev/null | sed 's/^/  package.json:/'
+        grep -nE 'minimumReleaseAge|allowBuilds|onlyBuiltDependencies|dangerouslyAllowAllBuilds|blockExoticSubdeps|npmMinimalAgeGate|enableScripts' \
+          pnpm-workspace.yaml .yarnrc.yml bunfig.toml 2>/dev/null | sed 's/^/  /'
+        grep -nE '"pnpm"[[:space:]]*:' package.json 2>/dev/null | sed 's/^/  package.json:/'
+        grep -nE 'cooldown' .github/dependabot.y*ml 2>/dev/null | sed 's/^/  dependabot:/'
+        grep -nE 'installCommand' vercel.json 2>/dev/null | sed 's/^/  vercel.json:/'
+      } | show
+      # 依存の欄だけを見る（repository / homepage / $schema の URL は依存ではない）
+      gitdeps="$(awk '/"(dev|optional|peer)?[Dd]ependencies"[[:space:]]*:/{f=1;next} f&&/}/{f=0} f&&/:[[:space:]]*"(git\+|git:|github:|https?:\/\/|file:)/{print}' package.json 2>/dev/null | mask)"
+      [[ -n "$gitdeps" ]] && { echo "  ★ package.json に git や URL から取る依存がある:"; printf '%s\n' "$gitdeps" | sed 's/^[[:space:]]*/    /'; }
+    )
+  done <<<"$DIRS21"
   echo "  ※ 手元の設定より、本番のビルドで動く npm / pnpm の版で決まる（Vercel の既定は npm install。npm は Node 24 なら 11、Node 20 / 22 なら 10 で、どちらも依存のスクリプトを止めない）"
 fi
 
@@ -2379,7 +2412,7 @@ skipped=""
 [[ -z "$mob" ]] && skipped="$skipped 18（モバイル）"
 [[ -z "$baas" ]] && skipped="$skipped 19（BaaS）"
 [[ -d .github/workflows ]] || skipped="$skipped 20（CI）"
-[[ -f package.json ]] || skipped="$skipped 21（依存のインストール時）"
+[[ -n "$DIRS21" ]] || skipped="$skipped 21（依存のインストール時）"
 [[ -z "$agent_files" ]] && skipped="$skipped 22（エージェントの設定）"
 [[ -z "$rt" ]] && skipped="$skipped 23（リアルタイム通信）"
 [[ -z "$sms_hit$sms_cfg" ]] && skipped="$skipped 24（SMS）"

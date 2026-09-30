@@ -2009,6 +2009,20 @@ contains "audit_grep[基盤]: 根に無い Supabase の置き場も判定する"
 contains "audit_grep[基盤]: RLS の突き合わせをプロジェクトごとに行う"       "★ public.accounts（services/notes）" "$SMO"
 absent   "audit_grep[基盤]: RLS を有効にしたプロジェクトの表を並べない"     "（services/billing）" "$SMO"
 
+# ロックファイルを根に置かない構成。0 節・1b 節・21 節が根しか見ず、アプリを下の階層に置く構成でロックファイルを「無い」とし、
+# 枠組みの版の照合と 21 節を丸ごと省いていた。画面の側が別のロックファイルを持つ構成でも、その側の版を見ていなかった
+NL="$TMP/nested-lock"; fixture_cp "$ROOT/tests/fixtures/nested-lock" "$NL"
+NLA="$(bash "$SKILL/scripts/audit_grep.sh" "$NL/app-in-subdir" 2>&1)"
+contains "audit_grep[依存]: 根に無いロックファイルも見る"                   "web/package-lock.json（根には無い）" "$NLA"
+contains "audit_grep[1b]: 下の階層のロックファイルで枠組みの版を引く"       "15.5.4（web）" "$NLA"
+contains "audit_grep[依存]: 下の階層の依存もインストール時の防御を見る"     "=== web ===" "$NLA"
+contains "audit_grep[依存]: 下の階層のインストール時のスクリプトを並べる"   "    sharp" "$NLA"
+absent   "audit_grep[依存]: 下の階層に依存があれば 21 節を省いたと言わない" "21（依存のインストール時）" "$NLA"
+NLB="$(bash "$SKILL/scripts/audit_grep.sh" "$NL/split-client" 2>&1)"
+contains "audit_grep[1b]: 根と別に画面の側のロックファイルも見る"           "6.26.2（client）" "$NLB"
+contains "audit_grep[依存]: 画面の側の依存もインストール時の防御を見る"     "=== client ===" "$NLB"
+absent   "audit_grep[依存]: 根にロックファイルがあれば下の階層を添えない"   "（根には無い）" "$NLB"
+
 # 2m. ID を受け取るハンドラの、持ち主の照合。ハンドラの範囲ごとに判定する（Express・Rails・Django・FastAPI）。
 # 以前はファイル単位で、ログインの語（req.user・current_user）がファイルのどこかにあれば ★ を付けていなかった
 OC="$TMP/owner-check"
