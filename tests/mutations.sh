@@ -363,6 +363,18 @@ mutate "道具: 環境変数を挟んで grep -q に渡す" "../tests/self-audit
   's = s.replace("if grep -E \x27生きていない 0\x27 <<<\"$mres\" >/dev/null; then", "if printf \x27%s\x27 \"$mres\" | LC_ALL=C grep -qE \x27生きていない 0\x27; then", 1)'
 mutate "台帳: 枠の固定を外したシートの表示を正さない" "scripts/make_register.py" "窓枠の無いシートの選択範囲が" \
   's = s.replace("    fix_views(wb)\n", "", 1)'
+mutate "網羅表: 答えの viewpoint を見ない" "../tests/eval/coverage.py" "答えの viewpoint を分類より優先する" \
+  's = s.replace("    v = item.get(\"viewpoint\")\n", "    v = None\n", 1)'
+mutate "網羅表: 失敗した検査も数える" "../tests/eval/coverage.py" "成功した検査だけを観点ごとに数える" \
+  's = s.replace("r\"\\s*✓ (audit_grep", "r\"\\s*[✓✗] (audit_grep", 1)'
+mutate "採点: 対照を答えとして数える" "../tests/eval/score.py" "対照は見つけた数の分母に入れない" \
+  's = s.replace("        if it.get(\x27control\x27):\n", "        if False:\n", 1)'
+mutate "比較: 対照への誤検出の増加を見ない" "../tests/eval/compare.py" "対照への誤検出が旧より増えれば" \
+  's = s.replace("            if ofp and nfp and mean(nfp) > mean(ofp):", "            if False:", 1)'
+mutate "19: 根の supabase/ しか見ない" "scripts/audit_grep.sh" "根に無い Supabase の置き場も判定する" \
+  's = s.replace(" || [[ -n \"$(nested_dir supabase)\" ]] \\\n  || [[ -n \"$(nested_pkg \x27\"@supabase/\x27)\" ]]; } && baas=\"$baas Supabase\"", "; } && baas=\"$baas Supabase\"", 1)'
+mutate "19: RLS の突き合わせをプロジェクトで分けない" "scripts/audit_grep.sh" "RLS の突き合わせをプロジェクトごとに行う" \
+  's = s.replace("projkey() { sed -E \x27s#/(supabase", "projkey() { sed -E \x27s#.*##; s#/(supabase", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("grep -rnE \x27intent-filter|CFBundleURLSchemes|associatedDomains|", "grep -rnE \x27intent-filter|CFBundleURLSchemes|\nassociatedDomains|", 1)'
 

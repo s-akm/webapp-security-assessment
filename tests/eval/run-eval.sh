@@ -157,6 +157,8 @@ else
   echo "答えの一覧を取り出し、手掛かりを消す"
   # shellcheck disable=SC2086  # 引数は targets.tsv に書いた語。分けて渡す
   ( cd "$LOCAL" && python3 -B "$PREP_PATH" $PREP_ARGS "$SRC" "$OUT/answers.json" )
+  # 観点の網羅表（coverage.py）が読む置き場へ、答えの一覧を写す（題材ごとに最新の 1 つ）
+  mkdir -p "$LOCAL/answers" && cp "$OUT/answers.json" "$LOCAL/answers/$TARGET.json"
 fi
 
 # audit_grep.sh は先に実行して、出力を読ませる。エージェントに実行させると、変数やパイプを組み合わせたコマンドになり、

@@ -503,11 +503,17 @@ fi
 
 # --- マネージドの基盤（BaaS）---
 baas=""
-{ [[ -d supabase ]] || grep -qE '"@supabase/' package.json 2>/dev/null; } && baas="$baas Supabase"
+# 根に無い置き場（モノレポの apps/web/supabase・services/x/supabase など）も見る。根だけを見ていて、サービスごとに
+# Supabase のプロジェクトを置く構成で「無」と判定し、19 節を丸ごと省いていた（実地の評価で分かった）
+nested_dir() { find . -maxdepth 5 \( -name node_modules -o -name .git -o -name vendor \) -prune -o -type d -name "$1" -print 2>/dev/null | head -1; }
+nested_pkg() { find . -maxdepth 4 \( -name node_modules -o -name .git -o -name vendor \) -prune -o -type f -name package.json -print 2>/dev/null \
+                 | head -200 | tr '\n' '\0' | xargs -0 grep -lE "$1" -- /dev/null 2>/dev/null | head -1; }
+{ [[ -d supabase ]] || grep -qE '"@supabase/' package.json 2>/dev/null || [[ -n "$(nested_dir supabase)" ]] \
+  || [[ -n "$(nested_pkg '"@supabase/')" ]]; } && baas="$baas Supabase"
 { [[ -e firebase.json ]] || [[ -n "$(find . -maxdepth 3 \( -name 'firestore.rules' -o -name 'storage.rules' -o -name 'database.rules.json' \) -not -path '*/node_modules/*' 2>/dev/null | head -1)" ]] \
   || grep -qE '"firebase(-admin)?"' package.json 2>/dev/null; } && baas="$baas Firebase"
 grep -qE '"@clerk/' package.json 2>/dev/null && baas="$baas Clerk"
-{ [[ -d convex ]] || grep -qE '"convex"' package.json 2>/dev/null; } && baas="$baas Convex"
+{ [[ -d convex ]] || grep -qE '"convex"' package.json 2>/dev/null || [[ -n "$(nested_pkg '"convex"')" ]]; } && baas="$baas Convex"
 if [[ -n "$baas" ]]; then
   say "マネージドの基盤" "有 →${baas} → 02 の E 節・03 の 1 節・07 の 11-3・11-4（19 節）"
   need="$need references/07-web-vulnerabilities.md"
@@ -2035,14 +2041,25 @@ if [[ -n "$baas" ]]; then
       if [[ -n "$sqlfiles" ]]; then
         # 名前を正規化して突き合わせる（スキーマ省略時は public、引用符と大文字小文字を外す）
         norm() { tr 'A-Z' 'a-z' | tr -d '"' | sed -E 's/^([a-z0-9_]+)$/public.\1/'; }
-        # shellcheck disable=SC2086
-        created="$(sqlstmts $sqlfiles | grep -oiE 'create[[:space:]]+(unlogged[[:space:]]+)?table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?"?[A-Za-z0-9_]+"?(\."?[A-Za-z0-9_]+"?)?' \
-                   | awk '{print $NF}' | norm | sort -u)"
-        # shellcheck disable=SC2086
-        enabled="$(sqlstmts $sqlfiles | grep -oiE 'alter[[:space:]]+table[[:space:]]+(only[[:space:]]+)?(if[[:space:]]+exists[[:space:]]+)?"?[A-Za-z0-9_]+"?(\."?[A-Za-z0-9_]+"?)?[[:space:]]+enable[[:space:]]+row[[:space:]]+level[[:space:]]+security' \
-                   | awk '{for(i=1;i<=NF;i++) if(tolower($i)=="enable") print $(i-1)}' | norm | sort -u)"
-        comm -23 <(printf '%s\n' "$created" | grep -v '^$') <(printf '%s\n' "$enabled" | grep -v '^$') \
-          | grep -vE '^(auth|storage|extensions|realtime|supabase_[a-z_]+|private|internal)\.' | sed 's/^/  ★ /'
+        # 突き合わせはプロジェクト（マイグレーションの置き場の親のディレクトリ）ごとに行う。1 つのリポジトリに Supabase のプロジェクトが
+        # 複数あると、別のプロジェクトで同じ名前の表に RLS を有効にしていれば、有効にしていない表を見逃していた（実地の評価で分かった）
+        projkey() { sed -E 's#/(supabase/(migrations|schemas)|prisma/migrations|drizzle|migrations)/.*$##; s#/schema\.sql$##'; }
+        projects="$(printf '%s\n' "$sqlfiles" | grep -v '^/dev/null$' | projkey | sort -u)"
+        nproj="$(printf '%s\n' "$projects" | grep -c .)"
+        while IFS= read -r pk; do
+          [[ -n "$pk" ]] || continue
+          files="$(printf '%s\n' "$sqlfiles" | while IFS= read -r f; do [[ "$(printf '%s\n' "$f" | projkey)" == "$pk" ]] && printf '%s\n' "$f"; done)"
+          # shellcheck disable=SC2086
+          created="$(sqlstmts $files | grep -oiE 'create[[:space:]]+(unlogged[[:space:]]+)?table[[:space:]]+(if[[:space:]]+not[[:space:]]+exists[[:space:]]+)?"?[A-Za-z0-9_]+"?(\."?[A-Za-z0-9_]+"?)?' \
+                     | awk '{print $NF}' | norm | sort -u)"
+          # shellcheck disable=SC2086
+          enabled="$(sqlstmts $files | grep -oiE 'alter[[:space:]]+table[[:space:]]+(only[[:space:]]+)?(if[[:space:]]+exists[[:space:]]+)?"?[A-Za-z0-9_]+"?(\."?[A-Za-z0-9_]+"?)?[[:space:]]+enable[[:space:]]+row[[:space:]]+level[[:space:]]+security' \
+                     | awk '{for(i=1;i<=NF;i++) if(tolower($i)=="enable") print $(i-1)}' | norm | sort -u)"
+          # プロジェクトが 1 つなら、以前と同じく表の名前だけを出す
+          where=""; [[ "$nproj" -gt 1 ]] && where="（${pk#./}）"
+          comm -23 <(printf '%s\n' "$created" | grep -v '^$') <(printf '%s\n' "$enabled" | grep -v '^$') \
+            | grep -vE '^(auth|storage|extensions|realtime|supabase_[a-z_]+|private|internal)\.' | sed "s#^#  ★ #; s#\$#${where}#"
+        done <<<"$projects"
       fi
     } | show
     echo "  ※ API に出ないスキーマ（private など）に置いたテーブルは除いている。公開スキーマの設定は 03 の 1 節で確かめる"

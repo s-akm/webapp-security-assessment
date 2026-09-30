@@ -2001,6 +2001,14 @@ if grep -F 'routes.js:2:' <<<"$(printf '%s' "$S2G" | sed -n '/--- 受け取っ�
   ng "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない" "routes.js:2 が並んだ"
 else ok "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない"; fi
 
+# Supabase のプロジェクトを 2 つ持つモノレポ。根に supabase/ も package.json も無い構成でも 0 節で判定し、
+# 19 節の RLS の突き合わせをプロジェクトごとに行う（別のプロジェクトの同じ名前の表で打ち消していた）
+SM="$TMP/supabase-monorepo"; fixture_cp "$ROOT/tests/fixtures/supabase-monorepo" "$SM"
+SMO="$(bash "$SKILL/scripts/audit_grep.sh" "$SM" 2>&1)"
+contains "audit_grep[基盤]: 根に無い Supabase の置き場も判定する"           "マネージドの基盤          有 → Supabase" "$SMO"
+contains "audit_grep[基盤]: RLS の突き合わせをプロジェクトごとに行う"       "★ public.accounts（services/notes）" "$SMO"
+absent   "audit_grep[基盤]: RLS を有効にしたプロジェクトの表を並べない"     "（services/billing）" "$SMO"
+
 # 2m. ID を受け取るハンドラの、持ち主の照合。ハンドラの範囲ごとに判定する（Express・Rails・Django・FastAPI）。
 # 以前はファイル単位で、ログインの語（req.user・current_user）がファイルのどこかにあれば ★ を付けていなかった
 OC="$TMP/owner-check"
@@ -2393,6 +2401,28 @@ SRG="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-ra.json" "$TMP/eval-rr.jso
 contains "eval[採点]: 範囲の答えは、指摘の範囲が重なれば一致させる"   "見つけた 2 / 3"                 "$SRG"
 if grep -E '見落とし +in +R3' <<<"$SRG" >/dev/null; then ok "eval[採点]: 範囲の答えに重ならない指摘は一致させない"
 else ng "eval[採点]: 範囲の答えに重ならない指摘は一致させない" "R3 が見落としになっていない"; fi
+# 対照（正しく作ってあり、指摘してはいけない箇所）。「問題あり」が掛かれば誤検出として数え、見つけた数の分母に入れない
+cat > "$TMP/eval-ca.json" <<'EOF'
+{"items": [
+  {"id": "A1", "scope": "in", "category": "x", "locations": [], "ranges": [{"file": "db/m1.sql", "start": 1, "end": 10}]},
+  {"id": "C1", "scope": "in", "category": "x", "control": true, "locations": [], "ranges": [{"file": "db/m2.sql", "start": 1, "end": 10}]},
+  {"id": "C2", "scope": "in", "category": "x", "control": true, "locations": [], "ranges": [{"file": "db/m3.sql", "start": 1, "end": 10}]}
+]}
+EOF
+cat > "$TMP/eval-cr.json" <<'EOF'
+{"findings": [
+  {"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y", "locations": [{"file": "db/m1.sql", "line": 5}]},
+  {"id": "S-02", "title": "t", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "y", "locations": [{"file": "db/m2.sql", "line": 3}]},
+  {"id": "S-03", "title": "t", "verdict": "問題なし", "priority": "—", "fact": "x", "assessment": "y", "locations": [{"file": "db/m3.sql", "line": 3}]}
+ ], "unconfirmed": [{"id": "U-1", "text": "a", "blocks": []}], "maintain": []}
+EOF
+SCT="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-ca.json" "$TMP/eval-cr.json" --summary "$TMP/eval-cs.json" 2>&1 || true)"
+contains "eval[採点]: 対照は見つけた数の分母に入れない"               "見つけた 1 / 1"                 "$SCT"
+contains "eval[採点]: 対照に掛かる問題ありを誤検出として数える"       "対照 2 か所のうち、誤って「問題あり」と指摘したもの 1 か所" "$SCT"
+absent   "eval[採点]: 対照に掛かる指摘を一覧外に数えない"             "答えの一覧に無い「問題あり」 1 件" "$SCT"
+if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if (d["controls"], d["control_fp"]) == (2, 1) else 1)' "$TMP/eval-cs.json" 2>/dev/null; then
+  ok "eval[採点]: 対照の数と誤検出の数を集計に残す"
+else ng "eval[採点]: 対照の数と誤検出の数を集計に残す" "summary に controls・control_fp が無いか、数が違う"; fi
 # 未確認事項が止めている相手は、指摘（S-）でも別の未確認事項（U-）でもよい。実在しない ID だけを咎める
 cat > "$TMP/eval-su.json" <<'EOF'
 {"findings": [{"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y",
@@ -2478,6 +2508,23 @@ PY
 )"
 if [[ "$ZH" == "ALL OK" ]]; then ok "eval[前処理]: 手掛かりのコメントだけを消す（7 例）"
 else ng "eval[前処理]: 手掛かりのコメントだけを消す（7 例）" "$ZH"; fi
+
+# 観点の網羅表（coverage.py）。答えの分類と検査の名前の区分を、スキルの観点に振り分けて数える。題材の名前は出さない
+CV="$TMP/coverage"; mkdir -p "$CV/answers"
+printf '%s' '{"items": [{"category": "Injection", "scope": "in"}, {"category": "Injection", "scope": "in"}, {"category": "XSS", "scope": "out"},
+  {"category": "Security Misconfiguration", "viewpoint": "02 E", "scope": "in"}, {"category": "Injection", "scope": "in", "control": true}]}' > "$CV/answers/secret-target-a.json"
+printf '%s' '{"items": [{"category": "sql injection", "scope": "in"}, {"category": "Unknown Thing", "scope": "in"}]}' > "$CV/answers/secret-target-b.json"
+printf '  ✓ audit_grep[2m]: a\n  ✓ audit_grep[2m]: b\n  ✗ audit_grep[2m]: c\n  ✓ recon[DNS]: d\n' > "$CV/run.txt"
+CVO="$(python3 "$ROOT/tests/eval/coverage.py" "$CV/run.txt" --answers "$CV/answers" 2>&1)"
+contains "eval[網羅表]: 分類から観点に振り分けて、答えと題材を数える" "| 07 0. インジェクション | 3 | 2 | 1 |" "$CVO"
+contains "eval[網羅表]: 答えの viewpoint を分類より優先する"         "| 02 E. データアクセス層（RLS・定義者権限の関数・ビュー） | 1 | 1 |" "$CVO"
+contains "eval[網羅表]: 成功した検査だけを観点ごとに数える"           "| 02 A. 認可 | — | — | — | 2 | **未測定** |" "$CVO"
+contains "eval[網羅表]: 実地の評価で動かさない部分は範囲外と出す"     "| 03・09 実機確認（HTTP・ブラウザ） | — | — | — | 1 | 実地の評価の範囲外 |" "$CVO"
+contains "eval[網羅表]: 振り分けられなかった分類を知らせる"           "振り分けられなかった答えの分類: Unknown Thing（1）" "$CVO"
+absent   "eval[網羅表]: 題材の名前を出さない"                         "secret-target" "$CVO"
+CVU="$(python3 "$ROOT/tests/eval/coverage.py" "$CV/run.txt" --answers "$CV/answers" --unmeasured 2>/dev/null)"
+contains "eval[網羅表]: 未測定の観点を並べる"                         "- 02 A. 認可" "$CVU"
+absent   "eval[網羅表]: 答えのある観点を未測定に並べない"             "07 0. インジェクション" "$CVU"
 if grep -F '{{premise}}' "$ROOT/tests/eval/prompt.md" >/dev/null && grep -F 'premise_file="$LOCAL/$PREMISE"' "$ROOT/tests/eval/run-eval.sh" >/dev/null; then
   ok "eval: 題材ごとの前提を、手元の置き場から指示に差し込む"
 else ng "eval: 題材ごとの前提を、手元の置き場から指示に差し込む" "prompt.md の {{premise}} か run-eval.sh の読み込みが無い"; fi
@@ -2521,13 +2568,13 @@ else ng "eval: run-eval.sh を実行の前に最後まで読み切る" "全体�
 
 # 版の比較（compare.py）。版を上げてよいかの判定に使うので、劣後を見逃さないか・足りない回数で「劣後なし」と言わないかを確かめる。
 # 架空の題材 t1 で、旧 9.9.0 と新 9.9.1 を比べる。コミットは git で解けない語にして、版の名前でまとめさせる
-cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル] [新の回ごとのモデル（空白区切り）] [新の答えの数] [未コミットの回を足す]
+cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル] [新の回ごとのモデル（空白区切り）] [新の答えの数] [未コミットの回を足す] [新の回で対照に誤検出するか]
   local d="$TMP/eval-cmp-$1"; mkdir -p "$d"
-  python3 - "$d" "$2" "$3" "$4" "${5:-m}" "${6:-}" "${7:-19}" "${8:-}" <<'PY'
+  python3 - "$d" "$2" "$3" "$4" "${5:-m}" "${6:-}" "${7:-19}" "${8:-}" "${9:-}" <<'PY'
 import sys
 d, found, viol, xfound, om = sys.argv[1], sys.argv[2].split(), int(sys.argv[3]), int(sys.argv[4]), sys.argv[5]
 nm = sys.argv[6].split() or ['m'] * len(found)
-ninr, dirty = sys.argv[7], sys.argv[8]
+ninr, dirty, ctlfp = sys.argv[7], sys.argv[8], sys.argv[9]
 H = ['日付', 'スキルの版', 'スキルのコミット', '題材', '題材のコミット', 'モデル', '見つけた', 'うち行で指した', '範囲内', '保留', '見誤り',
      '範囲が広い', '見落とし', '一覧外', '違反', '費用（米ドル）', '分', '入力トークン', 'キャッシュ読みトークン', '出力トークン']
 hist, items = ['\t'.join(H)], ['\t'.join(['日付', 'スキルの版', 'スキルのコミット', '題材', '実行', '項目', '範囲', '状態', 'モデル'])]
@@ -2538,6 +2585,8 @@ for n, (ver, c, f, v, x, m) in enumerate(runs):
     inr = ninr if ver == '9.9.1' else '19'
     hist.append('\t'.join(['2026-01-01', ver, c, 't1', 'x', m, f, f, inr, '0', '0', '0', '0', '5', str(v), '2', '10', '1', '1', '1']))
     items.append('\t'.join(['2026-01-01', ver, c, 't1', f'run{n}', 'X', 'in', '見つけた' if x else '見落とし', m]))
+    items.append('\t'.join(['2026-01-01', ver, c, 't1', f'run{n}', 'C', 'control',
+                             '誤検出（対照）' if (ctlfp and ver == '9.9.1') else '対照を守った', m]))
 open(d + '/history.tsv', 'w').write('\n'.join(hist) + '\n'); open(d + '/items.tsv', 'w').write('\n'.join(items) + '\n')
 PY
   CMP_OUT="$(WSA_EVAL_LOCAL="$d" python3 "$ROOT/tests/eval/compare.py" --new 9.9.1 --old 9.9.0 2>&1)"; CMP_RC=$?
@@ -2551,6 +2600,9 @@ else ng "eval[比較]: 違反が旧より増えれば劣後とする" "終了コ
 cmp_case drop "7 8" 0 2 || true
 if [[ "$CMP_RC" -eq 1 ]] && grep -qF '見つけた数の平均が' <<<"$CMP_OUT"; then ok "eval[比較]: 見つけた数の平均が許す幅を超えて下がれば劣後とする"
 else ng "eval[比較]: 見つけた数の平均が許す幅を超えて下がれば劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
+cmp_case ctl "11 12" 0 2 m "" 19 "" 1 || true
+if [[ "$CMP_RC" -eq 1 ]] && grep -qF '1 回あたりの対照への誤検出の数が旧より増えた' <<<"$CMP_OUT"; then ok "eval[比較]: 対照への誤検出が旧より増えれば劣後とする"
+else ng "eval[比較]: 対照への誤検出が旧より増えれば劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi
 cmp_case item "11 12" 0 0 || true
 if [[ "$CMP_RC" -eq 1 ]] && grep -qF '項目を見つけなくなった（X: 旧 2/2 → 新 0/2）' <<<"$CMP_OUT"; then ok "eval[比較]: 旧で毎回見つけた項目を新で 1 度も見つけなければ劣後とする"
 else ng "eval[比較]: 旧で毎回見つけた項目を新で 1 度も見つけなければ劣後とする" "終了コード $CMP_RC: $(tail -1 <<<"$CMP_OUT")"; fi

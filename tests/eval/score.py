@@ -11,6 +11,8 @@ schema.json の形のオブジェクトそのもの。
 1. 見つけたか。答え 1 件ごとに、同じファイルで、穴の行の前後 --tolerance 行（既定 3）に掛かる指摘があるか。
    判定が「問題あり」なら見つけた、「判断保留」なら保留、「問題なし」なら見誤り、無ければ見落とし
 2. 答えの一覧に無い「問題あり」。誤検出とは限らない（教材には印の無い穴も多い）。人が読んで仕分ける
+   答えの一覧に対照（"control": true。正しく作ってあり、指摘してはいけない箇所）があれば、そこに掛かる「問題あり」を
+   誤検出（対照）として数える。対照は見つけた数の分母に入れない
 3. スキルの方針を守っているか。判定を丸投げする言い回し、事実と所見の書き分け、優先度、未確認事項、鍵の値の転記
 """
 import argparse
@@ -139,6 +141,12 @@ def score(answers, result, tol):
         hit = [f for f in findings if matches(it, f, tol)]
         matched_ids.update(id(f) for f in hit)
         verdicts = {f.get('verdict') for f in hit}
+        if it.get('control'):
+            status = '誤検出（対照）' if '問題あり' in verdicts else '対照を守った'
+            rows.append({'id': it['id'], 'scope': 'control', 'category': it.get('category', ''),
+                         'status': status, 'precise': False,
+                         'by': [f.get('id') for f in hit if f.get('verdict') == '問題あり']})
+            continue
         if '問題あり' in verdicts:
             status = '見つけた'
         elif '判断保留' in verdicts:
@@ -204,6 +212,8 @@ def score(answers, result, tol):
         'findings': len(findings),
         'extra': len(extra),
         'violations': len(violations),
+        'controls': sum(1 for r in rows if r['scope'] == 'control'),
+        'control_fp': count('誤検出（対照）', rows),
     }
     return rows, extra, violations, summary
 
@@ -271,6 +281,8 @@ def main():
     if s['wide_locations']:
         print(f'  ※ {WIDE} 行を超える場所が {s["wide_locations"]} か所あり、一致の判定に使っていない（ファイル全体を指すなど）')
     print(f'範囲外で見つけた {s["out_found"]}  指摘 {s["findings"]} 件のうち、答えの一覧に無い「問題あり」 {s["extra"]} 件  方針の違反 {s["violations"]} 件')
+    if s['controls']:
+        print(f'対照 {s["controls"]} か所のうち、誤って「問題あり」と指摘したもの {s["control_fp"]} か所')
     if meta:
         print(f'費用 ${meta["cost_usd"]}  {meta["turns"]} ターン  {meta["minutes"]} 分  {meta["model"]}  権限で止められた操作 {meta["permission_denials"]}')
         print(f'トークン 入力 {meta["tokens_input"]:,}  キャッシュ読み {meta["tokens_cache_read"]:,}  出力 {meta["tokens_output"]:,}')

@@ -14,8 +14,9 @@
   history.tsv  1 回 1 行（run-eval.sh --record が足す）
   items.tsv    1 回・1 項目 1 行（同上。項目ごとの見つけた・見落としを比べるのに使う）
 
-題材ごとに 1 回ずつ当て、疑いのある題材だけをもう 1 回当てる。疑いは次の 3 つ:
+題材ごとに 1 回ずつ当て、疑いのある題材だけをもう 1 回当てる。疑いは次の 4 つ:
   - 1 回あたりの違反の数が、旧より増えた
+  - 1 回あたりの対照（正しく作ってあり、指摘してはいけない箇所）への誤検出の数が、旧より増えた
   - 見つけた数の平均が、旧の平均から --tolerance を超えて下がった
   - 旧ですべての回で見つけた項目を、新で 1 度も見つけなかった
 新が 1 回だけなら「要再確認」、2 回以上でも疑いが残れば「劣後」とする（旧が 1 回だけの項目の抜けは「注意」にとどめる）。
@@ -182,6 +183,24 @@ def main():
                 return runs, found
             orun, ofound = per_item({group_key(old[0])}, {x['モデル'] for x in old})
             nrun, nfound = per_item(new_keys, models)
+
+            # 対照への誤検出。items.tsv の範囲が control の行を、1 回ごとに数える（誤検出の無い回は 0）
+            def control_fp(keys, model_set):
+                runs, fp = set(), defaultdict(int)
+                for r in items:
+                    if r['題材'] != t or r.get('範囲') != 'control' or group_key(r) not in keys:
+                        continue
+                    if model_set and r.get('モデル', '') not in model_set:
+                        continue
+                    runs.add(r['実行'])
+                    if r['状態'] == '誤検出（対照）':
+                        fp[r['実行']] += 1
+                return [fp[x] for x in sorted(runs)]
+            ofp, nfp = control_fp({group_key(old[0])}, {x['モデル'] for x in old}), control_fp(new_keys, models)
+            if nfp:
+                print(f'  対照への誤検出（1 回ごと）: 旧 {"・".join(map(str, ofp)) or "—"} → 新 {"・".join(map(str, nfp))}')
+            if ofp and nfp and mean(nfp) > mean(ofp):
+                doubts.append('1 回あたりの対照への誤検出の数が旧より増えた')
             for iid in sorted(set(orun) & set(nrun)):
                 on, of, nn, nf = len(orun[iid]), len(ofound[iid]), len(nrun[iid]), len(nfound[iid])
                 msg = f'{iid}: 旧 {of}/{on} → 新 {nf}/{nn}'

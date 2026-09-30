@@ -22,6 +22,10 @@
     "secrets": ["題材に埋め込まれた値"]      結果に写していれば違反として数える（score.py）
   }
 
+答えの項目には、次も書ける。
+  "control": true      対照（正しく作ってあり、指摘してはいけない箇所）。score.py が誤検出として数え、見つけた数の分母に入れない
+  "viewpoint": "02 E"  観点の網羅表（coverage.py）での振り分け先。書かなければ category から決める
+
 答えの場所は、アンカーを写しの中で探して決める。見つからなければ止める（題材のコミットを上げてコードが
 変わったときに、黙ってずれないため）。手掛かりは、行番号を保ったまま消す（答えの行と評価者が見る行を一致させる）。
 """
@@ -100,8 +104,12 @@ def main():
                 ranges.append({'file': rel, 'start': hits[0], 'end': end})
             else:
                 locs.append({'file': rel, 'line': hits[0]})
-        items.append({'id': it['id'], 'keys': [it.get('basis', it['id'])], 'name': it.get('basis', ''),
-                      'category': it.get('category', ''), 'scope': it.get('scope', 'in'), 'locations': locs, 'ranges': ranges})
+        row = {'id': it['id'], 'keys': [it.get('basis', it['id'])], 'name': it.get('basis', ''),
+               'category': it.get('category', ''), 'scope': it.get('scope', 'in'), 'locations': locs, 'ranges': ranges}
+        for k in ('control', 'viewpoint'):
+            if k in it:
+                row[k] = it[k]
+        items.append(row)
 
     # 2. 手掛かりのコメントを消す
     hint = re.compile(spec['hint_regex'], re.I) if spec.get('hint_regex') else None
@@ -172,8 +180,9 @@ def main():
 
     data = {'target': spec.get('name', ''), 'secrets': spec.get('secrets', []), 'items': items}
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    n_in = sum(1 for x in items if x['scope'] == 'in')
-    print(f'答え {len(items)} 件（範囲内 {n_in} 件）／手掛かりのコメントを消した行 {stripped}')
+    n_in = sum(1 for x in items if x['scope'] == 'in' and not x.get('control'))
+    n_ctl = sum(1 for x in items if x.get('control'))
+    print(f'答え {len(items) - n_ctl} 件（範囲内 {n_in} 件）・対照 {n_ctl} か所／手掛かりのコメントを消した行 {stripped}')
 
 
 if __name__ == '__main__':
