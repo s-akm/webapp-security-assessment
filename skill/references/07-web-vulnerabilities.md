@@ -99,11 +99,18 @@ grep -rnE 'location\.(hash|search)|URLSearchParams\(|window\.name|document\.refe
 
 | 場所 | 例 | 何が起きるか |
 |---|---|---|
-| **属性値のうち URL を取るもの** | `href={userInput}` / `src={userInput}` | `javascript:` 形式の URL を入れられる |
+| **属性値のうち URL を取るもの** | `href={userInput}` / `src={userInput}` | `javascript:` 形式の URL を入れられる（止まるかは枠組みと版で変わる。表の下の注） |
 | **イベントハンドラ属性** | `onclick={...}` | 文字列として組み立てていれば注入できる |
 | **`<script>` の中に埋める JSON** | JSON-LD、初期状態の受け渡し | `</script>` を含む文字列でタグを閉じられる |
 | **`<style>` やスタイル属性** | `style={userInput}` | 情報の抜き出しに使われることがある |
 | **コンポーネントの `props` を透過的に展開** | `{...userProps}` | 意図しない属性が付く |
+
+**URL を取る属性は、枠組みとその版で止まるかが変わる。** React 19 以降（Next.js の App Router が同梱する版を含む）は、`href`・`src`・`action`・`formAction` に入った
+`javascript:` の URL を、画面での描画でもサーバーでの描画でも、実行されない値に置き換える（大文字小文字を混ぜた形や、前に空白・制御文字を置き、途中に改行・タブを挟んだ形も含む）。
+Angular も止める。React 18 以前（開発時の警告だけ）、Vue、Svelte、HTML を文字列で組み立てる箇所では止まらない。止まる版でも、同じ値を
+`window.location`・`window.open` に渡したり、メールの本文や Markdown の描画・`dangerouslySetInnerHTML` に流したりすると止まらない。
+**判定は「どの版の何で描画し、その値がほかのどこへ流れるか」をコードと依存の版で確かめてから決める。** 止まる版の属性にしか出ない値でも、
+保存の時点で `http`・`https` に絞る是正は勧める（描画の仕組みや版を替えたときに穴が開く）。ほかの出口が無ければ、優先度は低くしてよい。
 
 **JSON-LD は特に見落とされやすい。** 構造化データを `JSON.stringify()` して `<script type="application/ld+json">` に入れる書き方はよくあるが、値に記事タイトルやユーザー入力が混ざると、`</script>` を含む文字列でスクリプトブロックを抜けられる。埋め込み前に `<` を `\u003c` へ置換しているか（`JSON.stringify(data).replace(/</g, '\\u003c')` の形）を確認する。JSON としては同じ値のまま、`</script>` が文字列の中に現れなくなる。
 

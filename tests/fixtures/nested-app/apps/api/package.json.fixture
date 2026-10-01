@@ -1,0 +1,7 @@
+{
+  "name": "api",
+  "private": true,
+  "dependencies": {
+    "@nestjs/common": "10.4.0"
+  }
+}

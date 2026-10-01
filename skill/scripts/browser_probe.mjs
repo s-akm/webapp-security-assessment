@@ -517,7 +517,7 @@ async function probe(browser, base, host, paths) {
   if (paths.length > 0) {
     hr("6. 追加パスの応答とキャッシュ指定");
     for (const p of paths) {
-      // recon.sh と同じく、サイトの根（オリジン）からのパスとして開く。渡された URL にパスが付いていても足さない
+      // recon.sh と同じく、サイトのルート（オリジン）からのパスとして開く。渡された URL にパスが付いていても足さない
       const url = `${new URL(base).origin}${p.startsWith("/") ? p : "/" + p}`;
       try {
         const r = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });

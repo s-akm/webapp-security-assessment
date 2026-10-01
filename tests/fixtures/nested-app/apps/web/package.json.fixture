@@ -1,0 +1,11 @@
+{
+  "name": "web",
+  "private": true,
+  "dependencies": {
+    "next": "15.5.10",
+    "@clerk/nextjs": "6.0.0",
+    "@supabase/supabase-js": "2.47.10",
+    "firebase": "11.0.0",
+    "convex": "1.17.0"
+  }
+}

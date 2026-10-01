@@ -83,6 +83,13 @@ done
 if [[ -z "$orphan" ]]; then ok "すべての references / scripts / templates が SKILL.md に載っている"
 else ng "孤児ファイルが無い" "SKILL.md に記載が無い:$orphan"; fi
 
+# URL を取る属性の javascript: は、React 19 以降は描画のときに止まる。止まることを理由に指摘を捨てず、ほかの出口の確かめと
+# 保存の時点で http・https に絞る是正を勧める（実地の評価で、止まる版の href を P4 で指摘した回の扱いを決めた）
+if grep -qF 'React 19 以降' "$SKILL/references/07-web-vulnerabilities.md" \
+   && grep -qF '保存の時点で `http`・`https` に絞る是正は勧める' "$SKILL/references/07-web-vulnerabilities.md"; then
+  ok "URL を取る属性は、止まる版でも是正を勧めると書いている"
+else ng "URL を取る属性は、止まる版でも是正を勧めると書いている" "07 の 1-2 節の注から、版の違いか是正の勧めが消えている"; fi
+
 # 未確認事項が止めている相手は、台帳にある ID で書く（実地の評価で、台帳に無い名前を書いた回があった）
 if grep -qF '止めている相手は、台帳にある ID（S-x・U-x）で書く' "$SKILL/SKILL.md" \
    && grep -qF '台帳にある ID（S-x・U-x）だけを書く' "$SKILL/references/04-findings-register.md"; then
@@ -1883,7 +1890,7 @@ else
     # 穴を見つけられるかだけでは足りない。誤検出するツールは、指摘の山に埋もれて
     # 本当に危ないものを隠す。/clean は同意を取るまで第三者へ送らず、HttpOnly を付け、
     # CSP に unsafe-inline を持たず、セキュリティヘッダを揃えてある。
-    # 追加パス（/admin）も渡す。渡された URL にパス（/clean）があっても、追加パスはサイトの根から開く（recon.sh と同じ）
+    # 追加パス（/admin）も渡す。渡された URL にパス（/clean）があっても、追加パスはサイトのルートから開く（recon.sh と同じ）
     C="$(node "$SKILL/scripts/browser_probe.mjs" "http://localhost:$PORT/clean" /admin 2>&1 || true)"
     contains "browser_probe[誤検出]: 同意前の送信が無いことを言える" "第三者オリジンへの送信は観測されなかった" "$C"
     absent   "browser_probe[誤検出]: HttpOnly のある Cookie を咎めない" "**HttpOnly なし**" "$C"
@@ -1900,7 +1907,7 @@ else
     absent   "browser_probe: コンソールの URL のクエリを伏せる"         "FIXTURECONSOLEKEY0123" "$C3"
     contains "browser_probe[誤検出]: 空の保存領域を空と言える"         "localStorage: （空）" "$C"
     contains "browser_probe[誤検出]: WebSocket が無ければ無いと言える" "WebSocket の接続は観測されなかった" "$C"
-    contains "browser_probe[追加パス]: 渡された URL にパスがあってもサイトの根から開く" "403   /admin" "$C"
+    contains "browser_probe[追加パス]: 渡された URL にパスがあってもサイトのルートから開く" "403   /admin" "$C"
 
     # ページが付けた保存領域のキー名に入った制御文字を、そのまま出さない（名前そのものは出す）
     contains "browser_probe[制御文字]: キー名を出す"                       "fixture_ctl_key" "$P"
@@ -2001,27 +2008,56 @@ if grep -F 'routes.js:2:' <<<"$(printf '%s' "$S2G" | sed -n '/--- 受け取っ�
   ng "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない" "routes.js:2 が並んだ"
 else ok "audit_grep[2g]: 項目を選んで読む書き方は、そのまま渡す側に並べない"; fi
 
-# Supabase のプロジェクトを 2 つ持つモノレポ。根に supabase/ も package.json も無い構成でも 0 節で判定し、
+# Supabase のプロジェクトを 2 つ持つモノレポ。プロジェクトルートに supabase/ も package.json も無い構成でも 0 節で判定し、
 # 19 節の RLS の突き合わせをプロジェクトごとに行う（別のプロジェクトの同じ名前の表で打ち消していた）
 SM="$TMP/supabase-monorepo"; fixture_cp "$ROOT/tests/fixtures/supabase-monorepo" "$SM"
 SMO="$(bash "$SKILL/scripts/audit_grep.sh" "$SM" 2>&1)"
-contains "audit_grep[基盤]: 根に無い Supabase の置き場も判定する"           "マネージドの基盤          有 → Supabase" "$SMO"
+contains "audit_grep[基盤]: プロジェクトルートに無い Supabase の置き場も判定する"           "マネージドの基盤          有 → Supabase" "$SMO"
 contains "audit_grep[基盤]: RLS の突き合わせをプロジェクトごとに行う"       "★ public.accounts（services/notes）" "$SMO"
 absent   "audit_grep[基盤]: RLS を有効にしたプロジェクトの表を並べない"     "（services/billing）" "$SMO"
 
-# ロックファイルを根に置かない構成。0 節・1b 節・21 節が根しか見ず、アプリを下の階層に置く構成でロックファイルを「無い」とし、
+# ロックファイルをプロジェクトルートに置かない構成。0 節・1b 節・21 節がプロジェクトルートしか見ず、アプリを下の階層に置く構成でロックファイルを「無い」とし、
 # 枠組みの版の照合と 21 節を丸ごと省いていた。画面の側が別のロックファイルを持つ構成でも、その側の版を見ていなかった
 NL="$TMP/nested-lock"; fixture_cp "$ROOT/tests/fixtures/nested-lock" "$NL"
 NLA="$(bash "$SKILL/scripts/audit_grep.sh" "$NL/app-in-subdir" 2>&1)"
-contains "audit_grep[依存]: 根に無いロックファイルも見る"                   "web/package-lock.json（根には無い）" "$NLA"
+contains "audit_grep[依存]: プロジェクトルートに無いロックファイルも見る"                   "web/package-lock.json（プロジェクトルートには無い）" "$NLA"
 contains "audit_grep[1b]: 下の階層のロックファイルで枠組みの版を引く"       "15.5.4（web）" "$NLA"
 contains "audit_grep[依存]: 下の階層の依存もインストール時の防御を見る"     "=== web ===" "$NLA"
 contains "audit_grep[依存]: 下の階層のインストール時のスクリプトを並べる"   "    sharp" "$NLA"
 absent   "audit_grep[依存]: 下の階層に依存があれば 21 節を省いたと言わない" "21（依存のインストール時）" "$NLA"
 NLB="$(bash "$SKILL/scripts/audit_grep.sh" "$NL/split-client" 2>&1)"
-contains "audit_grep[1b]: 根と別に画面の側のロックファイルも見る"           "6.26.2（client）" "$NLB"
+contains "audit_grep[1b]: プロジェクトルートと別に画面の側のロックファイルも見る"           "6.26.2（client）" "$NLB"
 contains "audit_grep[依存]: 画面の側の依存もインストール時の防御を見る"     "=== client ===" "$NLB"
-absent   "audit_grep[依存]: 根にロックファイルがあれば下の階層を添えない"   "（根には無い）" "$NLB"
+absent   "audit_grep[依存]: プロジェクトルートにロックファイルがあれば下の階層を添えない"   "（プロジェクトルートには無い）" "$NLB"
+
+# アプリ・サービス・基盤の定義を下の階層に置くモノレポ。プロジェクトルートしか見ない判定が、2d 節（ミドルウェア）・17 節（コンテナ）・
+# 0 節（モバイル・Clerk・リアルタイム・IaC）・24 節・Convex で節を丸ごと省いたり、誤った ★ を出したりしていた
+NA="$TMP/nested-app"; fixture_cp "$ROOT/tests/fixtures/nested-app" "$NA"
+NAO="$(bash "$SKILL/scripts/audit_grep.sh" "$NA" 2>&1)"
+NA2D="$(printf '%s\n' "$NAO" | LC_ALL=C awk 'index($0, "=== 2d.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+NA17="$(printf '%s\n' "$NAO" | LC_ALL=C awk 'index($0, "=== 17.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2d]: 下の階層のアプリのミドルウェアも見る"             "apps/web/src/middleware.ts" "$NA2D"
+contains "audit_grep[iac]: 下の階層のコンテナの定義も判定する"               "コンテナ(apps/web/Dockerfile)" "$NAO"
+contains "audit_grep[iac]: 下の階層の CDK の定義も判定する"                  " CDK" "$(grep -F 'インフラの定義  ' <<<"$NAO")"
+contains "audit_grep[17]: 下の階層の Dockerfile の焼き込みを見る"           "apps/web/Dockerfile:3:ARG STRIPE_SECRET_KEY" "$NA17"
+contains "audit_grep[17]: 下の階層の Dockerfile の USER を見る"             "apps/web/Dockerfile: ★ USER の指定が無い" "$NA17"
+contains "audit_grep[17]: Dockerfile の置き場ごとに .dockerignore を見る"   "★ apps/web/ に .dockerignore が無い" "$NA17"
+contains "audit_grep[17]: 下の階層の版の無い FROM を並べる"                 "apps/web/Dockerfile:1:FROM node   ← 版が固定されていない" "$NA17"
+absent   "audit_grep[17]: 多段ビルドの前の段の名前を版の固定の漏れに数えない" "FROM build AS runtime" "$NA17"
+absent   "audit_grep[17]: .dockerignore のある置き場に ★ を付けない"         "apps/api/ に .dockerignore が無い" "$NA17"
+absent   "audit_grep[17]: プロジェクトルートに Dockerfile が無ければ、そこの .dockerignore を求めない" "★ .dockerignore が無い。" "$NA17"
+contains "audit_grep[mobile]: 下の階層のモバイルアプリも判定する"           "クロスプラットフォーム(apps/mobile/package.json)" "$NAO"
+contains "audit_grep[基盤]: 下の階層の Clerk・Firebase・Convex も判定する"  "有 → Supabase Firebase Clerk Convex" "$NAO"
+contains "audit_grep[リアルタイム]: 下の階層の Supabase でもリアルタイム通信を判定する" "リアルタイム通信          有 → Supabase-Realtime" "$NAO"
+contains "audit_grep[SMS]: 下の階層の Supabase の SMS の設定も見る"         "services/chat/supabase/config.toml:4:[auth.sms]" "$NAO"
+contains "audit_grep[基盤]: 下の階層の Convex の関数も見る"                 "apps/web/convex/messages.ts: list                 ★ 認証の確認なし" "$NAO"
+absent   "audit_grep[基盤]: 認証を確かめる Convex の関数に ★ を付けない"     "mine                 ★" "$NAO"
+contains "audit_grep[2g]: 名前を付けて受けた本文をサービスへ渡す行を並べる" "apps/api/src/users.controller.ts:10:" "$NAO"
+contains "audit_grep[2g]: DTO の引数の展開を並べる"                         "apps/api/src/users.service.ts:10:" "$NAO"
+absent   "audit_grep[2g]: 項目を選んで渡す行は並べない"                       "apps/api/src/users.controller.ts:15:" "$NAO"
+absent   "audit_grep[2g]: 項目を選んだ更新は並べない"                         "apps/api/src/users.service.ts:14:" "$NAO"
+contains "audit_grep[19]: 持ち主の列がある表のログインだけの方針に ★"       "★ create policy \"Messages are visible to signed-in users\"" "$NAO"
+absent   "audit_grep[19]: 持ち主の列の無い表のログインだけの方針に ★ を付けない" "★ create policy \"Rooms are visible" "$NAO"
 
 # 2m. ID を受け取るハンドラの、持ち主の照合。ハンドラの範囲ごとに判定する（Express・Rails・Django・FastAPI）。
 # 以前はファイル単位で、ログインの語（req.user・current_user）がファイルのどこかにあれば ★ を付けていなかった

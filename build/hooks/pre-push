@@ -14,7 +14,7 @@ ZERO="0000000000000000000000000000000000000000"
 bad=0
 
 # 案件語（tests/ngwords.local）と、実地の評価の題材を特定できる語（tests/eval/local/）。build/identifying-words.sh が作る
-# 語の一覧を作る道具は、フックと同じリポジトリの build/ にある（push するリポジトリの根からではなく、フックの場所から探す）
+# 語の一覧を作る道具は、フックと同じリポジトリの build/ にある（push するリポジトリのルートからではなく、フックの場所から探す）
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 words_raw="$(bash "$HOOK_DIR/../identifying-words.sh" "$ROOT")"; wst=$?
 # 語の一覧に正規表現として読めない行があると、照合が 1 つも行われない。止める

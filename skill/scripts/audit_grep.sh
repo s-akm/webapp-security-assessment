@@ -440,20 +440,40 @@ say() {
   printf '  %s%*s%s\n' "$1" "$pad" '' "$2"
 }
 
+# 下の階層にある名前のファイル（プロジェクトルートは除く。依存・履歴・生成物の下は見ない）。名前は find の -name の形（* を使える）。
+# アプリを web/ や apps/x/ に置く構成で、プロジェクトルートだけを見て節を丸ごと省く取りこぼしが続いた（Supabase・ロックファイル・
+# ミドルウェア・コンテナ・モバイル）。下の階層も見る判定は、この関数で揃える。-mindepth を使わないのは、-prune が深さ 1 の node_modules に働かなくなるため
+nested_files() {
+  local expr=() n
+  for n in "$@"; do [[ ${#expr[@]} -gt 0 ]] && expr+=(-o); expr+=(-name "$n"); done
+  # shellcheck disable=SC2046
+  find . -maxdepth 4 $(prune_expr) -o -type f \( "${expr[@]}" \) -print 2>/dev/null \
+    | sed 's#^\./##' | grep '/' | sort
+}
+
+# 下の階層の名前のディレクトリ（最初の 1 つ）と、下の階層の package.json のうち、パターンに一致するもの（最初の 1 つ）
+nested_dir() { find . -maxdepth 5 \( -name node_modules -o -name .git -o -name vendor \) -prune -o -type d -name "$1" -print 2>/dev/null | head -1; }
+nested_pkg() { find . -maxdepth 4 \( -name node_modules -o -name .git -o -name vendor \) -prune -o -type f -name package.json -print 2>/dev/null \
+                 | head -200 | tr '\n' '\0' | xargs -0 grep -lE "$1" -- /dev/null 2>/dev/null | head -1; }
+
 # --- インフラの定義 ---
 iac=""
 for f in Dockerfile docker-compose.yml docker-compose.yaml compose.yaml; do
   [[ -e "$f" ]] && iac="$iac コンテナ($f)"
 done
+# 下の階層のコンテナの定義（web/Dockerfile など）。プロジェクトルートに無い構成で 17 節を丸ごと省いていた
+while IFS= read -r f; do [[ -n "$f" ]] && iac="$iac コンテナ($f)"; done <<<"$(nested_files Dockerfile 'docker-compose.y*ml' 'compose.y*ml' | head -5)"
 [[ -n "$(find . -maxdepth 3 -name '*.tf' -not -path '*/.git/*' 2>/dev/null | head -1)" ]] && iac="$iac Terraform"
-[[ -e cdk.json ]] && iac="$iac CDK"
-[[ -e Pulumi.yaml ]] && iac="$iac Pulumi"
+{ [[ -e cdk.json ]] || [[ -n "$(nested_files cdk.json | head -1)" ]]; } && iac="$iac CDK"
+{ [[ -e Pulumi.yaml ]] || [[ -n "$(nested_files Pulumi.yaml | head -1)" ]]; } && iac="$iac Pulumi"
 [[ -n "$(find . -maxdepth 3 \( -name 'Chart.yaml' -o -name 'kustomization.y*ml' \) 2>/dev/null | head -1)" ]] && iac="$iac Kubernetes"
 # 依存の下（node_modules の中の YAML）まで読まない
 [[ -n "$(grep -rlE "${EXA[@]}" '^kind:[[:space:]]*(Deployment|Service|Ingress)' --include='*.yaml' --include='*.yml' . 2>/dev/null | head -1)" ]] && iac="$iac Kubernetesマニフェスト"
 for f in serverless.yml serverless.yaml template.yaml wrangler.toml; do
   [[ -e "$f" ]] && iac="$iac サーバーレス($f)"
 done
+# template.yaml は一般的な名前なので、下の階層ではサーバーレスの判定に使わない
+while IFS= read -r f; do [[ -n "$f" ]] && iac="$iac サーバーレス($f)"; done <<<"$(nested_files serverless.yml serverless.yaml wrangler.toml | head -3)"
 if [[ -n "$iac" ]]; then
   say "インフラの定義" "有 →${iac}"
   need="$need references/13-infrastructure.md"
@@ -470,6 +490,15 @@ mob=""
 [[ -n "$(find . -maxdepth 3 -name 'AndroidManifest.xml' -o -maxdepth 3 -name 'Info.plist' 2>/dev/null | head -1)" ]] && mob="$mob ネイティブ設定"
 grep -qE '"(react-native|expo|@capacitor/core|cordova)"' package.json 2>/dev/null && mob="$mob クロスプラットフォーム"
 [[ -n "$(find . -maxdepth 3 \( -name '*.xcodeproj' -o -name '*.xcworkspace' \) 2>/dev/null | head -1)" ]] && mob="$mob Xcode"
+# モノレポの下の階層に置いたモバイルアプリ（apps/mobile/android/app/src/main/AndroidManifest.xml・packages/app の Expo など）。
+# プロジェクトルートと深さ 3 までしか見ず、「無」として 14 の資料と 18 節を丸ごと省いていた
+if [[ -z "$mob" ]]; then
+  f="$(nested_files pubspec.yaml Podfile | head -1)"; [[ -n "$f" ]] && mob="$mob Flutter・CocoaPods($f)"
+  # shellcheck disable=SC2046
+  f="$(find . -maxdepth 7 $(prune_expr) -o \( -name 'AndroidManifest.xml' -o -name 'Info.plist' -o -name '*.xcodeproj' \) -print 2>/dev/null | head -1)"
+  [[ -n "$f" ]] && mob="$mob ネイティブ設定(${f#./})"
+  f="$(nested_pkg '"(react-native|expo|@capacitor/core|cordova)"')"; [[ -n "$f" ]] && mob="$mob クロスプラットフォーム(${f#./})"
+fi
 if [[ -n "$mob" ]]; then
   say "モバイルアプリ" "有 →${mob}"
   need="$need references/14-mobile.md"
@@ -503,16 +532,14 @@ fi
 
 # --- マネージドの基盤（BaaS）---
 baas=""
-# 根に無い置き場（モノレポの apps/web/supabase・services/x/supabase など）も見る。根だけを見ていて、サービスごとに
+# プロジェクトルートに無い置き場（モノレポの apps/web/supabase・services/x/supabase など）も見る。プロジェクトルートだけを見ていて、サービスごとに
 # Supabase のプロジェクトを置く構成で「無」と判定し、19 節を丸ごと省いていた（実地の評価で分かった）
-nested_dir() { find . -maxdepth 5 \( -name node_modules -o -name .git -o -name vendor \) -prune -o -type d -name "$1" -print 2>/dev/null | head -1; }
-nested_pkg() { find . -maxdepth 4 \( -name node_modules -o -name .git -o -name vendor \) -prune -o -type f -name package.json -print 2>/dev/null \
-                 | head -200 | tr '\n' '\0' | xargs -0 grep -lE "$1" -- /dev/null 2>/dev/null | head -1; }
 { [[ -d supabase ]] || grep -qE '"@supabase/' package.json 2>/dev/null || [[ -n "$(nested_dir supabase)" ]] \
   || [[ -n "$(nested_pkg '"@supabase/')" ]]; } && baas="$baas Supabase"
 { [[ -e firebase.json ]] || [[ -n "$(find . -maxdepth 3 \( -name 'firestore.rules' -o -name 'storage.rules' -o -name 'database.rules.json' \) -not -path '*/node_modules/*' 2>/dev/null | head -1)" ]] \
-  || grep -qE '"firebase(-admin)?"' package.json 2>/dev/null; } && baas="$baas Firebase"
-grep -qE '"@clerk/' package.json 2>/dev/null && baas="$baas Clerk"
+  || grep -qE '"firebase(-admin)?"' package.json 2>/dev/null || [[ -n "$(nested_files firebase.json | head -1)" ]] \
+  || [[ -n "$(nested_pkg '"firebase(-admin)?"')" ]]; } && baas="$baas Firebase"
+{ grep -qE '"@clerk/' package.json 2>/dev/null || [[ -n "$(nested_pkg '"@clerk/')" ]]; } && baas="$baas Clerk"
 { [[ -d convex ]] || grep -qE '"convex"' package.json 2>/dev/null || [[ -n "$(nested_pkg '"convex"')" ]]; } && baas="$baas Convex"
 if [[ -n "$baas" ]]; then
   say "マネージドの基盤" "有 →${baas} → 02 の E 節・03 の 1 節・07 の 11-3・11-4（19 節）"
@@ -556,7 +583,8 @@ fi
 # リアルタイム通信。HTTP のガードとは別の入口になる
 rt=""
 # .channel( は Laravel Echo や Phoenix にもある。Supabase を使っている構成に限る
-{ [[ -d supabase ]] || grep -qE '"@supabase/' package.json 2>/dev/null; } \
+# Supabase の判定は、マネージドの基盤と同じもの（下の階層の置き場も見る）を使う。古い条件のままで、下の階層に置くと 23 節を省いていた
+[[ "$baas" == *Supabase* ]] \
   && grep -rqlE "${EXA[@]}" '\.channel\(|postgres_changes' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null && rt="$rt Supabase-Realtime"
 grep -rqlE "${EXA[@]}" 'new (WebSocketServer|WebSocket\.Server)\(|from ["'"'"']ws["'"'"']|require\(["'"'"']ws["'"'"']\)|upgradeWebSocket|experimental_upgradeWebSocket|defineWebSocketHandler|@app\.websocket' \
   --include='*.ts' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null && rt="$rt WebSocket"
@@ -589,26 +617,22 @@ sms_hit="$(grep -rlE "${EXA[@]}" "$SMSPAT" --include='*.ts' --include='*.tsx' --
 twilio_direct="$(grep -rlE "${EXA[@]}" 'messages\.create\(' --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null \
   | while IFS= read -r f; do grep -lE "twilio|Twilio" "$f" 2>/dev/null; done | head -5)"
 [[ -z "$sms_hit" && -n "$twilio_direct" ]] && sms_hit="$twilio_direct"
-sms_cfg="$(grep -nE '^\[auth\.sms' supabase/config.toml 2>/dev/null | head -1)"
+# Supabase の設定のファイルは、プロジェクトルートに無い置き場（services/x/supabase/config.toml）も見る
+# shellcheck disable=SC2046
+SUPA_CFGS="$(find . $(prune_expr) -o -type f -path '*supabase/config.toml' -print 2>/dev/null | sed 's#^\./##' | sort | head -10)"
+sms_cfg="$(while IFS= read -r c; do [[ -n "$c" ]] && grep -nE '^\[auth\.sms' "$c" 2>/dev/null; done <<<"$SUPA_CFGS" | head -1)"
 if [[ -n "$sms_hit$sms_cfg" ]]; then say "SMS の送信" "有 → 02 の F-4・03 の 3 節（24 節）"; else say "SMS の送信" "無"; fi
 
-# 下の階層にある名前のファイル（根は除く。依存と履歴の下は見ない）。-mindepth を使わないのは、-prune が深さ 1 の node_modules に働かなくなるため
-nested_files() {
-  local expr=() n
-  for n in "$@"; do [[ ${#expr[@]} -gt 0 ]] && expr+=(-o); expr+=(-name "$n"); done
-  find . -maxdepth 4 \( -name node_modules -o -name .git -o -name vendor \) -prune -o -type f \( "${expr[@]}" \) -print 2>/dev/null \
-    | sed 's#^\./##' | grep '/' | sort
-}
 LOCKFILES=(package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Gemfile.lock go.sum composer.lock Cargo.lock)
 lock=""
 for f in "${LOCKFILES[@]}"; do
   [[ -e "$f" ]] && lock="$lock $f"
 done
-# 根に無ければ下の階層も見る（web/ や apps/x/ にアプリを置く構成）。根だけを見ていて、そうした構成で「無い」と出し、
+# プロジェクトルートに無ければ下の階層も見る（web/ や apps/x/ にアプリを置く構成）。プロジェクトルートだけを見ていて、そうした構成で「無い」と出し、
 # 1b 節の枠組みの版の照合と 21 節を丸ごと省いていた（実地の評価で分かった）
 if [[ -z "$lock" ]]; then
   nl="$(nested_files "${LOCKFILES[@]}" | head -5 | tr '\n' ' ')"
-  [[ -n "$nl" ]] && lock=" ${nl% }（根には無い）"
+  [[ -n "$nl" ]] && lock=" ${nl% }（プロジェクトルートには無い）"
 fi
 say "ロックファイル" "${lock:-★ 無い。監査した版と本番の版が違いうる（10 の 2 節）}"
 
@@ -711,7 +735,7 @@ verlt() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)
 # 範囲 [lo, hi) に入るか
 inrange() { ! verlt "$1" "$2" && verlt "$1" "$3"; }
 
-# 依存の置き場。根と、自分のロックファイルを持つ下の階層（0 節と同じ理由）。どちらも無ければ下の階層の package.json
+# 依存の置き場。プロジェクトルートと、自分のロックファイルを持つ下の階層（0 節と同じ理由）。どちらも無ければ下の階層の package.json
 NODE_DIRS="$({ { [[ -f package.json || -f package-lock.json || -f pnpm-lock.yaml ]] && echo .; }
                nested_files package-lock.json pnpm-lock.yaml yarn.lock | while IFS= read -r f; do printf './%s\n' "$(dirname "$f")"; done
              } | awk 'NF && !seen[$0]++' | head -10)"
@@ -719,7 +743,7 @@ NODE_DIRS="$({ { [[ -f package.json || -f package-lock.json || -f pnpm-lock.yaml
 fw_found=""
 while IFS= read -r d; do
   [[ -n "$d" ]] || continue
-  # 根でない置き場は、その場所を添える
+  # プロジェクトルートでない置き場は、その場所を添える
   where=""; [[ "$d" != "." ]] && where="（${d#./}）"
   for name in next react-server-dom-webpack react-server-dom-turbopack react-server-dom-parcel \
               nuxt astro @sveltejs/kit @sveltejs/adapter-vercel react-router @remix-run/node; do
@@ -1114,6 +1138,46 @@ echo "  --- 受け取ったものを、そのまま作成・更新に渡して�
 { grep -rnE "${EXA[@]}" "$WHOLE_INPUT" "${INCL[@]}" . 2>/dev/null | sed 's|^\./||' \
     | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+:' \
     | sed 's/^/  /' | lim 40; } | show
+echo "  --- 受け取った本文を名前を付けて受け、その全体を作成・更新や別の関数に渡している（渡し先で許可する項目を絞っているかを確かめる）"
+# 上の表は req.body・body・dto のような決まった名前しか見ず、@Body() newData で受けてサービスへ渡し、サービスが {...newData} を
+# ORM の assign に流し込む形を拾えなかった（実地の評価で分かった）。ファイルごとに、本文を束ねた名前と DTO の型の引数を集め、
+# その名前が項目を選ばずにまるごと（x.項目 ではなく）作成・更新の関数の引数や展開に渡っている行を並べる。枠組みの書き方の表で名前を集めるので、
+# 名前の付け方には依らない
+BODY_BIND='@Body\([[:space:]]*\)|\[FromBody\]|@RequestBody|(req|request|ctx\.request|c\.req)\.(body|json\(\))|request\.(data|get_json\(\)|POST)|\$request->(all|input)\(\)'
+BODY_BIND="$BODY_BIND"'|[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*[A-Z][A-Za-z0-9_]*(Dto|DTO|Input|Payload)([^A-Za-z0-9_]|$)'
+{ grep -rlE "${EXA[@]}" "$BODY_BIND" "${INCL[@]}" . 2>/dev/null | sed 's|^\./||' \
+    | grep -vE '(^|/)(test|tests|__tests__|spec)/|\.(test|spec)\.[a-z]+$' | head -300 | while IFS= read -r f; do
+    awk -v F="$f" '
+      function ident_after(s,   m) { if (match(s, /[A-Za-z_$][A-Za-z0-9_]*/)) return substr(s, RSTART, RLENGTH); return "" }
+      function add(n) { if (n != "" && n !~ /^(await|const|let|var|new|this|req|request|res|response|ctx|c|body|dto)$/) names[n] = 1 }
+      FNR == NR {
+        l = $0
+        if (match(l, /@Body\([[:space:]]*\)[[:space:]]*/)) add(ident_after(substr(l, RSTART + RLENGTH)))
+        if (match(l, /(const|let|var)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*(await[[:space:]]+)?(req|request|ctx\.request|c\.req)\.(body|json\(\))/)) {
+          s = substr(l, RSTART, RLENGTH); sub(/^(const|let|var)[[:space:]]+/, "", s); add(ident_after(s)) }
+        if (match(l, /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*(await[[:space:]]+)?request\.(data|json|get_json\(\)|POST)([^A-Za-z0-9_.]|$)/)) add(ident_after(l))
+        if (match(l, /\$[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=[[:space:]]*\$request->(all|input)\(\)/)) add(ident_after(substr(l, RSTART + 1)))
+        # Spring と ASP.NET: 注釈の後の「型 名前」の名前
+        if (match(l, /(@RequestBody|\[FromBody\])[^,)]*[,)]/)) {
+          s = substr(l, RSTART, RLENGTH); sub(/[[:space:]]*[,)]$/, "", s); n = s; sub(/.*[^A-Za-z0-9_]/, "", n); add(n) }
+        # DTO の型を付けた引数（TypeScript・Kotlin の「名前: …Dto」）
+        s = l
+        while (match(s, /[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:[[:space:]]*[A-Z][A-Za-z0-9_]*(Dto|DTO|Input|Payload)([^A-Za-z0-9_]|$)/)) {
+          add(ident_after(substr(s, RSTART, RLENGTH))); s = substr(s, RSTART + RLENGTH) }
+        next
+      }
+      {
+        l = $0
+        if (l ~ /^[[:space:]]*(\/\/|#|\*)/) next
+        for (n in names) {
+          if (index(l, n) == 0) continue
+          # 展開（...x）か、作成・更新の関数の引数としてまるごと渡す（x の後が , か )）
+          sp = "\\.\\.\\." n "([^A-Za-z0-9_.]|$)"
+          ar = "(^|[^A-Za-z0-9_])([Aa]ssign|[Uu]pdate|[Cc]reate|[Ss]ave|[Ii]nsert|[Uu]psert|[Mm]erge|[Ff]ill|[Pp]atch|[Rr]eplace)[A-Za-z0-9_]*\\(([^)]*[,[:space:]])?" n "[[:space:]]*[,)]"
+          if (l ~ sp || l ~ ar) { printf "  %s:%d:%s\n", F, FNR, l; break }
+        }
+      }' "$f" "$f" 2>/dev/null
+  done | lim 30; } | show
 echo "  ※ ★ は、読んだ値が権限の判定（管理者か、所有者か、役割は何か）に使われていれば指摘になる。絞り込みの条件に使うだけなら問題ない"
 echo "    受け取ったものを渡す行は、DTO や許可リストで項目を絞っていれば問題ない。絞っていなければ、利用者が権限や所有者の列を書き換えられる"
 
@@ -1391,16 +1455,24 @@ echo "  ※ 関数の先頭でガードを呼んでいても、その戻り値�
 hr "2d. ミドルウェアの対象範囲（ここから外れたルートは素通しになる）"
 {
   # Next.js 16 で middleware.ts は proxy.ts に改名された。古い名前だけ見ていると見落とす。
-  for f in middleware.ts middleware.js src/middleware.ts src/middleware.js \
-           proxy.ts proxy.js src/proxy.ts src/proxy.js \
-           src/hooks.server.ts src/hooks.server.js hooks.server.ts hooks.server.js \
-           app/Http/Kernel.php config/middleware.php bootstrap/app.php; do
+  # アプリを下の階層に置く構成（web/src/middleware.ts・apps/x/proxy.ts）も見る。プロジェクトルートと src/ だけを見ていて、
+  # web/ に置いたアプリのミドルウェアを「検出なし」としていた（実地の評価で分かった）。アプリの置き場は package.json か枠組みの設定のあるディレクトリ
+  appdirs="$( { echo .; nested_files package.json 'next.config.*' 'svelte.config.*' | while IFS= read -r f; do dirname "$f"; done; } | awk '!seen[$0]++' | head -20)"
+  while IFS= read -r d; do
+    for b in middleware.ts middleware.js src/middleware.ts src/middleware.js \
+             proxy.ts proxy.js src/proxy.ts src/proxy.js \
+             src/hooks.server.ts src/hooks.server.js hooks.server.ts hooks.server.js; do
+      if [[ "$d" == "." ]]; then printf '%s\n' "$b"; else printf '%s/%s\n' "$d" "$b"; fi
+    done
+  done <<<"$appdirs" > "$HF_LIST.mw"
+  printf '%s\n' app/Http/Kernel.php config/middleware.php bootstrap/app.php >> "$HF_LIST.mw"
+  while IFS= read -r f; do
     [[ -f "$f" ]] || continue
     echo "  $f"
     # 対象範囲の指定。Next.js の matcher、Laravel のミドルウェアグループなど。
     grep -nE 'matcher|middleware(Group|Groups)?|except|only|withoutMiddleware' "$f" 2>/dev/null \
       | lim 15 | sed 's/^/    /'
-  done
+  done < "$HF_LIST.mw"
   # Nuxt の server/middleware はファイルごとに全要求の前段で動く（SvelteKit の hooks.server と同じ役）
   find . $(prune_expr) -o -type f -path '*/server/middleware/*' -print 2>/dev/null | sed 's|^\./|  |' | lim 10
   # 枠組みによらず、ルートをまとめて保護する書き方（NestJS の APP_GUARD・Django の MIDDLEWARE・Laravel 11 の withMiddleware・
@@ -1943,7 +2015,10 @@ echo "  ※ 「AI で開発した」ことと「AI を動かしている」こ�
 if [[ -n "$iac" ]]; then
   hr "17. インフラの定義（references/13-infrastructure.md）"
 
-  if [[ -n "$(ls Dockerfile* 2>/dev/null)" || -n "$(ls docker-compose*.y*ml compose.y*ml 2>/dev/null)" ]]; then
+  # 下の階層の Dockerfile と compose（web/Dockerfile など）。プロジェクトルートの分は、以前と同じ書き方で下に出す
+  NESTED_DF="$(nested_files 'Dockerfile' 'Dockerfile.*' '*.Dockerfile' | head -20)"
+  NESTED_CF="$(nested_files 'docker-compose*.y*ml' 'compose*.y*ml' | head -10)"
+  if [[ -n "$(ls Dockerfile* 2>/dev/null)" || -n "$(ls docker-compose*.y*ml compose.y*ml 2>/dev/null)" || -n "$NESTED_DF$NESTED_CF" ]]; then
     echo "  --- コンテナ: 実行時の権限 ---"
     {
       for f in Dockerfile*; do
@@ -1956,16 +2031,51 @@ if [[ -n "$iac" ]]; then
       done
       grep -nE 'privileged|cap_add|/var/run/docker\.sock|network_mode:[[:space:]]*host' \
         docker-compose*.y*ml compose*.y*ml 2>/dev/null
+      while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        if grep -qE '^USER[[:space:]]' "$f" 2>/dev/null; then grep -nE '^USER[[:space:]]' "$f" | pfx "  $f:"
+        else echo "  $f: ★ USER の指定が無い（root で動く）"; fi
+      done <<<"$NESTED_DF"
+      while IFS= read -r f; do
+        [[ -n "$f" ]] && grep -nE 'privileged|cap_add|/var/run/docker\.sock|network_mode:[[:space:]]*host' "$f" 2>/dev/null | pfx "$f:"
+      done <<<"$NESTED_CF"
     } | show
 
     echo "  --- コンテナ: イメージに焼き込まれるもの ---"
     {
       grep -nE '^(ARG|ENV)[[:space:]].*(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL)' Dockerfile* 2>/dev/null | mask
-      grep -nE '^FROM[[:space:]].*:latest|^FROM[[:space:]][^:]+$' Dockerfile* 2>/dev/null \
-        | sed 's/$/   ← 版が固定されていない/'
+      # 多段ビルドの前の段の名前（FROM base AS production の base）と scratch はイメージではないので除く。
+      # 以前は「: が無い FROM」をすべて並べ、前の段の名前を版の固定の漏れと誤って出していた
+      unpinned_from() { awk '
+        toupper($1) == "FROM" {
+          i = 2; while ($i ~ /^--/) i++; img = $i; n = i + 1
+          skip = (tolower(img) in stage) || tolower(img) == "scratch" || img ~ /^\$/
+          if (toupper($n) == "AS" && $(n + 1) != "") stage[tolower($(n + 1))] = 1
+          if (!skip && (img ~ /:latest$/ || (img !~ /:/ && img !~ /@sha256:/))) printf "%d:%s   ← 版が固定されていない\n", FNR, $0
+        }' "$1" 2>/dev/null; }
+      # プロジェクトルートの Dockerfile が 1 つなら行番号だけ、複数ならファイル名を付ける（以前の grep の出し方と同じ）
+      rootdf=(); for f in Dockerfile*; do [[ -f "$f" ]] && rootdf+=("$f"); done
+      for f in ${rootdf[@]+"${rootdf[@]}"}; do
+        if [[ ${#rootdf[@]} -eq 1 ]]; then unpinned_from "$f"; else unpinned_from "$f" | pfx "$f:"; fi
+      done
+      while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        grep -nE '^(ARG|ENV)[[:space:]].*(KEY|SECRET|TOKEN|PASSWORD|PASSWD|CREDENTIAL)' "$f" 2>/dev/null | mask | pfx "$f:"
+        unpinned_from "$f" | pfx "$f:"
+      done <<<"$NESTED_DF"
     } | show
-    [[ -f .dockerignore ]] && echo "  .dockerignore: 有" \
-      || echo "  ★ .dockerignore が無い。.env や .git がイメージに入る"
+    # .dockerignore はビルドの文脈（ふつうは Dockerfile の置き場）ごとに要る。プロジェクトルートに compose しか無く、
+    # ビルドを下の階層で行う構成で、プロジェクトルートに無いことを ★ にしていた（下の階層には置いてあった）
+    if [[ -n "$(ls Dockerfile* 2>/dev/null)" || -z "$NESTED_DF" ]]; then
+      [[ -f .dockerignore ]] && echo "  .dockerignore: 有" \
+        || echo "  ★ .dockerignore が無い。.env や .git がイメージに入る"
+    fi
+    while IFS= read -r f; do
+      [[ -n "$f" ]] || continue
+      d="$(dirname "$f")"
+      if [[ -f "$d/.dockerignore" || -f "$f.dockerignore" ]]; then echo "  $d/.dockerignore: 有"
+      else echo "  ★ $d/ に .dockerignore が無い（$f のビルド）。.env や .git がイメージに入る"; fi
+    done <<<"$NESTED_DF"
   fi
 
   if [[ -n "$(find . -maxdepth 3 -name '*.tf' -not -path '*/.git/*' 2>/dev/null | head -1)" ]]; then
@@ -2101,6 +2211,25 @@ if [[ -n "$baas" ]]; then
     } | show
     echo "  ※ ★ は、書き込みの条件が true。誰でも（to anon なら未ログインでも）他人の行を作成・更新・削除できる。for の無いポリシーは all"
 
+    echo "  --- Supabase: ログインしているかだけで行を絞らない読み取りのポリシー（ログインした誰でも全行を読める）---"
+    {
+      # auth.role() = 'authenticated'・auth.uid() is not null・to authenticated using (true) は、行の持ち主を見ない。
+      # 皆で共有する表なら正しいが、持ち主の列（user_id・org_id など）を持つ表なら他人の行が読める。表の作り（列）で見分け、
+      # 持ち主の列がある表のものに ★ を付ける（以前は using (true) だけを見ていて、この形に気づかなかった。実地の評価で分かった）
+      OWNER_COL='(user_id|owner_id|owner|author_id|created_by|profile_id|account_id|member_id|org_id|organization_id|tenant_id|team_id|workspace_id)'
+      AUTH_ONLY="using[[:space:]]*\\([[:space:]]*\\(?[[:space:]]*(\\(?[[:space:]]*select[[:space:]]+)?auth\\.(role\\(\\)[[:space:]]*\\)?[[:space:]]*=[[:space:]]*'authenticated'|uid\\(\\)[[:space:]]*\\)?[[:space:]]*is[[:space:]]+not[[:space:]]+null)[[:space:]]*\\)?[[:space:]]*\\)"
+      # shellcheck disable=SC2086
+      stmts="$(sqlstmts $sqlfiles | sed -E 's/[[:space:]]+/ /g; s/^ //')"
+      grep -iE 'create policy' <<<"$stmts" | grep -viE ' for (insert|update|delete) ' \
+        | grep -iE "$AUTH_ONLY|to authenticated using \\( ?\\(? ?true ?\\)? ?\\)" | cut -c1-200 | while IFS= read -r st; do
+          tbl="$(sed -E 's/.* [Oo][Nn] ([^ ]+).*/\1/' <<<"$st" | tr -d '"' | tr 'A-Z' 'a-z')"; base="${tbl##*.}"
+          cols="$(grep -iE "create (unlogged )?table (if not exists )?(\"?public\"?\\.)?\"?${base}\"? ?\\(" <<<"$stmts" | head -1)"
+          oc="$(grep -oiE "[(,] ?${OWNER_COL} " <<<"$cols" | head -1 | tr -d '(, ')"
+          if [[ -n "$oc" ]]; then printf '  ★ %s（表に持ち主の列 %s がある）\n' "$st" "$oc"; else printf '    %s\n' "$st"; fi
+        done | lim 15
+    } | show
+    echo "  ※ ★ は、持ち主の列があるのに、ログインしていれば誰の行でも読める。他人の行を読めてよい表か（共有の名簿など）を確かめる"
+
     echo "  --- Supabase: 定義者権限（security definer）の関数で search_path を固定していないもの ---"
     {
       # 別の文で alter function … set search_path している関数は、固定したものとして扱う
@@ -2183,7 +2312,9 @@ if [[ -n "$baas" ]]; then
     echo "  --- Convex: 公開の query / mutation / action と、認証の確認 ---"
     {
       # 関数ごとに見る。1 ファイルに確かめる関数と確かめない関数が混ざっていることがある
-      find convex -name '*.ts' -not -path '*/_generated/*' 2>/dev/null | while IFS= read -r f; do
+      # convex/ はプロジェクトルートに無い置き場（apps/web/convex）も見る。0 節は下の階層の package.json で判定するのに、ここは convex/ しか読んでいなかった
+      # shellcheck disable=SC2046
+      find . $(prune_expr) -o -type f -name '*.ts' -path '*/convex/*' -not -path '*/_generated/*' -print 2>/dev/null | sed 's#^\./##' | while IFS= read -r f; do
         awk -v F="$f" '
           function flush() { if (name != "") printf "  %s: %-20s %s\n", F, name, (ok ? "認証の確認あり" : "★ 認証の確認なし"); name=""; ok=0 }
           /export[[:space:]]+const[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[[:space:]]*/ {
@@ -2237,12 +2368,12 @@ if [[ -d .github/workflows ]]; then
   echo "  ※ 組織の設定（SHA 固定の強制、実行できる人とイベントの制限）はコードから見えない。取材で聞く"
 fi
 
-# 根と、自分のロックファイルを持つ下の階層（1b 節と同じ置き場）。package.json のある置き場だけ
+# プロジェクトルートと、自分のロックファイルを持つ下の階層（1b 節と同じ置き場）。package.json のある置き場だけ
 DIRS21="$(while IFS= read -r d; do [[ -n "$d" && -f "$d/package.json" ]] && printf '%s\n' "$d"; done <<<"$NODE_DIRS")"
 if [[ -n "$DIRS21" ]]; then
   hr "21. 依存のインストール時の防御（10 の 3-1）"
   while IFS= read -r d; do
-    # 根でない置き場は見出しを付けて、その置き場で見る
+    # プロジェクトルートでない置き場は見出しを付けて、その置き場で見る
     [[ "$d" != "." ]] && echo "  === ${d#./} ==="
     (
       cd "$d" || exit 0
@@ -2392,7 +2523,9 @@ if [[ -n "$sms_hit$sms_cfg" ]]; then
   {
     grep -rnE "${EXA[@]}" "$SMSPAT" --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' --include='*.py' . 2>/dev/null | lim 12
     [[ -n "$twilio_direct" ]] && printf '%s\n' "$twilio_direct" | while IFS= read -r f; do grep -nHE 'messages\.create\(' "$f"; done | lim 6
-    [[ -n "$sms_cfg" ]] && grep -nE '^\[auth\.(sms|rate_limit|captcha|hook\.send_sms)|sms_sent|enable_signup|enable_anonymous_sign_ins' supabase/config.toml 2>/dev/null | sed 's/^/  supabase\/config.toml:/'
+    [[ -n "$sms_cfg" ]] && while IFS= read -r c; do
+      [[ -n "$c" ]] && grep -nE '^\[auth\.(sms|rate_limit|captcha|hook\.send_sms)|sms_sent|enable_signup|enable_anonymous_sign_ins' "$c" 2>/dev/null | pfx "  $c:"
+    done <<<"$SUPA_CFGS"
   } | show
   echo "  --- 番号の検証・レート制限・CAPTCHA の手がかり（無いこと自体が材料）---"
   {

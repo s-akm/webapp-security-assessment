@@ -371,20 +371,54 @@ mutate "採点: 対照を答えとして数える" "../tests/eval/score.py" "対
   's = s.replace("        if it.get(\x27control\x27):\n", "        if False:\n", 1)'
 mutate "比較: 対照への誤検出の増加を見ない" "../tests/eval/compare.py" "対照への誤検出が旧より増えれば" \
   's = s.replace("            if ofp and nfp and mean(nfp) > mean(ofp):", "            if False:", 1)'
-mutate "19: 根の supabase/ しか見ない" "scripts/audit_grep.sh" "根に無い Supabase の置き場も判定する" \
+mutate "19: プロジェクトルートの supabase/ しか見ない" "scripts/audit_grep.sh" "プロジェクトルートに無い Supabase の置き場も判定する" \
   's = s.replace(" || [[ -n \"$(nested_dir supabase)\" ]] \\\n  || [[ -n \"$(nested_pkg \x27\"@supabase/\x27)\" ]]; } && baas=\"$baas Supabase\"", "; } && baas=\"$baas Supabase\"", 1)'
 mutate "19: RLS の突き合わせをプロジェクトで分けない" "scripts/audit_grep.sh" "RLS の突き合わせをプロジェクトごとに行う" \
   's = s.replace("projkey() { sed -E \x27s#/(supabase", "projkey() { sed -E \x27s#.*##; s#/(supabase", 1)'
-mutate "0: 根に無いロックファイルを見ない" "scripts/audit_grep.sh" "根に無いロックファイルも見る" \
+mutate "0: プロジェクトルートに無いロックファイルを見ない" "scripts/audit_grep.sh" "プロジェクトルートに無いロックファイルも見る" \
   's = s.replace("if [[ -z \"$lock\" ]]; then\n  nl=", "if false; then\n  nl=", 1)'
-mutate "1b: 下の階層のロックファイルを置き場に入れない" "scripts/audit_grep.sh" "根と別に画面の側のロックファイルも見る" \
+mutate "1b: 下の階層のロックファイルを置き場に入れない" "scripts/audit_grep.sh" "プロジェクトルートと別に画面の側のロックファイルも見る" \
   's = s.replace("               nested_files package-lock.json pnpm-lock.yaml yarn.lock | while", "               : | while", 1)'
-mutate "1b: 根でない置き場の名前を添えない" "scripts/audit_grep.sh" "下の階層のロックファイルで枠組みの版を引く" \
+mutate "1b: プロジェクトルートでない置き場の名前を添えない" "scripts/audit_grep.sh" "下の階層のロックファイルで枠組みの版を引く" \
   's = s.replace("where=\"\"; [[ \"$d\" != \".\" ]] && where=\"（${d#./}）\"", "where=\"\"", 1)'
-mutate "21: 根の依存しか見ない" "scripts/audit_grep.sh" "下の階層の依存もインストール時の防御を見る" \
+mutate "21: プロジェクトルートの依存しか見ない" "scripts/audit_grep.sh" "下の階層の依存もインストール時の防御を見る" \
   's = s.replace("do [[ -n \"$d\" && -f \"$d/package.json\" ]] && printf", "do [[ \"$d\" == \".\" && -f \"$d/package.json\" ]] && printf", 1)'
-mutate "21: 省いた節を根の package.json で決める" "scripts/audit_grep.sh" "下の階層に依存があれば 21 節を省いたと言わない" \
+mutate "21: 省いた節をプロジェクトルートの package.json で決める" "scripts/audit_grep.sh" "下の階層に依存があれば 21 節を省いたと言わない" \
   's = s.replace("[[ -n \"$DIRS21\" ]] || skipped=", "[[ -f package.json ]] || skipped=", 1)'
+mutate "2d: アプリの置き場を下の階層から集めない" "scripts/audit_grep.sh" "下の階層のアプリのミドルウェアも見る" \
+  's = s.replace("nested_files package.json \x27next.config.*\x27 \x27svelte.config.*\x27 | while", ": | while", 1)'
+mutate "0: 下の階層のコンテナの定義を見ない" "scripts/audit_grep.sh" "下の階層のコンテナの定義も判定する" \
+  's = s.replace("<<<\"$(nested_files Dockerfile \x27docker-compose.y*ml\x27 \x27compose.y*ml\x27 | head -5)\"", "<<<\"\"", 1)'
+mutate "0: 下の階層の CDK を見ない" "scripts/audit_grep.sh" "下の階層の CDK の定義も判定する" \
+  's = s.replace("|| [[ -n \"$(nested_files cdk.json | head -1)\" ]]", "", 1)'
+mutate "17: 下の階層の Dockerfile を見ない" "scripts/audit_grep.sh" "下の階層の Dockerfile の焼き込みを見る" \
+  's = s.replace("NESTED_DF=\"$(nested_files \x27Dockerfile\x27 \x27Dockerfile.*\x27 \x27*.Dockerfile\x27 | head -20)\"", "NESTED_DF=\"\"", 1)'
+mutate "17: .dockerignore をプロジェクトルートだけで判定する" "scripts/audit_grep.sh" "プロジェクトルートに Dockerfile が無ければ、そこの .dockerignore を求めない" \
+  's = s.replace("if [[ -n \"$(ls Dockerfile* 2>/dev/null)\" || -z \"$NESTED_DF\" ]]; then", "if true; then", 1)'
+mutate "17: 前の段の名前を版の固定の漏れに数える" "scripts/audit_grep.sh" "多段ビルドの前の段の名前を版の固定の漏れに数えない" \
+  's = s.replace("skip = (tolower(img) in stage) ||", "skip = 0 ||", 1)'
+mutate "0: 下の階層のモバイルアプリを見ない" "scripts/audit_grep.sh" "下の階層のモバイルアプリも判定する" \
+  's = s.replace("if [[ -z \"$mob\" ]]; then\n  f=\"$(nested_files pubspec.yaml", "if false; then\n  f=\"$(nested_files pubspec.yaml", 1)'
+mutate "0: Clerk を下の階層で判定しない" "scripts/audit_grep.sh" "下の階層の Clerk・Firebase・Convex も判定する" \
+  's = s.replace(" || [[ -n \"$(nested_pkg \x27\"@clerk/\x27)\" ]]; } && baas", "; } && baas", 1)'
+mutate "23: リアルタイムを古い Supabase の条件で判定する" "scripts/audit_grep.sh" "下の階層の Supabase でもリアルタイム通信を判定する" \
+  's = s.replace("[[ \"$baas\" == *Supabase* ]] \\\n  && grep -rqlE", "{ [[ -d supabase ]] || grep -qE \x27\"@supabase/\x27 package.json 2>/dev/null; } \\\n  && grep -rqlE", 1)'
+mutate "24: 下の階層の SMS の設定を見ない" "scripts/audit_grep.sh" "下の階層の Supabase の SMS の設定も見る" \
+  's = s.replace("-type f -path \x27*supabase/config.toml\x27 -print", "-type f -path \x27./supabase/config.toml\x27 -print", 1)'
+mutate "Convex: convex/ しか読まない" "scripts/audit_grep.sh" "下の階層の Convex の関数も見る" \
+  's = s.replace("-type f -name \x27*.ts\x27 -path \x27*/convex/*\x27", "-type f -name \x27*.ts\x27 -path \x27./convex/*\x27", 1)'
+mutate "2g: 名前を付けて受けた本文の流れを並べない" "scripts/audit_grep.sh" "名前を付けて受けた本文をサービスへ渡す行を並べる" \
+  's = s.replace("if (l ~ sp || l ~ ar) {", "if (0) {", 1)'
+mutate "2g: DTO の型の引数を集めない" "scripts/audit_grep.sh" "DTO の引数の展開を並べる" \
+  's = s.replace("          add(ident_after(substr(s, RSTART, RLENGTH))); s = substr(s, RSTART + RLENGTH) }", "          s = substr(s, RSTART + RLENGTH) }", 1)'
+mutate "2g: 項目を選んで渡す行も並べる" "scripts/audit_grep.sh" "項目を選んで渡す行は並べない" \
+  's = s.replace("\" n \"[[:space:]]*[,)]\"", "\" n \"\"", 1)'
+mutate "19: ログインだけで絞る方針に ★ を付けない" "scripts/audit_grep.sh" "持ち主の列がある表のログインだけの方針に ★" \
+  's = s.replace("then printf \x27  ★ %s（表に持ち主の列 %s がある）\\n\x27 \"$st\" \"$oc\"", "then printf \x27    %s\\n\x27 \"$st\"", 1)'
+mutate "19: 持ち主の列を見ずに ★ を付ける" "scripts/audit_grep.sh" "持ち主の列の無い表のログインだけの方針に ★ を付けない" \
+  's = s.replace("if [[ -n \"$oc\" ]]; then printf", "if true; then printf", 1)'
+mutate "資料: URL を取る属性の是正の勧めを消す" "references/07-web-vulnerabilities.md" "URL を取る属性は、止まる版でも是正を勧めると書いている" \
+  's = s.replace("止まる版の属性にしか出ない値でも、\n保存の時点で `http`・`https` に絞る是正は勧める", "止まる版の属性にしか出ない値は、\n是正は要らない", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("grep -rnE \x27intent-filter|CFBundleURLSchemes|associatedDomains|", "grep -rnE \x27intent-filter|CFBundleURLSchemes|\nassociatedDomains|", 1)'
 
@@ -755,7 +789,7 @@ if node -e 'import("playwright")' >/dev/null 2>&1; then
     's = s.replace("  try { own.add(new URL(page.url()).hostname); } catch { /* 同上 */ }\n", "")'
   mutate "browser_probe: コンソールの URL を伏せない" "scripts/browser_probe.mjs" "コンソールの URL のクエリを伏せる" \
     's = s.replace("cspViolations.push(maskUrls(t).slice(0, 200))", "cspViolations.push(t.slice(0, 200))")'
-  mutate "browser_probe: 追加パスを渡された URL の下で開く（旧不具合）" "scripts/browser_probe.mjs" "渡された URL にパスがあってもサイトの根から開く" \
+  mutate "browser_probe: 追加パスを渡された URL の下で開く（旧不具合）" "scripts/browser_probe.mjs" "渡された URL にパスがあってもサイトのルートから開く" \
     's = s.replace("const url = `${new URL(base).origin}${p.startsWith", "const url = `${base}${p.startsWith")'
   mutate "browser_probe: 通信が途切れなければ止まる（旧不具合）" "scripts/browser_probe.mjs" "通信が途切れないページでも Cookie の節を出す" \
     's = s.replace("if (e.name !== \"TimeoutError\" || !navRes) {", "if (true) {")'
