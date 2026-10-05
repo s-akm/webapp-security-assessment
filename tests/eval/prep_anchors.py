@@ -18,11 +18,15 @@
     "residual_regex": "vulnerab|…",          消したあとに残ってはいけない語。残れば止める
     "replace": [["package.json", "古い文", "新しい文"]],   コメント以外に残る性格の文（そのファイルだけ）
     "replace_everywhere": [["古い語", "新しい語"]],         識別子などに残るもの（全ファイル）
+    "replace_regex": [["src/x.ts", "正規表現", "置き換え"]],  形で見つけて置き換える（そのファイルだけ。1 行ずつ当て、行は保つ）
     "blank_lines": [["database/init.sh", "正規表現"]],     一致する行を空にする（行は保つ）
     "secrets": ["題材に埋め込まれた値"]      結果に写していれば違反として数える（score.py）
   }
 
 答えの項目には、次も書ける。
+  アンカーの 3 つ目     そのアンカーだけの until（[ファイル, 一節, 正規表現]）。穴の入口（ハンドラ）と、危ない処理をする本体
+                       （別のファイルのサービスなど）を 1 つの答えに並べるとき、範囲の終わりの決め方が違うため。
+                       書くなら、その項目のアンカーはすべて範囲で持つ（項目の until か、アンカーごとの until）
   "control": true      対照（正しく作ってあり、指摘してはいけない箇所）。score.py が誤検出として数え、見つけた数の分母に入れない
   "viewpoint": "02 E"  観点の網羅表（coverage.py）での振り分け先。書かなければ category から決める
 
@@ -92,8 +96,10 @@ def main():
     items = []
     for it in spec['items']:
         locs, ranges = [], []
-        until = re.compile(it['until']) if it.get('until') else None
-        for rel, anchor in it['anchors']:
+        item_until = re.compile(it['until']) if it.get('until') else None
+        for a in it['anchors']:
+            rel, anchor = a[0], a[1]
+            until = re.compile(a[2]) if len(a) > 2 else item_until
             lines = (root / rel).read_text(encoding='utf-8').split('\n')
             hits = [i for i, l in enumerate(lines, start=1) if anchor in l]
             if not hits:
@@ -104,6 +110,9 @@ def main():
                 ranges.append({'file': rel, 'start': hits[0], 'end': end})
             else:
                 locs.append({'file': rel, 'line': hits[0]})
+        if locs and ranges:
+            # 採点は行で持つ答えなら範囲を見ないので、混ぜると範囲の側が黙って使われない
+            sys.exit(f'{it["id"]}: 行で持つアンカーと範囲で持つアンカーが混ざっている（アンカーごとの until を揃える）')
         row = {'id': it['id'], 'keys': [it.get('basis', it['id'])], 'name': it.get('basis', ''),
                'category': it.get('category', ''), 'scope': it.get('scope', 'in'), 'locations': locs, 'ranges': ranges}
         for k in ('control', 'viewpoint'):
@@ -150,6 +159,16 @@ def main():
                 continue
             if old in t:
                 p.write_text(t.replace(old, new), encoding='utf-8')
+    for rel, pattern, new in spec.get('replace_regex', []):
+        f = root / rel
+        if not f.is_file():
+            sys.exit(f'replace_regex の対象が無い: {rel}')
+        rx = re.compile(pattern)
+        before = f.read_text(encoding='utf-8').split('\n')
+        after = [rx.sub(new, l) for l in before]
+        if after == before:
+            sys.exit(f'replace_regex が一致しない: {rel}: {pattern}（題材のコードが変わった。表を直す）')
+        f.write_text('\n'.join(after), encoding='utf-8')
     for rel, pattern in spec.get('blank_lines', []):
         f = root / rel
         if f.is_file():

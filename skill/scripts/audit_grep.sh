@@ -2230,6 +2230,43 @@ if [[ -n "$baas" ]]; then
     } | show
     echo "  ※ ★ は、持ち主の列があるのに、ログインしていれば誰の行でも読める。他人の行を読めてよい表か（共有の名簿など）を確かめる"
 
+    echo "  --- Supabase: 更新の方針が持ち主しか見ず、権限を表す列まで本人が書き換えられる表 ---"
+    {
+      # RLS の方針は行を絞るだけで、列は絞らない。持ち主なら更新できる方針の表に is_admin・role・plan のような列があると、
+      # 本人が自分を管理者や上の区分に書き換えられる。列ごとの更新の権限（grant update (列)）か revoke update で絞っていれば除く
+      # （以前は気づかず、エージェントだけが見つけていた。実地の評価で分かった）
+      # shellcheck disable=SC2086
+      stmts="$(sqlstmts $sqlfiles | sed -E 's/[[:space:]]+/ /g; s/^ //')"
+      PRIV_COL='(is_admin|is_staff|is_superuser|admin|role|roles|plan|tier|credits|balance|subscription|permissions|is_verified|verified|approved|is_approved|account_type|user_type)'
+      grep -iE 'create policy' <<<"$stmts" | grep -viE ' for (select|insert|delete) ' | grep -iE 'auth\.uid\(\)' | while IFS= read -r st; do
+          tbl="$(sed -E 's/.* [Oo][Nn] ([^ ]+).*/\1/' <<<"$st" | tr -d '"' | tr 'A-Z' 'a-z')"; base="${tbl##*.}"
+          cols="$(grep -iE "create (unlogged )?table (if not exists )?(\"?public\"?\\.)?\"?${base}\"? ?\\(" <<<"$stmts" | head -1)"
+          pc="$(grep -oiE "[(,] ?${PRIV_COL} " <<<"$cols" | tr -d '(, ' | tr 'A-Z' 'a-z' | sort -u | tr '\n' ' ')"
+          [[ -n "$pc" ]] || continue
+          grep -qiE "(grant +update *\\(|revoke +(all|update)[^;]* on (table +)?(\"?public\"?\\.)?\"?${base}\"?( |$))" <<<"$(grep -iE "(grant|revoke)[^;]* on (table +)?(\"?public\"?\\.)?\"?${base}\"?( |$)" <<<"$stmts")" && continue
+          printf '  ★ %s（表に権限を表す列 %s があり、列ごとの更新の権限で絞っていない）\n' "$(cut -c1-200 <<<"$st")" "${pc% }"
+        done | lim 15
+    } | show
+
+    echo "  --- Supabase: 方針の中で、表の名前の無い列が内側の表の列に結び付く比べ方（別名.列 = 列 はいつも真になりうる）---"
+    {
+      # exists (select 1 from members m where m.org_id = org_id) の右の org_id は、外側の表ではなく内側の m の列に結び付き、
+      # m.org_id = m.org_id（いつも真）になる。どこかに属していれば、すべての行が通る。右にも表の名前を付ければ防げる
+      # （以前は気づかず、エージェントだけが見つけていた。実地の評価で分かった）
+      # shellcheck disable=SC2086
+      stmts="$(sqlstmts $sqlfiles | sed -E 's/[[:space:]]+/ /g; s/^ //')"
+      grep -iE 'create policy' <<<"$stmts" | LC_ALL=C awk '{
+          s = tolower($0); hit = ""
+          while (match(s, /[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*[ ]*=[ ]*[a-z_][a-z0-9_]*([^a-z0-9_.(]|$)/)) {
+            m = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+            sub(/[^a-z0-9_]$/, "", m); split(m, lr, /[ ]*=[ ]*/); col = lr[1]; sub(/^[^.]*\./, "", col)
+            if (col == lr[2]) { hit = m; break }
+          }
+          if (hit != "") printf "  ★ %s（%s の右の列に表の名前が無い）\n", substr($0, 1, 200), hit
+        }' | lim 15
+    } | show
+    echo "  ※ 列名が外側と内側の両方の表にあると、表の名前を付けない列は内側の表の列として読まれる"
+
     echo "  --- Supabase: 定義者権限（security definer）の関数で search_path を固定していないもの ---"
     {
       # 別の文で alter function … set search_path している関数は、固定したものとして扱う

@@ -90,6 +90,17 @@ if grep -qF 'React 19 以降' "$SKILL/references/07-web-vulnerabilities.md" \
   ok "URL を取る属性は、止まる版でも是正を勧めると書いている"
 else ng "URL を取る属性は、止まる版でも是正を勧めると書いている" "07 の 1-2 節の注から、版の違いか是正の勧めが消えている"; fi
 
+# 利用者のサンプルチェックで示された目安（2.28.0 の候補の仕分け）。使われていない古い定義は穴とせず削除か更新を勧め、
+# 開発環境向けの設定の残りは、本番でも動く経路があれば指摘する
+if grep -qF '今の配備に使われていなければ、穴としては扱わない' "$SKILL/references/13-infrastructure.md" \
+   && grep -qF '使われていないと決めつけない' "$SKILL/references/13-infrastructure.md"; then
+  ok "使われていない古い定義は、決めつけずに確かめ、削除か更新を勧めると書いている"
+else ng "使われていない古い定義は、決めつけずに確かめ、削除か更新を勧めると書いている" "13 の 2-4 節から目安が消えている"; fi
+if grep -qF '開発環境向けの設定が残っていないかも見る' "$SKILL/references/02-code-audit.md" \
+   && grep -qF '本番でも同じ値で動く経路があれば、残っている可能性として指摘する' "$SKILL/references/02-code-audit.md"; then
+  ok "開発環境向けの設定の残りを、本番でも動く経路があれば指摘すると書いている"
+else ng "開発環境向けの設定の残りを、本番でも動く経路があれば指摘すると書いている" "02 の I 節から目安が消えている"; fi
+
 # 未確認事項が止めている相手は、台帳にある ID で書く（実地の評価で、台帳に無い名前を書いた回があった）
 if grep -qF '止めている相手は、台帳にある ID（S-x・U-x）で書く' "$SKILL/SKILL.md" \
    && grep -qF '台帳にある ID（S-x・U-x）だけを書く' "$SKILL/references/04-findings-register.md"; then
@@ -2058,6 +2069,10 @@ absent   "audit_grep[2g]: 項目を選んで渡す行は並べない"           
 absent   "audit_grep[2g]: 項目を選んだ更新は並べない"                         "apps/api/src/users.service.ts:14:" "$NAO"
 contains "audit_grep[19]: 持ち主の列がある表のログインだけの方針に ★"       "★ create policy \"Messages are visible to signed-in users\"" "$NAO"
 absent   "audit_grep[19]: 持ち主の列の無い表のログインだけの方針に ★ を付けない" "★ create policy \"Rooms are visible" "$NAO"
+contains "audit_grep[19]: 持ち主しか見ない更新の方針で、権限の列を書き換えられる表に ★" "★ create policy \"Profiles: update own\"" "$NAO"
+absent   "audit_grep[19]: 列ごとの更新の権限で絞った表に ★ を付けない"       "★ create policy \"Settings: update own\"" "$NAO"
+contains "audit_grep[19]: 表の名前の無い列が内側の表に結び付く比べ方に ★"   "★ create policy \"Room members read messages\"" "$NAO"
+absent   "audit_grep[19]: 表の名前を付けた比べ方に ★ を付けない"             "★ create policy \"Room members read rooms\"" "$NAO"
 
 # 2m. ID を受け取るハンドラの、持ち主の照合。ハンドラの範囲ごとに判定する（Express・Rails・Django・FastAPI）。
 # 以前はファイル単位で、ログインの語（req.user・current_user）がファイルのどこかにあれば ★ を付けていなかった
@@ -2530,6 +2545,15 @@ if [[ "$(wc -l < "$PA/app/header.html.erb" | tr -d ' ')" == "7" ]] && ! grep -F 
 else ng "eval[前処理]: 複数行にまたがる手掛かりのコメントを、行を保って消す" "消えていないか、行がずれたか、ほかのコメントまで消えた"; fi
 if [[ ! -e "$PA/app/routes.desc.ts" && -e "$PA/app/routes.ts" ]]; then ok "eval[前処理]: ワイルドカードで指定したファイルだけを消す"
 else ng "eval[前処理]: ワイルドカードで指定したファイルだけを消す" "消えていないか、消しすぎた"; fi
+# 1 つの答えに、入口の範囲と、別のファイルの危ない処理をする本体の範囲を並べる（アンカーごとの until）
+if python3 -c "import json,sys; d={x['id']:x for x in json.load(open(sys.argv[1]))['items']}; rs=[(r['file'],r['start'],r['end']) for r in d['run-handler']['ranges']]; sys.exit(0 if ('app/service.ts',2,5) in rs and any(f=='app/routes.ts' for f,_,_ in rs) else 1)" "$TMP/eval-pa.json" 2>/dev/null; then
+  ok "eval[前処理]: アンカーごとに範囲の終わりを決める（入口と処理の本体を 1 つの答えに並べる）"
+else ng "eval[前処理]: アンカーごとに範囲の終わりを決める（入口と処理の本体を 1 つの答えに並べる）" "処理の本体の範囲が期待どおりでない"; fi
+PSV="$(cat "$PA/app/service.ts" 2>/dev/null || true)"
+if [[ "$(wc -l < "$PA/app/service.ts" | tr -d ' ')" == "$(wc -l < "$ROOT/tests/fixtures/eval-anchors/target/app/service.ts" | tr -d ' ')" ]] \
+   && grep -F "'Here is the answer.'" <<<"$PSV" >/dev/null && ! grep -F 'it returned a row' <<<"$PSV" >/dev/null; then
+  ok "eval[前処理]: 正規表現で見つけて置き換える（行は保つ）"
+else ng "eval[前処理]: 正規表現で見つけて置き換える（行は保つ）" "置き換わっていないか、行がずれた"; fi
 # 消し残しがあれば止まる（表の residual_regex に、残っている語を入れて確かめる）
 PB="$TMP/eval-anchors-residual"; cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PB"
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d['residual_regex']='取得先'; json.dump(d,open(sys.argv[2],'w'),ensure_ascii=False)" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$TMP/eval-pb-spec.json"

@@ -11,3 +11,5 @@
 - `target/app/routes.ts` の run の処理は、答えを範囲（8〜12 行目）で持つ例（until）
 - `target/app/routes.desc.ts` は、ワイルドカードで消すファイルの例
 - `target/app/header.html.erb` の 2〜4 行目は、複数行にまたがる手掛かりのコメント（行数を保って消えるべきもの）。6 行目のコメントは残る
+- `target/app/service.ts` の launch は、run の答えに、危ない処理をする本体として範囲（2〜5 行目）を足す例（アンカーごとの until）
+- 同じファイルの 7 行目の文は、正規表現で置き換える例（replace_regex。行は保つ）

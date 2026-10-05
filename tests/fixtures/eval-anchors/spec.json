@@ -35,6 +35,11 @@
         [
           "app/routes.ts",
           "@Get('run')"
+        ],
+        [
+          "app/service.ts",
+          "async launch(",
+          "^\\s*(async\\s+)?[A-Za-z]\\w*\\s*\\("
         ]
       ],
       "until": "^\\s*@(Get|Post|Put|Delete|Patch|All)\\("
@@ -55,5 +60,12 @@
   ],
   "secrets": [
     "dummy-embedded-value"
+  ],
+  "replace_regex": [
+    [
+      "app/service.ts",
+      "'As an assistant, [^']*'",
+      "'Here is the answer.'"
+    ]
   ]
 }

@@ -419,6 +419,20 @@ mutate "19: 持ち主の列を見ずに ★ を付ける" "scripts/audit_grep.sh
   's = s.replace("if [[ -n \"$oc\" ]]; then printf", "if true; then printf", 1)'
 mutate "資料: URL を取る属性の是正の勧めを消す" "references/07-web-vulnerabilities.md" "URL を取る属性は、止まる版でも是正を勧めると書いている" \
   's = s.replace("止まる版の属性にしか出ない値でも、\n保存の時点で `http`・`https` に絞る是正は勧める", "止まる版の属性にしか出ない値は、\n是正は要らない", 1)'
+mutate "前処理: アンカーごとの until を見ない" "../tests/eval/prep_anchors.py" "アンカーごとに範囲の終わりを決める" \
+  's = s.replace("until = re.compile(a[2]) if len(a) > 2 else item_until", "until = item_until", 1)'
+mutate "前処理: 正規表現の置き換えを当てない" "../tests/eval/prep_anchors.py" "正規表現で見つけて置き換える" \
+  's = s.replace("        after = [rx.sub(new, l) for l in before]\n        if after == before:", "        after = before\n        if False:", 1)'
+mutate "資料: 使われていない定義を決めつける" "references/13-infrastructure.md" "使われていない古い定義は、決めつけずに確かめ、削除か更新を勧めると書いている" \
+  's = s.replace("- **ただし、使われていないと決めつけない。**", "- **使われていないものとして扱う。**", 1)'
+mutate "資料: 開発環境向けの設定の残りを見ない" "references/02-code-audit.md" "開発環境向けの設定の残りを、本番でも動く経路があれば指摘すると書いている" \
+  's = s.replace("**本番でも同じ値で動く経路があれば、残っている可能性として指摘する。**", "", 1)'
+mutate "19: 権限の列の更新を見ない" "scripts/audit_grep.sh" "持ち主しか見ない更新の方針で、権限の列を書き換えられる表に ★" \
+  's = s.replace("          [[ -n \"$pc\" ]] || continue\n", "          continue\n", 1)'
+mutate "19: 列ごとの更新の権限を見ない" "scripts/audit_grep.sh" "列ごとの更新の権限で絞った表に ★ を付けない" \
+  's = s.replace("<<<\"$stmts\")\" && continue\n", "<<<\"$stmts\")\" && true\n", 1)'
+mutate "19: 内側の表に結び付く比べ方を見ない" "scripts/audit_grep.sh" "表の名前の無い列が内側の表に結び付く比べ方に ★" \
+  's = s.replace("if (col == lr[2]) { hit = m; break }", "if (0) { hit = m; break }", 1)'
 mutate "資料: grep のパターンを引用符の中で改行する" "references/14-mobile.md" "パターンを引用符の中で改行していない" \
   's = s.replace("grep -rnE \x27intent-filter|CFBundleURLSchemes|associatedDomains|", "grep -rnE \x27intent-filter|CFBundleURLSchemes|\nassociatedDomains|", 1)'
 
