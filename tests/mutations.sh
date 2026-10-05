@@ -354,7 +354,7 @@ mutate "audit_grep: 画面操作の記録で 09 を読ませない" "scripts/aud
 mutate "audit_grep: X 広告の関数を送信先から外す" "scripts/audit_grep.sh" "X 広告のタグを拾う" \
   's = s.replace("|ads-twitter|(^|[^A-Za-z0-9_$.])twq\\(|", "|ads-twitter|")'
 mutate "recon: パイプで grep -Eq に渡す（確率的に誤る書き方）" "scripts/recon.sh" "パイプで grep -q に渡していない" \
-  's = s.replace("| grep -E \"$sig\" >/dev/null", "| grep -Eq \"$sig\"", 1)'
+  's = s.replace("if grep -E \"$sig\" <<<\"$(grep -vE \x27^[[:space:]]*[#;]\x27 <<<\"$head_\")\" >/dev/null; then", "if grep -vE \x27^[[:space:]]*[#;]\x27 <<<\"$head_\" | grep -Eq \"$sig\"; then", 1)'
 mutate "資料: コマンド例でスクリプトの中の変数を使う" "references/02-code-audit.md" "スクリプトの中の変数に頼らない" \
   's = s.replace("grep -rnE --exclude-dir=node_modules --exclude-dir=vendor \x27Math", "grep -rnE \"${EX}\" \x27Math", 1)'
 mutate "道具: パイプで grep に渡して出力を捨てる" "../tests/self-audit.sh" "検査の道具で、パイプで grep に渡して出力を捨てていない" \

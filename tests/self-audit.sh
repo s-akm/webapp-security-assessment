@@ -52,6 +52,33 @@ else
   warn "tests/mutations.sh は省略（--full で実行。1 回で 20 時間ほどかかる。CI の週 1 回は 8 つに分けて並べている）" \
        "検査が「通る」ことと「壊れたときに失敗する」ことは別。配布前には一度は実行する"
 fi
+# 変異の置き換えが、今の対象のファイルにまだ一致するか（変異を実行せずに確かめる）。対象のファイルを直して置き換えの元の文字列が
+# 消えると、その変異は空振りし、週 1 回の全件の実行まで気づけない。2.26.1 で recon.sh の書き方を直したあと、2 版の間空振りしていた
+dead="$(python3 - "$ROOT" <<'PY'
+import pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+src = (root / 'tests/mutations.sh').read_text(encoding='utf-8')
+calls = re.findall(r'''mutate "([^"]*)" "([^"]*)" "([^"]*)" \\\n\s*'(.*?)'\n''', src, re.S)
+n_lines = len(re.findall(r'^\s*mutate "', src, re.M))
+if len(calls) != n_lines:
+    print(f'読めない変異がある（呼び出し {n_lines} か所のうち読めたもの {len(calls)}）')
+for name, rel, _exp, code in calls:
+    if '$' in name or '$' in rel:
+        continue
+    p = root / 'skill' / rel
+    if not p.exists():
+        print(f'{name}: 対象のファイルが無い（{rel}）'); continue
+    before = p.read_text(encoding='utf-8'); env = {'s': before}
+    try:
+        exec(code, {}, env)
+    except Exception as e:
+        print(f'{name}: 置き換えの式が動かない（{e}）'); continue
+    if env['s'] == before:
+        print(f'{name}: 置き換えの対象が見つからない')
+PY
+)"
+if [[ -z "$dead" ]]; then ok "変異の置き換えが、すべて今の対象のファイルに一致する（空振りする変異が無い）"
+else ng "空振りする変異がある" "$(printf '%s' "$dead" | head -5 | tr '\n' ' ')"; fi
 
 # ==========================================================================
 head_ "3. スキル自身が方針を守っているか"
