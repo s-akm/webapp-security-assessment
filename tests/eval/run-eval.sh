@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # スキルを実際に当てて、見つけた割合と方針の遵守を測る。
 #
-#   tests/eval/run-eval.sh <題材> [--model <モデル>] [--budget <米ドル>] [--skill-ref <タグ|コミット>] [--record] [--prep-only]
+#   tests/eval/run-eval.sh <題材> [--model <モデル>] [--budget <米ドル>] [--skill-ref <タグ|コミット>] [--previous <前回の出力>] [--record] [--prep-only]
 #     既定は --model claude-opus-5-5 --budget 10。--skill-ref で、前の版の skill/ を当てる（新しいモデルで基準を作り直すとき）
+#     --previous で、前回の回の出力（ディレクトリか result.json）の台帳を「前回の台帳」として渡し、再評価として当てる。
+#     前回の ID の引き継ぎを carry_score.py で数えて carry.json に残す（history.tsv の比較には混ぜない）
 #   tests/eval/run-eval.sh --score-only <出力のディレクトリ> [--record]
 #
 # 題材は手元の tests/eval/local/targets.tsv に書く（公開しない。書き方は tests/eval/README.md）。固定したコミットを取ってきて、
@@ -24,18 +26,19 @@ LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
 # モデルは更新されていくので、確認日から半年を過ぎたら tests/run.sh が知らせる。新しいモデルが出ていれば、知識と費用と
 # 出力が止められる頻度を比べて選び直し、--skill-ref で前の版の基準を作り直す
 EVAL_MODEL_REVIEWED="2026-09-28"
-MODEL="claude-opus-5-5"; SKILL_REF=""; RETRIES=1; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""
+MODEL="claude-opus-5-5"; SKILL_REF=""; RETRIES=1; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""; PREVIOUS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) MODEL="$2"; shift 2 ;;
     --skill-ref) SKILL_REF="$2"; shift 2 ;;
+    --previous) PREVIOUS="$2"; shift 2 ;;
     --retries) RETRIES="$2"; shift 2 ;;
     --budget) BUDGET="$2"; shift 2 ;;
     --record) RECORD=1; shift ;;
     --prep-only) PREP_ONLY=1; shift ;;
     --score-only) SCORE_ONLY="$2"; shift 2 ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
     *) TARGET="$1"; shift ;;
   esac
 done
@@ -174,6 +177,18 @@ if [[ -n "$SKILL_REF" ]]; then
   SKILL_SRC="$WORK/skill-ref/skill"; SKILL_VERSION_FILE="$WORK/skill-ref/VERSION"
 fi
 ( cd "$APP" && bash "$SKILL_SRC/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
+# 再評価の回。前回の回の台帳（structured_output の指摘と未確認事項）を、評価の置き場に「前回の台帳」として置く
+if [[ -n "$PREVIOUS" ]]; then
+  prev_json="$PREVIOUS"; [[ -d "$prev_json" ]] && prev_json="$prev_json/result.json"
+  python3 -c 'import json,sys
+r=json.load(open(sys.argv[1], encoding="utf-8"))
+s=r.get("structured_output") or r
+if not (s.get("findings") or s.get("unconfirmed")): sys.exit("前回の台帳に指摘も未確認事項も無い: " + sys.argv[1])
+json.dump({"findings": s.get("findings") or [], "unconfirmed": s.get("unconfirmed") or []}, open(sys.argv[2], "w", encoding="utf-8"), ensure_ascii=False, indent=1)' \
+    "$prev_json" "$EVID/previous-register.json" || { echo "前回の台帳を読めない: $prev_json" >&2; exit 2; }
+  cp "$EVID/previous-register.json" "$OUT/previous-register.json"
+  echo "前回の台帳を置いた（$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(len(r["findings"]), "件の指摘・", len(r["unconfirmed"]), "件の未確認事項")' "$EVID/previous-register.json")）"
+fi
 echo "audit_grep.sh を先に実行した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
 
 # スキルを題材の中に置く。--setting-sources project で、利用者の手元の設定・スキル・CLAUDE.md は読まない
@@ -203,7 +218,14 @@ t = open(sys.argv[1], encoding="utf-8").read().replace("{{premise}}\n", open(sys
 if sys.argv[4] == "1":
     # 答えの無い題材は教材ではない。冒頭の 1 行だけを差し替える
     t = "このディレクトリは、オープンソースで公開されているソフトウェアのリポジトリを、評価のために手元へ写したものです。\n" + t.split("\n", 1)[1]
-print(t, end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt" "$NO_ANSWERS")"
+if sys.argv[5]:
+    # 再評価の回。前回の台帳の置き場と、11 に従うことを足す
+    t += ("\n## 再評価\n\n"
+          "- これは 2 回目の評価。前回の評価の台帳（指摘と未確認事項。JSON）が " + sys.argv[5] + " にある。references/11-reassessment.md に従う\n"
+          "- 前回の指摘と未確認事項の ID は振り直さない。前回の ID は、今回の台帳でも同じ ID の行として残し、行き先（指摘は 解消・未着手・部分対応・再発・未確認、"
+          "未確認事項は 確定・未確認のまま・取り下げ）と根拠を事実の欄に書く\n"
+          "- 新しく見つけたものは、前回の続きの番号から振る\n")
+print(t, end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt" "$NO_ANSWERS" "${PREVIOUS:+$EVID/previous-register.json}")"
 printf '%s\n' "$prompt" > "$OUT/prompt.txt"
 args=(-p "$prompt"
   --output-format stream-json --verbose --json-schema "$(cat "$EVAL/schema.json")"
@@ -238,6 +260,9 @@ sys.exit(0 if r and not r.get("is_error") and (r.get("structured_output") or {})
 done
 
 score_and_record "$OUT" "$TARGET" "$COMMIT" || { echo "出力: $OUT"; exit 1; }
+if [[ -n "$PREVIOUS" ]]; then
+  python3 "$EVAL/carry_score.py" "$OUT/previous-register.json" "$OUT/result.json" --out "$OUT/carry.json" | tee "$OUT/carry.txt" || true
+fi
 echo "出力: $OUT"
 exit
 }

@@ -427,6 +427,8 @@ mutate "道具: 環境変数を挟んで grep -q に渡す" "../tests/self-audit
   's = s.replace("if grep -E \x27生きていない 0\x27 <<<\"$mres\" >/dev/null; then", "if printf \x27%s\x27 \"$mres\" | LC_ALL=C grep -qE \x27生きていない 0\x27; then", 1)'
 mutate "台帳: 枠の固定を外したシートの表示を正さない" "scripts/make_register.py" "窓枠の無いシートの選択範囲が" \
   's = s.replace("    fix_views(wb)\n", "", 1)'
+mutate "再評価: 消えた ID を数えない" "../tests/eval/carry_score.py" "前回の ID が消えたものと、同じ番号を別の意味に使ったものを数える" \
+  's = s.replace("missing = sorted(set(p) - set(c))", "missing = []")'
 mutate "網羅表: 答えの viewpoint を見ない" "../tests/eval/coverage.py" "答えの viewpoint を分類より優先する" \
   's = s.replace("    v = item.get(\"viewpoint\")\n", "    v = None\n", 1)'
 mutate "網羅表: 失敗した検査も数える" "../tests/eval/coverage.py" "成功した検査だけを観点ごとに数える" \

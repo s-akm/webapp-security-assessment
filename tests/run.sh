@@ -2616,6 +2616,22 @@ head_ "4. 実地の評価の道具 — 題材の前処理と採点が正しい�
 # 実地の評価（tests/eval/run-eval.sh）は費用がかかるのでここでは回さない。
 # 見るのは、答えの一覧を正しく取り出せるか、手掛かりを消せるか、採点の規則どおりに数えるか。
 # ここが壊れていると、見つけた割合の数字そのものが信用できなくなる。
+# 再評価の回の、前回の ID の引き継ぎ（carry_score.py）。前回: S-01・S-02・U-1。今回: S-01（書き直し）・U-1（別の意味）。S-02 が消えた
+cat > "$TMP/cs-prev.json" <<'EOF'
+{"findings": [{"id": "S-01", "title": "注文の詳細を返すハンドラが持ち主を照らし合わせない", "fact": "注文の ID だけで取り出して返す"},
+              {"id": "S-02", "title": "応答の CSP が frame-ancestors だけ", "fact": "script-src が無い"}],
+ "unconfirmed": [{"id": "U-1", "text": "外部に預けているデータの契約と保存の地域", "blocks": []}]}
+EOF
+cat > "$TMP/cs-cur.json" <<'EOF'
+{"structured_output": {"findings": [{"id": "S-01", "title": "【未着手】注文の詳細を返すハンドラが持ち主を照らし合わせない", "fact": "前回から変わらず、注文の ID だけで取り出して返す"}],
+ "unconfirmed": [{"id": "U-1", "text": "バックアップを置く端末の暗号化", "blocks": []}]}}
+EOF
+CSO="$(python3 "$ROOT/tests/eval/carry_score.py" "$TMP/cs-prev.json" "$TMP/cs-cur.json" --out "$TMP/cs.json" 2>&1)"; CS_RC=$?
+if [[ $CS_RC -eq 2 ]] && grep -F '消えた: 1 件 S-02' <<<"$CSO" >/dev/null && grep -F '同じ番号を別の意味に使った: 1 件 U-1' <<<"$CSO" >/dev/null; then
+  ok "eval[再評価]: 前回の ID が消えたものと、同じ番号を別の意味に使ったものを数える"
+else ng "eval[再評価]: 前回の ID が消えたものと、同じ番号を別の意味に使ったものを数える" "終了コード $CS_RC: $(tr '\n' ' ' <<<"$CSO" | cut -c1-200)"; fi
+contains "eval[再評価]: 書き直しただけの ID は引き継いだと数える" "引き継いだ: 1 件" "$CSO"
+contains "eval[再評価]: run-eval.sh が前回の台帳を置き、11 に従う指示を足す" 'references/11-reassessment.md に従う' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # 採点。答え A（10 行目）・B（50 行目）・C（90 行目）・E（30 行目）が範囲内、D が範囲外。許容は前後 3 行
 cat > "$TMP/eval-sa.json" <<'EOF'
 {"secrets": ["dummy-embedded-secret"], "items": [
