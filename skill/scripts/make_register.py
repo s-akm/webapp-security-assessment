@@ -3,12 +3,17 @@
 
     python make_register.py <出力先.xlsx> [--service "サービス名"] [--date 2026-01-15]
                             [--skill-version 2.18.0] [--frameworks none|owasp|full]
-                            [--owasp 2025|2021] [--api] [--card] [--force]
+                            [--owasp 2025|2021] [--api] [--card] [--stars <audit_grep の出力>] [--force]
 
 出力先が既にあれば止まる（書きかけの台帳を雛形で潰さないため）。上書きするなら --force。
 
---skill-version は、評価に使ったスキルの版（配布物の VERSION の値）を総合評価の「評価の前提」に入れる。
-このスクリプトは skill/ の外にある VERSION を読めないので、渡されなければ空欄にする。
+--stars に scripts/audit_grep.sh の出力を渡すと、末尾の「★の判定」シートに ★ の一覧を 1 行ずつ取り込む
+（節と場所だけ。コードの写しは取り込まない）。★ は 1 件ずつ判定して台帳に残す決まり（SKILL.md の「スクリプト」）で、
+判定の空欄と、問題ありなのに指摘の ID が台帳に無い行を、総合評価の「整合の確認」が数える。
+渡さなくても「★の判定」シートは作る（★ の無い案件では空のまま残し、その旨を書く）。
+
+--skill-version は、評価に使ったスキルの版を総合評価の「評価の前提」に入れる。省けば、このスクリプトの置き場から
+VERSION を探して入れる（配布物ならスキルの直下、リポジトリなら skill/ の 1 つ上）。見つからなければ空欄にする。
 
 指摘事項一覧の 1 行には、判定（問題あり／問題なし／判断保留）・優先度（P0〜P4、問題なしは —）・
 状態（未対応／対応中／クローズ（解消）／クローズ（該当なし）／見送り）を別の列で持つ。
@@ -44,6 +49,7 @@ full なら 4_API_Top10）。none では 7_API_Top10 が 1 枚増える。
 import argparse
 import datetime as _dt
 import os
+import re
 import sys
 
 
@@ -250,7 +256,8 @@ def add_list(ws, cells, values, strict=True):
 
 
 # --------------------------------------------------------------------------
-# 観点の一覧の行（02 の A〜O と 07 の 0〜11 節）と、結果の値（04 の「観点の一覧」）
+# 観点の一覧の行（02 の A〜O、07 の 0〜11 節、03 の 1〜10 節、08 の 1〜5 節、03 の 11 節の運用）と、結果の値（04 の「観点の一覧」）。
+# 03・08・運用の行が無かったころ、法令と運用の論点は未確認事項（U-x）にしか残らず、再評価で U が消えると跡が残らなかった
 OBSERVATIONS = [
     "02 A. 認可", "02 B. 認証と資格情報", "02 C. 秘密情報の扱い", "02 D. 入力と出力", "02 E. データアクセス層",
     "02 F. 濫用対策", "02 G. ログと追跡", "02 H. 依存関係とビルド", "02 I. 開発用の抜け道", "02 J. 未使用・孤児コード",
@@ -259,6 +266,14 @@ OBSERVATIONS = [
     "07 0. インジェクション", "07 1. XSS", "07 2. CSRF", "07 3. CORS", "07 4. オープンリダイレクト", "07 5. SSRF",
     "07 6. ファイルアップロード", "07 7. キャッシュ", "07 8. 競合と二重送信", "07 9. 業務ロジックの欠陥",
     "07 10. 言語・処理系に固有のもの", "07 11. リアルタイム通信",
+    "03 1. データ層の権限", "03 2. 外形テストで裏を取る", "03 3. 認証ポリシー", "03 4. バックアップと復旧",
+    "03 5. ネットワークとアクセス経路", "03 6. 鍵の構成", "03 7. 環境の分離", "03 8. エッジ・WAF・流量制御",
+    "03 9. DNS とメール送信ドメイン", "03 10. 本番エンドポイントの外形テスト",
+    "08 1. タグと送信先", "08 2. 同意管理（CMP）", "08 3. 外部送信規律", "08 4. 個人情報の取扱い（漏えい時の報告・委託・外国の第三者）",
+    "08 5. 文書と実装の突き合わせ",
+    "運用 1. 管理コンソールの多要素認証とメンバー", "運用 2. 退職者・委託先のアカウントと基盤の名義", "運用 3. 監視と通知",
+    "運用 4. ログの保存期間", "運用 5. 漏えい時の対応の手順と連絡体制", "運用 6. 費用の上限と通知", "運用 7. 基盤とドメインの更新",
+    "運用 8. 外部診断と受付窓口",
 ]
 OBS_VALUES = ["問題なし", "指摘あり", "未確認", "対象外"]
 
@@ -278,8 +293,8 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
     premises = [
         ("評価日", date, False),
         ("対象リビジョン", "（コミットハッシュ）", True),
-        # 評価に使ったスキルの版。スクリプトは skill/ の外にある VERSION を読めないので、
-        # --skill-version で渡されたときだけ入れる。渡されなければ空欄にして手で書く。
+        # 評価に使ったスキルの版。--skill-version か、スクリプトの置き場の VERSION（skill_version_here）。
+        # どちらも無ければ空欄にして手で書く。古い版で評価した回を後から見分けるため
         ("評価に使ったスキルの版", skill_version or None, False),
         ("実機確認のモード", "（A：評価者が実機で確認／B：依頼者に実行してもらった／混在）", True),
         ("確認の範囲",
@@ -381,6 +396,30 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
         (f"集計の範囲（{LAST} 行目まで）の外に書いた行",
          f"=COUNTA({F}!${idc}${LAST + 1}:${idc}$1048576)"),
     ]
+    # 枠組みへの当てはめ（OWASP・API のシート）。判定だけで根拠が無い行、根拠が「前回…参照」だけの行、全行が同じ文。
+    # 再評価で、10 カテゴリすべてが「前回判定を参照」の同じ文の複写になった台帳があった。同じ文かは SUMPRODUCT で比べる
+    # （COUNTIF は 255 文字を超える文を比べられない）
+    for key, vcol, ecol in (("owasp", "C", "D"), ("api", "C", "E")):
+        if key not in names:
+            continue
+        FV = "'{}'!${}$5:${}$14".format(names[key], vcol, vcol)
+        FE = "'{}'!${}$5:${}$14".format(names[key], ecol, ecol)
+        checks += [
+            ("枠組みのシートで、判定があるのに根拠が空欄の行", f'=COUNTIFS({FV},"<>",{FE},"")'),
+            ("枠組みのシートで、根拠が「前回…参照」だけの行", f'=COUNTIF({FE},"*前回*参照*")'),
+            ("枠組みのシートで、根拠が全行同じ文（その行数。0 が正しい）",
+             f"=IF(COUNTA({FE})<2,0,IF(SUMPRODUCT(--({FE}=INDEX({FE},1)))=COUNTA({FE}),COUNTA({FE}),0))"),
+        ]
+    # ★ の判定（★の判定シート）。場所があるのに判定が空欄の行と、問題ありなのに指摘の ID が台帳に無い行
+    if "stars" in names:
+        SL = "'{}'!$C${}:$C${}".format(names["stars"], STAR_FIRST, LAST)
+        SV = "'{}'!$D${}:$D${}".format(names["stars"], STAR_FIRST, LAST)
+        SI = "'{}'!$E${}:$E${}".format(names["stars"], STAR_FIRST, LAST)
+        checks += [
+            ("★ の判定で、判定が空欄の行", f'=SUMPRODUCT(({SL}<>"")*({SV}=""))'),
+            ("★ の判定で、問題ありなのに指摘の ID が台帳に無い行",
+             f'=SUMPRODUCT(({SV}="問題あり")*(COUNTIF({A},{SI})=0))'),
+        ]
     # 観点の一覧の結果の書き忘れ。一覧はこのシートの下にある（位置は下の行の並びで決まる）
     obs_head = r + 2 + (len(checks) + 1) + 1 + 4 + 4
     obs_first, obs_last = obs_head + 2, obs_head + 1 + len(OBSERVATIONS)
@@ -399,11 +438,11 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
          "それぞれ「何が起きるか」を 2〜3 行で書く。5 件も 10 件も挙げるとどれが先か伝わらなくなる。",
          5)
 
-    # 観点の一覧。このスキルの観点（02 の A〜O、07 の 0〜11 節）をどこまで当てたかを残す（04 の「観点の一覧」）。
+    # 観点の一覧。このスキルの観点（02 の A〜O、07 の 0〜11 節、03・08 の節、運用）をどこまで当てたかを残す（04 の「観点の一覧」）。
     # 台帳の指摘だけでは「見て問題なしだった」と「見ていない」が同じに見える。結果の空欄は「整合の確認」が数える
     r += 4
     assert r == obs_head
-    section(ws, r, "■ 観点の一覧（結果を空欄にしない。構成に応じて開いた 08・12・13・14 の節は行を足す）")
+    section(ws, r, "■ 観点の一覧（結果を空欄にしない。構成に応じて開いた 12・13・14 の節は行を足す。運用の行は 03 の 11 節）")
     header_row(ws, r + 1, ["観点", "結果", "根拠（指摘・未確認の ID、対象外の理由）"], [30, 22, 22])
     ws.freeze_panes = None
     ws.merge_cells(start_row=r + 1, start_column=3, end_row=r + 1, end_column=5)
@@ -509,6 +548,65 @@ def sheet_unknown(wb, names):
     note(ws, 7,
          "【作業を止めているものは表の外にも書く】例:「U-1 は S-01 の優先度の判断を止める。"
          "担当者への確認以外に取得手段がないため、着手と同時に依頼を出すこと。」", 5)
+    return ws
+
+
+STARS_SHEET = "★の判定"
+STAR_FIRST = 5   # ★の判定シートの最初のデータ行
+
+
+def parse_stars(path):
+    """audit_grep.sh の出力の「★ の一覧」から、(節, 場所, 補足) を取り出す。
+    コードの行（場所:行番号: の後ろ）は写さない。対象の写しで、秘密情報が混ざりうるため（SKILL.md の守ること 3）。
+    スクリプトが書いた説明（「場所: 説明」の形）だけを補足に残す"""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        raise SystemExit(f"--stars の出力を開けない: {path}（{e.strerror or e}）")
+    start = next((i for i, l in enumerate(lines) if l.startswith("=== ★ の一覧")), None)
+    if start is None:
+        raise SystemExit(f"--stars の出力に「=== ★ の一覧」が無い: {path}（scripts/audit_grep.sh の出力をそのまま渡す）")
+    rows = []
+    for l in lines[start + 1:]:
+        if l.startswith("=== "):
+            break
+        m = re.match(r"^\s*\[([0-9]+[a-z]?)\.\]\s*★\s*(.*)$", l)
+        if not m:
+            continue
+        sec, rest = m.group(1), m.group(2).strip()
+        loc = re.match(r"^(\S+?):([0-9]+):", rest)
+        if loc:
+            rows.append((sec, f"{loc.group(1)}:{loc.group(2)}", None))
+            continue
+        loc = re.match(r"^(\S+?):\s+(.*)$", rest)
+        if loc:
+            rows.append((sec, loc.group(1), loc.group(2)))
+        else:
+            rows.append((sec, rest.split()[0] if rest else "", None))
+    return rows
+
+
+def sheet_stars(wb, names, stars):
+    ws = wb.create_sheet(names["stars"])
+    title_block(ws, "★ の判定",
+                "scripts/audit_grep.sh が ★ を付けた行を、1 行ずつ判定して残す。★ を読み流すと、見たのか見落としたのかを後から区別できない。"
+                "判定は 問題あり／問題なし／判断保留。問題ありは起票した指摘の ID を書く（同じ原因の ★ は同じ ID でよい）。"
+                "問題なしは、読んだ箇所と理由を「理由・確認の方法」に書く。空欄と、問題ありなのに台帳に無い ID は総合評価の「整合の確認」が数える。", 6)
+    header_row(ws, 4, ["No", "節", "場所（ファイル:行）", "判定", "指摘の ID", "理由・確認の方法"],
+               [8, 8, 44, 12, 12, 70])
+    if stars is None:
+        body_row(ws, STAR_FIRST, ["★-1", "2m", "src/routes/orders.ts:42", "問題あり", "S-01",
+                                  "持ち主を照らし合わせずに注文を返す。指摘事項一覧の S-01 に入れた"], example=True)
+        note(ws, STAR_FIRST + 2,
+             "【取り込み】scripts/make_register.py に --stars <audit_grep.sh の出力> を付けると、★ の一覧をここへ 1 行ずつ入れる。"
+             "★ が 0 件の案件は、この行を消して「★ は 0 件（audit_grep の出力の日付）」と書く。", 6)
+    else:
+        for i, (sec, loc, extra) in enumerate(stars):
+            body_row(ws, STAR_FIRST + i, [f"★-{i + 1}", sec, loc, None, None, extra])
+        if not stars:
+            note(ws, STAR_FIRST, "★ は 0 件（--stars で渡した audit_grep.sh の出力による）。", 6)
+    add_list(ws, f"D{STAR_FIRST}:D{LAST}", VERDICTS)
     return ws
 
 
@@ -755,7 +853,7 @@ API_TOP10 = [
      "自動化されると困る流れに対策があるか（監査 F-1）"),
     ("API7", "Server Side Request Forgery", "外部への通信先を外部入力から組み立てていないか"),
     ("API8", "Security Misconfiguration", "設定の既定値、開発用の残骸（監査 I ／ 実機確認）"),
-    ("API9", "Improper Inventory Management", "使われていない旧版の API が生きていないか（監査 J）"),
+    ("API9", "Improper Inventory Management", "使われていない旧版の API が生きていないか（監査 J・A-1 のルート一覧の版ごとの重複）。本番以外の環境とサブドメイン（03 の 7・9 節）"),
     ("API10", "Unsafe Consumption of APIs", "呼び出している外部 API の応答を検証しているか"),
 ]
 
@@ -828,6 +926,11 @@ CARD_ITEMS = [
      "ウイルス対策", "コードからは見えない", OUT_OF_SCOPE, ""),
     ("クレジットカード・セキュリティガイドライン 6.1 版", "脆弱性対策 5（クレジットマスター）",
      "クレジットマスター対策", "02 の F-5", "", ""),
+    ("クレジットカード・セキュリティガイドライン 6.1 版", "不正ログイン対策",
+     "決済前の「会員登録時」「会員ログイン時」「属性情報変更時」のそれぞれを考慮し、附属文書 20 の対策から 1 つ以上を導入する"
+     "（優先して導入することが望ましい対策: 不審な IP アドレスの制限、2 段階認証、会員登録時の個人情報確認、ログイン試行回数の制限、"
+     "ログイン時と属性情報変更時の通知、属性・行動分析、デバイスフィンガープリント）",
+     "02 の B-3（再認証・変更の通知・試行の上限）、02 の F-2（レート制限）、03 の 3 節（認証基盤の設定）", "", ""),
     ("クレジットカード・セキュリティガイドライン 6.1 版", "EMV 3-D セキュア",
      "EMV 3-D セキュアの導入（ガイドラインが求めた期限は 2025 年 3 月末。過ぎている）",
      "決済代行の管理画面か契約（依頼者に確かめてもらう）", "", ""),
@@ -865,13 +968,27 @@ def next_number(names):
     return max(nums) + 1
 
 
+def skill_version_here():
+    """スクリプトの置き場から VERSION を探す。配布物ならスキルの直下、リポジトリなら skill/ の 1 つ上にある"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for p in (os.path.join(here, "..", "VERSION"), os.path.join(here, "..", "..", "VERSION")):
+        try:
+            with open(p, encoding="utf-8") as f:
+                v = f.read().strip()
+        except OSError:
+            continue
+        if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", v):
+            return v
+    return ""
+
+
 def main():
     ap = argparse.ArgumentParser(description="指摘台帳（xlsx）の雛形を生成する")
     ap.add_argument("output", help="出力先の .xlsx パス")
     ap.add_argument("--service", default="（サービス名）", help="対象サービス名")
     ap.add_argument("--date", default=_dt.date.today().isoformat(), help="評価日 (YYYY-MM-DD)")
     ap.add_argument("--skill-version", default="",
-                    help="評価に使ったスキルの版（配布物の VERSION の値）。省くと総合評価の欄は空欄になる")
+                    help="評価に使ったスキルの版。省くと、スクリプトの置き場の VERSION を入れる（無ければ空欄）")
     ap.add_argument("--frameworks", choices=("none", "owasp", "full"), default="owasp",
                     help="枠組みへの当てはめシートの構成（既定: owasp）")
     ap.add_argument("--owasp", choices=("2025", "2021"), default="2025",
@@ -881,9 +998,13 @@ def main():
     ap.add_argument("--card", action="store_true",
                     help="カード決済を扱う場合のシートを足す（PCI DSS 6.4.3 / 11.6.1、SAQ A、"
                          "クレジットカード・セキュリティガイドライン、EMV 3-D セキュア）")
+    ap.add_argument("--stars", default="",
+                    help="scripts/audit_grep.sh の出力。★ の一覧を「★の判定」シートに 1 行ずつ取り込む（節と場所だけ）")
     ap.add_argument("--force", action="store_true",
                     help="出力先が既にあれば上書きする（既定では止まる）")
     args = ap.parse_args()
+    if not args.skill_version:
+        args.skill_version = skill_version_here()
 
     # 書きかけの台帳を雛形で黙って潰さない。拡張子が違えば、表計算ソフトが開けない
     # ファイルができる（.xls や拡張子なしで保存しても中身は xlsx のまま）。
@@ -921,6 +1042,9 @@ def main():
             names["api"] = f"{next_number(names)}_API_Top10"
     if args.card:
         names["card"] = f"{next_number(names)}_カード決済"
+    # ★の判定は番号を付けずに末尾に置く（番号を付けると、カード決済などのシートの番号がずれる）
+    names["stars"] = STARS_SHEET
+    stars = parse_stars(args.stars) if args.stars else None
 
     standards = "（references/06-frameworks.md の表から、照らした基準と版を書く）"
     if "owasp" in names:
@@ -941,6 +1065,7 @@ def main():
         "unknown": lambda: sheet_unknown(wb, names),
         "roadmap": lambda: sheet_roadmap(wb, names),
         "card": lambda: sheet_card(wb, names),
+        "stars": lambda: sheet_stars(wb, names, stars),
     }
 
     wb = Workbook()
@@ -965,8 +1090,12 @@ def main():
     print(f"  ・件数と工数の合計は数式。行を足せば自動で追従する（参照範囲は {LAST} 行まで）")
     print("  ・総合評価の「整合の確認」は、どれも 0 になる。0 でなければ指摘事項一覧の行を直す")
     print("  ・表計算ソフトで開くまで合計欄は空に見える。openpyxl は計算結果を持たないため")
+    if stars is None:
+        print(f"  ・{STARS_SHEET}: 例の行だけ。--stars <audit_grep.sh の出力> で ★ の一覧を取り込める")
+    else:
+        print(f"  ・{STARS_SHEET}: ★ を {len(stars)} 行取り込んだ。1 行ずつ判定し、問題ありは指摘の ID を書く")
     if not args.skill_version:
-        print("  ・評価に使ったスキルの版は空欄。--skill-version で渡すか、総合評価に手で書く")
+        print("  ・評価に使ったスキルの版は空欄（VERSION が見つからない）。--skill-version で渡すか、総合評価に手で書く")
 
 
 if __name__ == "__main__":

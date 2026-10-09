@@ -1,0 +1,26 @@
+name: gen
+on:
+  workflow_dispatch:
+    inputs:
+      count:
+        default: "1"
+permissions:
+  contents: read
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      LLM_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
+      - name: generate
+        run: |
+          node scripts/gen.mjs --count ${{ inputs.count }}
+      - name: publish
+        env:
+          CMS_TOKEN: ${{ secrets.CMS_WRITE_TOKEN }}
+          COUNT: ${{ inputs.count }}
+        run: node scripts/gen.mjs --count "$COUNT"
+      - uses: example/notify@0123456789abcdef0123456789abcdef01234567
+        with:
+          title: ${{ github.event.pull_request.title }}

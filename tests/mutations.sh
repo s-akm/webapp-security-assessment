@@ -14,7 +14,7 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="$ROOT/skill"
-# --only <名前の一部> で絞る。--shard K/N で、変異を N 個に分けた K 番目だけを実行する（CI で並べて実行するため。
+# --only <名前の一部> で絞る（| で区切って複数を指定できる）。--shard K/N で、変異を N 個に分けた K 番目だけを実行する（CI で並べて実行するため。
 # 変異が 200 件を超え、1 回では CI の時間の上限に近かった）
 ONLY=""; SHARD_K=0; SHARD_N=0
 while [[ $# -gt 0 ]]; do
@@ -67,7 +67,13 @@ fi
 mutate() {
   local name="$1" rel="$2" expect="$3" code="$4"
   local target="$SKILL/$rel" bak
-  if [[ -n "$ONLY" && "$name" != *"$ONLY"* ]]; then SKIP=$((SKIP+1)); return; fi
+  # --only は | で区切って複数を指定できる（どれかを名前に含めば実行する）
+  if [[ -n "$ONLY" ]]; then
+    local part hit=0
+    IFS='|' read -ra ONLY_PARTS <<<"$ONLY"
+    for part in "${ONLY_PARTS[@]}"; do [[ -n "$part" && "$name" == *"$part"* ]] && hit=1; done
+    if [[ $hit -eq 0 ]]; then SKIP=$((SKIP+1)); return; fi
+  fi
   MIDX=$((MIDX+1))
   if [[ $SHARD_N -gt 0 && $(( (MIDX - 1) % SHARD_N )) -ne $((SHARD_K - 1)) ]]; then OUTSHARD=$((OUTSHARD+1)); return; fi
   bak="$(mktemp)"; cp -p "$target" "$bak"; BACKUPS+=("$bak::$target")
@@ -218,6 +224,64 @@ mutate "scan_secrets: GitHub の送信専用アドレスも数える" "scripts/s
   's = s.replace("\x27^(noreply|git)@github\\.com$\x27", "\x27^ZZZNEVER$\x27")'
 mutate "scan_secrets: GitHub の代理アドレスのドメインを伏せる" "scripts/scan_secrets.sh" "GitHub の代理アドレスはドメインを見せる" \
   's = s.replace("|users\\.noreply\\.github\\.com)$", ")$")'
+
+# ---- 20 節・0 節・16 節（CI と LLM の経路）----
+mutate "audit_grep: run: の中の外部の値に ★ を付けない（旧構成）" "scripts/audit_grep.sh" "run: の中の外部の値に ★ を付ける" \
+  's = s.replace("if ($1 == 1) print \"  ★ \" $2;", "if (0) print \"  ★ \" $2;")'
+mutate "audit_grep: inputs の展開を拾わない（旧構成）" "scripts/audit_grep.sh" "run: の中の inputs を並べる" \
+  's = s.replace("CI_IN=\x27(github\\.event\\.inputs|inputs)\\.[A-Za-z0-9_-]+\x27", "CI_IN=\x27NO-SUCH-INPUT\x27")'
+mutate "audit_grep: ジョブ全体の env: を見ない（旧構成）" "scripts/audit_grep.sh" "ジョブ全体の env: に置いた秘密情報を並べる" \
+  's = s.replace("if (!(p >= 0 && last[p] ~ /^- /)) { inenv = 1;", "if (0) { inenv = 1;")'
+mutate "audit_grep: LLM の呼び出しの置き場を分けない（旧構成）" "scripts/audit_grep.sh" "CI・スクリプトだけの呼び出しを、アプリ自身と言わずに分ける" \
+  's = s.replace("elif [[ -n \"$llm_batch$llm_ci\" ]]; then", "elif false; then")'
+
+mutate "audit_grep: 通知の宛先の一覧も役割の判定に並べる" "scripts/audit_grep.sh" "通知の宛先の一覧は並べない" \
+  's = s.replace(" | grep -viE \x27NOTIFY|ALERT|_TO[^A-Z]|SENDER|FROM_\x27", "")'
+mutate "audit_grep: メールで決める判定の関数の定義を並べない" "scripts/audit_grep.sh" "メールで決める判定の関数の定義を並べる" \
+  's = s.replace("|(function|def|const|let|var)[[:space:]]+is[A-Za-z]*(Admin|Staff|Owner|Operator)[A-Za-z]*Email\x27", "\x27")'
+
+mutate "make_register: 観点の一覧から運用の行を落とす" "scripts/make_register.py" "運用の行をすべて持つ" \
+  's = s.replace("\n    \"運用 8. 外部診断と受付窓口\",", "")'
+
+mutate "audit_grep: JS の論理和をテンプレートの raw のフィルタと取り違える（旧不具合）" "scripts/audit_grep.sh" "JS の論理和を、テンプレートの raw のフィルタと取り違えない" \
+  's = s.replace("(^|[^|])\\|[[:space:]]*(safe|raw)", "\\|[[:space:]]*(safe|raw)").replace("(^|[^|])\\|[ \\t]*(safe|raw)", "\\|[ \\t]*(safe|raw)")'
+mutate "audit_grep: 固定の転送先に置き換える行にも ★ を付ける（旧不具合）" "scripts/audit_grep.sh" "固定の転送先に置き換えるだけの行に ★ を付けない" \
+  's = s.replace("printf \x27    %s（文字列と比べて、固定の転送先に置き換えている）\\n\x27", "printf \x27  ★ %s\\n\x27")'
+mutate "audit_grep: エラー文を応答に返す行を並べない（旧構成）" "scripts/audit_grep.sh" "DB のエラー文をそのまま応答に返す行を並べる" \
+  's = s.replace("(message|stack|details?|hint|sqlMessage)", "(no_such_field)")'
+
+mutate "audit_grep: Firebase の書き込みの項目の制限を見ない（旧構成）" "scripts/audit_grep.sh" "Firebase の変える項目を絞らない書き込みを並べる" \
+  's = s.replace("if (buf ~ /request\\.auth/ && buf !~", "if (0 && buf !~")'
+
+mutate "audit_grep: 勧告の表に next/og の行が無い（旧構成）" "scripts/audit_grep.sh" "16.3.5 に 2026-09-23 の next/og の critical の勧告" \
+  's = s.replace("if inrange \"$pure\" 16.2.0 16.3.6; then", "if false; then", 1)'
+mutate "audit_grep: 勧告の表に 2026-10-01 の勧告群の行が無い（旧構成）" "scripts/audit_grep.sh" "16.3.7 に 2026-10-01 の勧告群" \
+  's = s.replace("if { [[ \"$major\" -eq 15 ]] && verlt \"$pure\" 15.5.27; } || inrange \"$pure\" 16.0.0 16.3.8; then", "if false; then", 1)'
+
+mutate "make_register: カード決済のシートに不正ログイン対策の場面を書かない（旧構成）" "scripts/make_register.py" "カード決済のシートに 属性情報変更時 がある" \
+  's = s.replace("属性情報変更時", "属性変更")'
+
+mutate "make_register: 枠組みのシートの根拠を数えない（旧構成）" "scripts/make_register.py" "整合の確認が枠組みのシートの根拠を 3 通り数える" \
+  's = s.replace("    for key, vcol, ecol in ((\"owasp\", \"C\", \"D\"), (\"api\", \"C\", \"E\")):", "    for key, vcol, ecol in ():")'
+
+# ---- version_check・carry_check（古い写しでの評価と、再評価での ID の取りこぼしを止める）----
+mutate "version_check: 版を文字列として比べる" "scripts/version_check.sh" "公開より古い写しは 2 で止め" \
+  's = s.replace("p = x[i] + 0; q = y[i] + 0", "p = x[i] \"\"; q = y[i] \"\"")'
+mutate "version_check: 公開元に届かなくても最新と言う" "scripts/version_check.sh" "公開元に届かなければ 3" \
+  's = s.replace("  echo \"  判定           確かめられない\"", "  echo \"  判定           最新\"; exit 0")'
+mutate "make_register: 置き場の VERSION を読まない（旧構成）" "scripts/make_register.py" "配布物の並びでは、スキルの直下の VERSION を版に入れる" \
+  's = s.replace("        args.skill_version = skill_version_here()", "        pass")'
+mutate "carry_check: 前回にあって今回に無い ID を出さない" "scripts/carry_check.py" "前回にあって今回に無い ID を出す（指摘）" \
+  's = s.replace("missing = sorted(set(prev_rows) - set(cur_rows), key=sortkey)", "missing = []")'
+mutate "carry_check: 資料の節の参照を ID に数える" "scripts/carry_check.py" "資料の節の参照（02 の A-1）を ID に数えない" \
+  's = s.replace("                    if SECTION_REF.search(v[:m.start()]):\n                        continue\n", "")'
+mutate "carry_check: 番号の使い回しを見比べる候補に出さない" "scripts/carry_check.py" "同じ番号を別の意味に使った ID" \
+  's = s.replace("< 0.2]", "< 0.0]")'
+
+mutate "make_register: ★ の行のコードを台帳に写す" "scripts/make_register.py" "コードの写しを台帳に入れない" \
+  's = s.replace("rows.append((sec, f\"{loc.group(1)}:{loc.group(2)}\", None))", "rows.append((sec, f\"{loc.group(1)}:{loc.group(2)}\", rest))")'
+mutate "make_register: ★ の判定の空欄を数えない" "scripts/make_register.py" "整合の確認が ★ の判定の空欄と" \
+  's = s.replace("(\"★ の判定で、判定が空欄の行\", ", "(\"（数えない）\", ")'
 
 # ---- make_register ----
 mutate "make_register: 既にあるファイルを黙って上書きする（旧不具合）" "scripts/make_register.py" "既にあるファイルは上書きせずに止まる" \
@@ -594,7 +658,7 @@ mutate "audit_grep: rg に除外を先に渡す" "scripts/audit_grep.sh" "除外
   's = s.replace("  a+=(${inc[@]+\"${inc[@]}\"} ${exc[@]+\"${exc[@]}\"})", "  a+=(${exc[@]+\"${exc[@]}\"} ${inc[@]+\"${inc[@]}\"})", 1)'
 mutate "audit_grep: grep に対象の指定を後で渡す" "scripts/audit_grep.sh" "除外・grep\]: \*\.min\.js を並べない" \
   's = s.replace("    orig=(\"$fl\" ${incs[@]+\"${incs[@]}\"} ${rest[@]+\"${rest[@]}\"})", "    orig=(\"$fl\" ${rest[@]+\"${rest[@]}\"} ${incs[@]+\"${incs[@]}\"})", 1)'
-mutate "audit_grep: 勧告の表に 2026-09-08 の行が無い" "scripts/audit_grep.sh" "16.3.0 に 2026-09-08 の critical の勧告" \
+mutate "audit_grep: 勧告の表に 2026-08-26 の行が無い" "scripts/audit_grep.sh" "16.3.0 に 2026-08-26 の critical の勧告" \
   's = s.replace("if { [[ \"$major\" -eq 15 ]] && verlt \"$pure\" 15.5.24; } || inrange \"$pure\" 16.0.0 16.3.3; then", "if false; then", 1)'
 mutate "2i 節: 分岐の範囲を次の分岐で区切らない" "scripts/audit_grep.sh" "認可の無い分岐に ★（switch の case）" \
   's = s.replace("if (i < nb && b[i + 1] - 1 < e) e = b[i + 1] - 1", "if (0) e = 0", 1)'
@@ -811,9 +875,11 @@ if node -e 'import("playwright")' >/dev/null 2>&1; then
     's = s.replace("  if (BLOCKED.has(status)) {", "  if (false) {")'
   mutate "browser_probe: 保存領域のキー名の制御文字を落とさない" "scripts/browser_probe.mjs" "キー名の制御文字を落とす" \
     's = s.replace("console.log(`    ${clean(k)}${warn}`);", "console.log(`    ${k}${warn}`);")'
+  mutate "browser_probe: Cookie の届く範囲を出さない（旧構成）" "scripts/browser_probe.mjs" "Cookie の届く範囲（ホストのみか・Path）を出す" \
+    's = s.replace("        `Path=${c.path}`,\n", "")'
 else
   # 件数は上の if の中の mutate の数と揃える（自己監査が README の件数と照合する）
-  printf '  \033[33m-\033[0m browser_probe の 15 件（playwright が無いため省略）\n'; SKIP=$((SKIP+15))
+  printf '  \033[33m-\033[0m browser_probe の 16 件（playwright が無いため省略）\n'; SKIP=$((SKIP+16))
 fi
 
 printf '\n\033[1m結果\033[0m  生きている検査 %d / 生きていない %d / 省略 %d\n' "$PASS" "$FAIL" "$SKIP"

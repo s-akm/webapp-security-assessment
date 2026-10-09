@@ -87,6 +87,8 @@ SMS の送信元（使っている場合）:
 認証の回数制限（Rate Limits）の画面に出ている項目と値（例: メール送信 1 時間あたり 30 件）:
 セッションの有効期限・無操作での失効（Sessions）の画面に出ている項目と値:
 リフレッシュトークンの再利用の検知（Detect and revoke potentially compromised refresh tokens など）: □ オン　□ オフ　□ 見つからなかった
+メールアドレスの変更で新旧両方の確認を求める設定（Secure email change など）: □ オン　□ オフ　□ 見つからなかった
+パスワードの変更で再認証を求める設定（Secure password change・Require current password など）: □ オン　□ オフ　□ 見つからなかった
 ボット対策（CAPTCHA）:                □ オン（種類: 　　　）　□ オフ
 ```
 

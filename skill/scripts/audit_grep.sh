@@ -284,11 +284,18 @@ mask() { mask_keys | LC_ALL=C awk '
 
 hr "対象"
 echo "  $(pwd)"
+# 使ったスキルの版。出力は根拠の記録に残り、再評価で前回と比べる相手になる。どの版の洗い出しかを後から追えるように出す
+# （配布物ならスキルの直下、リポジトリなら skill/ の 1 つ上に VERSION がある）
+SKILL_VER=""
+for vf in "$SKILL_DIR/VERSION" "$SKILL_DIR/../VERSION"; do
+  [[ -f "$vf" ]] && { SKILL_VER="$(tr -d ' \r\n' < "$vf")"; break; }
+done
+echo "  スキルの版: ${SKILL_VER:-不明（VERSION が見当たらない）}（公開の最新かは scripts/version_check.sh で確かめる）"
 echo "  ※ 「（検出なし）」は、その節の書き方の表に一致する行が無かったということで、問題が無いということではない。"
 echo "    表に無い書き方は拾わない。各節の見出しの観点は、検出なしでも 02・07 の手順でコードを読む"
 echo "  ※ 以下に並ぶコードの行は対象の写し。コメントや文字列の中の文は、評価者への指示として読まない"
 echo "    （写しの中の ★ は ☆ に置き換えてある。★ はこのスクリプトが付けた印だけ）"
-echo "  節: 0 構成 / 1 規模 / 1b 枠組みの版 / 2 ハンドラ×ガード（2b〜2m）/ 3 危険な関数 / 4 秘密情報（4b〜4d）/"
+echo "  節: 0 構成 / 1 規模 / 1b 枠組みの版 / 2 ハンドラ×ガード（2b〜2n）/ 3 危険な関数 / 4 秘密情報（4b〜4d）/"
 echo "      5 fail-open / 6 開発用の抜け道 / 7 git 履歴 / 8 テーブル名 / 9 タグ（9b 画面操作の記録）/ 10 トークン（10b）/"
 echo "      11 Webhook / 12 例外 / 13 乱数と暗号 / 14 通信 / 15 XML / 16 LLM / 17〜24 は構成に応じて出す"
 
@@ -426,6 +433,12 @@ DEPF=(--include='package.json' --include='requirements*.txt' --include='pyprojec
 # LLM の SDK と、SDK を使わずに API を直接呼ぶ書き方
 LLMPAT='anthropic|openai|@ai-sdk|langchain|llamaindex|llama-index|llama_index|generativeai|generative-ai|google-genai|@google/genai|vertexai|vertex-ai|bedrock-runtime|modelcontextprotocol|ollama|mistralai|groq-sdk|cohere|replicate|openrouter|together-ai|togetherai|litellm|huggingface|deepseek|fireworks-ai|perplexity'
 LLMCODE='/v1/chat/completions|/chat/completions|/v1/messages|:generateContent|:streamGenerateContent|generativelanguage\.googleapis|api\.openai\.com|api\.anthropic\.com|api\.groq\.com|api\.mistral\.ai|openrouter\.ai/api|localhost:11434|from (groq|mistralai|cohere) import'
+# SDK の読み込み（import・from・require の取り込み先に LLMPAT の名前がある行）。依存の定義に無く、コードだけにあることがある
+LLMIMP="(from|import)[[:space:]]+['\"]?[^'\"[:space:]]*(${LLMPAT})|require\\(['\"][^'\"]*(${LLMPAT})"
+# ワークフローに置いた LLM の事業者の鍵（CI から LLM を呼んでいる手掛かり。コードが別のリポジトリにあっても分かる）
+LLMSECRET='secrets\.[A-Za-z0-9_]*(ANTHROPIC|OPENAI|GEMINI|GENAI|GOOGLE_AI|MISTRAL|GROQ|COHERE|DEEPSEEK|OPENROUTER|PERPLEXITY|XAI|BEDROCK|CLAUDE|LLM)[A-Za-z0-9_]*'
+# アプリの外で動くコードの置き場（CI・手で実行するスクリプト）。ここにある呼び出しは「CI・スクリプト」として分ける
+LLMBATCH='(^|/)(scripts?|tools?|bin|\.github|ci|batch|automation)/'
 # カード決済の SDK（言語を問わない。PHP・Go・.NET のパッケージ名も含む）
 PAYPAT='stripe|payjp|komoju|braintree|adyen|squareup|@square/|"square"|paypal|mollie|razorpay|fincode|gmo-pg|gmopg|sbpayment|veritrans'
 # 対象に無い技術の資料を読むのは時間の無駄で、逆に「読んだつもり」になる危険もある。
@@ -507,9 +520,22 @@ else
 fi
 
 # --- その他、資料の要否が分かれるもの ---
-if [[ -n "$(grep -rliE "${EXA[@]}" "$LLMPAT" "${DEPF[@]}" . 2>/dev/null | head -1)" ]] \
-   || [[ -n "$(grep -rlE "${EXA[@]}" "$LLMCODE" "${CODE_INCL[@]}" . 2>/dev/null | head -1)" ]]; then
-  say "LLM の利用" "有 → アプリ自身が LLM を呼んでいる"
+# LLM を呼んでいる場所を、アプリのコードと、CI・スクリプト（バッチで生成して公開する経路）に分ける。
+# 実案件で、CI のスクリプトだけが LLM を呼んで記事を CMS へ公開していたのに「アプリ自身が呼んでいる」と出て、
+# 評価では生成物の行き先が見られなかった。アプリの外の経路は 12 の 9 節で見る
+llm_dep="$(grep -rliE "${EXA[@]}" "$LLMPAT" "${DEPF[@]}" . 2>/dev/null | head -1)"
+llm_code="$( { grep -rlE "${EXA[@]}" "$LLMCODE" "${CODE_INCL[@]}" . ; grep -rliE "${EXA[@]}" "$LLMIMP" "${CODE_INCL[@]}" . ; } 2>/dev/null | sort -u)"
+llm_app="$(grep -vE "$LLMBATCH" <<<"$llm_code" || true)"
+llm_batch="$(grep -E "$LLMBATCH" <<<"$llm_code" || true)"
+llm_ci=""; [[ -d .github/workflows ]] && llm_ci="$(grep -rliE "$LLMSECRET" .github/workflows 2>/dev/null | head -1)"
+if [[ -n "$llm_app" ]]; then
+  say "LLM の利用" "有 → アプリ自身が LLM を呼んでいる$([[ -n "$llm_batch$llm_ci" ]] && printf '%s' '。CI・スクリプトからも呼んでいる（12 の 9 節）')"
+  need="$need references/12-ai-features.md"
+elif [[ -n "$llm_batch$llm_ci" ]]; then
+  say "LLM の利用" "有 → CI・スクリプトから LLM を呼んでいる（アプリ自身は呼んでいない。生成物の行き先を 12 の 9 節で見る）"
+  need="$need references/12-ai-features.md"
+elif [[ -n "$llm_dep" ]]; then
+  say "LLM の利用" "有 → 依存に LLM の SDK がある（呼んでいる箇所は 16 節）"
   need="$need references/12-ai-features.md"
 else
   say "LLM の利用" "無"
@@ -715,7 +741,7 @@ hr "1b. 枠組みの版（ロックファイルの解決結果。公式アドバ
 # ここでは、公式の勧告で修正版まで一次情報で確かめたものだけを機械的に判定する。
 # それ以外は版を並べるだけにする。表は評価の時点で古くなっている前提で、公式の一覧を必ず見る。
 # 下の判定表を公式の勧告と照合した日。表を直したら更新する（tests/run.sh が半年を超えたら知らせる）
-ADVISORIES_REVIEWED="2026-09-28"
+ADVISORIES_REVIEWED="2026-10-09"
 pkgver() {
   local name="$1" d="${2:-.}" v=""
   if [[ -f "$d/package-lock.json" ]]; then
@@ -776,11 +802,21 @@ while IFS= read -r d; do
           if [[ -n "$fix" ]] && verlt "$pure" "$fix" && [[ -n "$approuter" ]]; then
             note="$note ★ React2Shell（CVE-2025-55182。Next.js の案内では取り下げ済みの 66478）の修正前。版上げと秘密情報の入れ替えの二段（02 の H）"
           fi
-          # 2026-09-08 の critical 2 件（修正は 15.5.24 / 16.3.3）と、2026-07-22 の勧告群（high を含む。修正は 15.5.21 / 16.2.11）。
+          # 日付は日本時間の公開日（GitHub の勧告の published_at を日本時間にしたもの）。
+          # 2026-10-01 の勧告群（high を含む。勧告の修正版の欄は「16.3.?」で明記が無い。同じ日に出た 15.5.27 / 16.3.8 で修正。
+          # 同じ日の GHSA-h694-7cp9-m8p3 は修正版を 16.3.8 と明記）、2026-09-23 の next/og の critical（修正は 16.3.6）、
+          # 2026-08-26 の critical 2 件（修正は 15.5.24 / 16.3.3）、2026-07-22 の勧告群（high を含む。修正は 15.5.21 / 16.2.11）。
+          # 2026-09-28 の照合では next/og の勧告（9-23 の公開）を取りこぼしていた。照合日を更新するときは、前回の照合日より前の公開も一覧で見直す。
           # 14 以前はサポート外として上で知らせている
           if [[ "$major" -ge 15 ]]; then
+            if inrange "$pure" 16.2.0 16.3.6; then
+              note="$note ★ next/og の ImageResponse 経由でコードを実行される critical の勧告（GHSA-vcvr-r3jv-pc5j・CVE-2026-94545。2026-09-23）の修正前。16.3.6 以上へ。Node.js の ImageResponse に外から来る値を SVG の中身・属性・スタイルとして渡していれば該当（02 の H）"
+            fi
+            if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.27; } || inrange "$pure" 16.0.0 16.3.8; then
+              note="$note ★ 2026-10-01 の勧告群（画像最適化の SSRF・キャッシュの汚染など。high を含む）の修正前。15.5.27 / 16.3.8 以上へ"
+            fi
             if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.24; } || inrange "$pure" 16.0.0 16.3.3; then
-              note="$note ★ 認証なしでコードを実行される critical の勧告（GHSA-2xp9-vwfh-vxw4・GHSA-p293-qw3h-jr36。2026-09-08）の修正前。15.5.24 / 16.3.3 以上へ（02 の H）"
+              note="$note ★ 認証なしでコードを実行される critical の勧告（GHSA-2xp9-vwfh-vxw4・GHSA-p293-qw3h-jr36。2026-08-26）の修正前。15.5.24 / 16.3.3 以上へ（02 の H）"
             fi
             if { [[ "$major" -eq 15 ]] && verlt "$pure" 15.5.21; } || inrange "$pure" 16.0.0 16.2.11; then
               note="$note ★ 2026-07-22 の勧告群（SSRF・Proxy の迂回・DoS。high を含む）の修正前。15.5.21 / 16.2.11 以上へ"
@@ -796,7 +832,18 @@ while IFS= read -r d; do
           verlt "$pure" 6.3.2 && note=" ★ 認証済みの応答がキャッシュされる CVE-2026-27118 の修正前（07 の 7 節）" ;;
       esac
     fi
-    printf '  %-28s %s%s%s\n' "$name" "$v" "$where" "$note"
+    # ★ の注記は 1 つずつ別の行に出す。1 行に並べると、出力全体の長い行の省略（400 バイト）で後ろの勧告が切れる
+    # （16.3.0 で 3 つ並び、2026-08-26 の critical が切れた）。★ の一覧にも 1 件ずつ並ぶ
+    first="${note%% ★ *}"
+    printf '  %-28s %s%s%s\n' "$name" "$v" "$where" "$first"
+    if [[ "$note" == *" ★ "* ]]; then
+      rest="${note#* ★ }"
+      while :; do
+        printf '      ★ %s %s\n' "$name" "${rest%% ★ *}"
+        [[ "$rest" == *" ★ "* ]] || break
+        rest="${rest#* ★ }"
+      done
+    fi
   done
 done <<<"$NODE_DIRS"
 [[ -z "$fw_found" ]] && echo "  （判定対象の枠組みは無い）"
@@ -1240,7 +1287,10 @@ INCL_R=("${INCL[@]}" --include='*.tsx' --include='*.jsx' --include='*.vue' --inc
         [[ -n "$k" ]] || continue
         # 確かめは、読んだ行の少し前から転送の行までで探す（先の関数の確かめを拾わないように、転送の行で止める）
         s=$((n > 3 ? n - 3 : 1)); reg="$(sed -n "${s},$((n + k))p" "$f" 2>/dev/null)"
-        if grep -qE "$REDIR_GUARD" <<<"$reg"; then printf '    %s\n' "$l"
+        # 読んだ値を文字列と比べ、固定の転送先のどちらかに置き換えるだけの行（x === "a" ? "/p" : "/q"）は、外へ転送されない
+        if grep -qE "(===|==)[[:space:]]*[\"'][^\"']*[\"'][[:space:]]*\?[[:space:]]*[\"'][^\"']*[\"'][[:space:]]*:[[:space:]]*[\"'][^\"']*[\"']" <<<"$c"; then
+          printf '    %s（文字列と比べて、固定の転送先に置き換えている）\n' "$l"
+        elif grep -qE "$REDIR_GUARD" <<<"$reg"; then printf '    %s\n' "$l"
         elif grep -qE "$REDIR_SLASH" <<<"$reg"; then
           # / で始まるかだけを確かめ、// や /\ を弾いていなければ、外部のホストへ転送される（//attacker.example）
           if grep -qE "[\"'\`]//|\\\\\\\\|\\\\/" <<<"$reg"; then printf '    %s\n' "$l"
@@ -1418,6 +1468,23 @@ echo "    持ち主の列と現在の利用者の組み合わせ）が見当た�
 echo "    照合が別の関数（before_action・依存・前段のミドルウェア）にある構成もあるので、他人の ID に変えて取れるかを 1 本ずつ読む"
 echo "  ※ 照合らしい書き方があっても、照合が取り出しと同じ行に掛かっているか（取り出した後に比べずに返していないか）を確かめる"
 
+hr "2n. 代理ログインと、メールアドレスで決める役割（候補。02 の A-2・A-6・A-7）"
+# 運営が利用者として画面を開く機能と、メールアドレスの一覧との一致で運営を決める判定を並べる。どちらも ★ は付けない（読む場所を示すだけ）。
+# 実案件で、代理ログインの記録が console.log だけで、代理の印と代理のセッションの寿命がずれ、運営の判定がメールの確認済みを見ていなかった
+echo "  --- 代理ログイン（運営が他人として操作する機能）---"
+{
+  grep -rniE "${EXA[@]}" 'impersonat|masquerad|act[_-]?as[_-]?user|log[_-]?in[_-]?as|sign[_-]?in[_-]?as|switch[_-]?user|become[_-]?user|generateLink\(' \
+    "${CODE_INCL[@]}" . 2>/dev/null | lim 15
+} | show
+echo "  ※ 使える人・対象の特定（利用者の ID か）・代理の状態とセッションの結び付き・代理中に許す操作・記録・発行するリンクの扱いを 02 の A-6 で見る"
+echo "  --- メールアドレスの一覧との一致で役割を決める判定（一覧を読む行と、判定の関数の定義）---"
+{
+  # 呼び出し箇所は並べない（数が多く、判定の中身は定義で決まる）。通知の宛先の一覧（NOTIFY・ALERT など）は除く
+  grep -rnE "${EXA[@]}" '(process\.env|import\.meta\.env|os\.environ|getenv|ENV)[^A-Za-z0-9]{1,3}[A-Z_]*(ADMIN|STAFF|OWNER|SUPERUSER|OPERATOR)[A-Z_]*EMAILS?|(function|def|const|let|var)[[:space:]]+is[A-Za-z]*(Admin|Staff|Owner|Operator)[A-Za-z]*Email' \
+    "${CODE_INCL[@]}" . 2>/dev/null | grep -viE 'NOTIFY|ALERT|_TO[^A-Z]|SENDER|FROM_' | lim 15
+} | show
+echo "  ※ メールの確認済み（email_confirmed_at・email_verified）を条件にしているか、新規登録が有効か、一覧の全アドレスに本人のアカウントがあるか（02 の A-2・03 の 3 節）"
+
 hr "2c. Server Actions の関数ごとのガード（該当する構成のみ）"
 # 'use server' のファイルでは、export された関数 1 つ 1 つが入口になる。
 # ファイル単位の「定義 N / ガード M」では、どの関数が素通しかまでは分からない。
@@ -1492,7 +1559,8 @@ echo "  --- 出力に HTML を直接流し込む（★ は値を流し込む行�
 # 並べるだけだと、固定の文字列を出す行と値を流し込む行が混ざって読み流される（実地の評価で、DB に入った利用者の
 # 名前を流し込む行が一覧に出ていたのに、2 回とも台帳に載らなかった）。値を流し込む行に ★ を付けて 1 行ずつ判定させる
 UNESC='dangerouslySetInnerHTML|(^|[^A-Za-z0-9_-])v-html[[:space:]]*=|\[innerHTML\][[:space:]]*=|\.(inner|outer)HTML[[:space:]]*=|insertAdjacentHTML[[:space:]]*\(|document\.write(ln)?[[:space:]]*\('
-UNESC="$UNESC"'|bypassSecurityTrust(Html|Script|Url|ResourceUrl)[[:space:]]*\(|\{@html[[:space:]]|@Html\.Raw[[:space:]]*\(|\|[[:space:]]*(safe|raw)([^A-Za-z0-9_]|$)'
+# テンプレートのフィルタ（Twig・Jinja・Nunjucks の | raw・| safe）。JS などの論理和（|| raw）を取り違えないよう、直前が | のものは除く
+UNESC="$UNESC"'|bypassSecurityTrust(Html|Script|Url|ResourceUrl)[[:space:]]*\(|\{@html[[:space:]]|@Html\.Raw[[:space:]]*\(|(^|[^|])\|[[:space:]]*(safe|raw)([^A-Za-z0-9_]|$)'
 # 文字列の HTML を応答にそのまま返す形（res.send('<h1>' + 値)）と、jQuery の HTML を差し込む関数
 UNESC="$UNESC"'|res\.(send|end|write)[[:space:]]*\([[:space:]]*["'"'"'`][[:space:]]*<|\)\.(html|append|prepend|after|before|replaceWith)[[:space:]]*\([[:space:]]*[^)[:space:]]'
 # Blade の生の出力は {!! … !!} の対で見る（TSX の {!!flag} を取り違えていた）。Markup( は renderToStaticMarkup( と取り違えないよう左に切れ目を置く
@@ -1545,7 +1613,7 @@ UNESC="$UNESC"'|\.html_safe|<%=[[:space:]]*raw[[:space:](]|(^|[^.:A-Za-z0-9_])ra
         if (c ~ /<%=[ \t]*raw[ \t(]/ && !lit(after("<%=[ \t]*raw[ \t]*"))) v = 1
         if (c ~ /(^|[^.:A-Za-z0-9_])raw[ \t]*\(/ && c !~ /<%=[ \t]*raw/ && !lit(after("(^|[^.:A-Za-z0-9_])raw[ \t]*\\("))) v = 1
         # テンプレートの式そのものを生で出す書き方は、固定の文字列を書くことがまず無いので、すべて値を流し込む側に数える
-        if (c ~ /\{@html[ \t]|\|[ \t]*(safe|raw)([^A-Za-z0-9_]|$)|\{!![^}]*!!\}|th:utext|\{\{\{|\{\{&/) v = 1
+        if (c ~ /\{@html[ \t]|(^|[^|])\|[ \t]*(safe|raw)([^A-Za-z0-9_]|$)|\{!![^}]*!!\}|th:utext|\{\{\{|\{\{&/) v = 1
         # <%- は EJS では生の出力、ERB では前の空白を詰める記号。ERB のファイルでは数えない
         if (c ~ /<%-/ && f !~ /\.(erb|rhtml)$/) v = 1
         # ERB で <%- にだけ一致した行（出力ではない）は出さない
@@ -1924,6 +1992,15 @@ hr "12. 例外の握りつぶし（認可・認証の周りにあれば優先度
         { if (prev != "" && match($0, /-[0-9]+-/) && substr($0, RSTART + RLENGTH) ~ /^[ \t]*(pass|\})[ \t;]*$/) print prev; prev = $0 }' | lim 20
 } | show
 echo "  ※ 検証が例外で落ちても先へ進む形は、検証していないのと同じ。02 の K-2 を参照"
+echo "  --- 例外や DB・認証基盤のエラー文を、そのまま応答に返している行 ---"
+# 制約やテーブルの名前、内部のホスト、SQL の断片が利用者に見える。実案件で、DB のエラー文を加盟店・取引先が呼べる API の応答に
+# そのまま返していた。応答を組み立てる呼び出しと同じ行にエラーの本文があるものを並べる（★ は付けない。誰が呼べる入口かで重さが変わる）
+{
+  grep -rnE "${EXA[@]}" '(json|send|jsonify|JsonResponse|Response|render|write|abort|HTTPException|status)\b[^;]*\b(error|err|e|ex|exc|exception)\.(message|stack|details?|hint|sqlMessage)\b|(jsonify|JsonResponse|HTTPException|Response|render)\b[^;]*\bstr\((e|ex|err|exc|error)\)|render[[:space:]]+json:[^#]*\b(e|ex|error)\.(message|backtrace)' \
+    "${CODE_INCL[@]}" --include='*.rb' --include='*.php' --include='*.go' --include='*.java' --include='*.cs' . 2>/dev/null \
+    | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(//|#|\*)' | grep -vE "$TESTPATH" | lim 20
+} | show
+echo "  ※ 利用者へは定型の文と問い合わせ用の番号だけを返し、本文はサーバーのログに残す（02 の D-3・07 の 10 節）"
 
 hr "13. 乱数と暗号"
 echo "  --- 予測できる乱数（トークンや ID に使っていれば指摘）---"
@@ -1999,13 +2076,16 @@ hr "15. XML を解析しているか（該当すれば XXE を見る）"
 } | show
 echo "  ※ 該当すれば references/07-web-vulnerabilities.md の 6-2 を読む。JSON だけなら不要"
 
-hr "16. アプリ自身が LLM を呼んでいるか"
+hr "16. LLM を呼んでいる箇所（アプリのコードか、CI・スクリプトか）"
 {
-  grep -rliE "${EXA[@]}" "$LLMPAT" "${DEPF[@]}" . 2>/dev/null | sed 's/^/  /'
-  grep -rnE "${EXA[@]}" "$LLMCODE" "${CODE_INCL[@]}" . 2>/dev/null | lim 10
+  grep -rliE "${EXA[@]}" "$LLMPAT" "${DEPF[@]}" . 2>/dev/null | sed 's/^/  依存の定義      /'
+  { grep -rnE "${EXA[@]}" "$LLMCODE" "${CODE_INCL[@]}" . ; grep -rniE "${EXA[@]}" "$LLMIMP" "${CODE_INCL[@]}" . ; } 2>/dev/null | sort -u \
+    | LLMBATCH="$LLMBATCH" awk '{ split($0, a, ":"); printf "  %s%s\n", (a[1] ~ ENVIRON["LLMBATCH"] ? "CI・スクリプト  " : "アプリ          "), $0 }' | lim 15
+  [[ -d .github/workflows ]] && grep -rniE "$LLMSECRET" .github/workflows 2>/dev/null | lim 5 | sed 's/^/  ワークフロー    /'
   grep -rlnE "${EXA[@]}" 'modelcontextprotocol|mcp[_-]server' . 2>/dev/null | lim 5 | sed 's/^/  /'
 } | show
-echo "  ※ 該当すれば references/12-ai-features.md を読む。ツールを実行する構成なら必読"
+echo "  ※ 該当すれば references/12-ai-features.md を読む。アプリの呼び出しは 1〜8 節（ツールを実行する構成なら必読）、"
+echo "    CI・スクリプト・ワークフローの呼び出しは 9 節（生成物を人の確認なしに公開する経路、鍵の範囲、回数と費用の上限）"
 echo "  ※ 「AI で開発した」ことと「AI を動かしている」ことは別物。ここで見るのは後者"
 
 # --------------------------------------------------------------------------
@@ -2332,9 +2412,22 @@ if [[ -n "$baas" ]]; then
         nc 'request\.time[[:space:]]*<[[:space:]]*timestamp' | pfx "  ★ テストモードの期限付き: $r:"
         nc 'if[[:space:]]+request\.auth(\.uid)?[[:space:]]*!=[[:space:]]*null[[:space:]]*;?[[:space:]]*$' | pfx "  ログイン済みなら誰でも: $r:"
         nc '"\.(read|write)"[[:space:]]*:[[:space:]]*"auth[[:space:]]*!=[[:space:]]*null"' | pfx "  ログイン済みなら誰でも: $r:"
+        # 書き込み（update・write）の文で、変えてよい項目を絞っていないもの。本人の文書でも、権限を表す項目
+        # （role・plan・credits など）まで本人が書き換えられる。文は ; までをまとめて読む（条件が複数行に分かれる）
+        case "$r" in
+          *.rules)
+            LC_ALL=C awk -v R="$r" '
+              /^[ \t]*\/\// { next }
+              !inst && /allow[ \t]+[a-z, \t]*(update|write)/ { inst = 1; st = NR; buf = ""; line1 = $0 }
+              inst { buf = buf " " $0; if (index($0, ";")) { if (buf ~ /request\.auth/ && buf !~ /affectedKeys|hasOnly|hasAll|hasAny|\.diff\(|keys\(\)/) printf "  変える項目を絞らない書き込み: %s:%d:%s\n", R, st, line1; inst = 0 } }
+            ' "$r"
+            ;;
+        esac
       done
     } | show
     echo "  ※ 「ログイン済みなら誰でも」は、所有者の照合が無ければ他人のデータに届く。App Check はルールの代わりにならない"
+    echo "  ※ 「変える項目を絞らない書き込み」は、その文書に権限・課金・状態を表す項目があれば、本人がそれを書き換えられる。"
+    echo "    request.resource.data.diff(resource.data).affectedKeys().hasOnly([...]) で変えてよい項目を絞っているかを見る（07 の 9 節）"
   fi
 
   if [[ "$baas" == *Clerk* ]]; then
@@ -2380,13 +2473,66 @@ if [[ -d .github/workflows ]]; then
     grep -rnE 'pull_request_target|workflow_run|issue_comment' "$W" 2>/dev/null
     grep -rnE 'allow-unsafe-pr-checkout|cache-mode:|head\.(sha|ref)|refs/pull/|gh pr checkout' "$W" 2>/dev/null
   } | show
-  echo "  --- 外部から来る文字列の \${{ }} 展開（run: | の複数行や github-script の中ならシェル・JS への注入）---"
+  echo "  --- 外部から来る文字列の \${{ }} 展開（run: や github-script の script: の中なら、シェル・JS への注入）---"
+  # 利用者が自由に書ける値だけに絞る（head.sha のような 16 進の値は注入に使えない）。run: / script: の中
+  # （1 行の値と、| や > で始まる複数行）にあるものに ★ を付ける。with: の引数として渡すだけなら注入にならない
+  CI_EXT='github\.event\.(issue\.(title|body)|pull_request\.(title|body|head\.ref|head\.label|head\.repo\.default_branch)|comment\.body|review\.body|review_comment\.body|pages\.[^}]*page_name|commits\.[^}]*(message|author)|head_commit\.(message|author)|discussion\.(title|body)|workflow_run\.(head_branch|display_title|head_commit\.(message|author)))|github\.head_ref'
+  # 人が渡す入力（workflow_dispatch の入力欄、workflow_call の呼び出し元が渡す値）
+  CI_IN='(github\.event\.inputs|inputs)\.[A-Za-z0-9_-]+'
+  # $1: 探す式（ERE）。正規表現の \ を awk の -v で崩さないよう、環境変数で渡す
+  ci_expr() {
+    local f
+    for f in "$W"/*.y*ml; do
+      [[ -f "$f" ]] || continue
+      CI_RE="$1" LC_ALL=C awk -v F="$f" '
+        function ind(s) { match(s, /^ */); return RLENGTH }
+        {
+          k = ind($0); t = substr($0, k + 1)
+          if (blk && t != "" && t !~ /^#/ && k <= bk) blk = 0
+          inrun = blk
+          if (t ~ /^(- )?(run|script):/) {
+            inrun = 1
+            if (t ~ /^(- )?(run|script):[ \t]*[|>][-+0-9]*[ \t]*$/) { blk = 1; bk = k + (t ~ /^- / ? 2 : 0) }
+          }
+          if (index($0, "${{") == 0) next
+          s = $0; hit = 0
+          while (match(s, /\$\{\{[^}]*\}\}/)) { if (substr(s, RSTART, RLENGTH) ~ ENVIRON["CI_RE"]) hit = 1; s = substr(s, RSTART + RLENGTH) }
+          if (hit) printf "%d\t%s:%d:%s\n", inrun, F, NR, $0
+        }' "$f"
+    done
+  }
   {
-    # 利用者が自由に書ける値だけに絞る（head.sha のような 16 進の値は注入に使えない）
-    grep -rnE '\$\{\{[[:space:]]*(github\.event\.(issue\.(title|body)|pull_request\.(title|body|head\.ref|head\.label|head\.repo\.default_branch)|comment\.body|review\.body|review_comment\.body|pages\.[^}]*page_name|commits\.[^}]*(message|author)|head_commit\.(message|author))|github\.head_ref)' \
-      "$W" 2>/dev/null
+    ci_expr "$CI_EXT" | awk -F '\t' '{ if ($1 == 1) print "  ★ " $2; else print "    " $2 "（run: の外。引数として渡すだけなら注入にならない）" }'
   } | show
-  echo "  ※ run: や script: の中にあれば指摘。with: の引数として渡しているだけなら問題ない"
+  echo "  --- 人が渡す入力（workflow_dispatch・workflow_call の inputs）の \${{ }} 展開 ---"
+  {
+    ci_expr "$CI_IN" | awk -F '\t' '{ print "    " $2 ($1 == 1 ? "（run: の中）" : "（run: の外）") }'
+  } | show
+  echo "  ※ run: の中の inputs は、入力した値がシェルの命令として読まれる。入力できるのは書き込みの権限を持つ人か、呼び出し元の"
+  echo "    ワークフローだが、呼び出し元が PR の題名などを渡していれば外部の値と同じになる。env: に入れてから \"\$名前\" で参照する（10 の 3-3）"
+  echo "  --- ジョブやワークフロー全体の env: に置いた秘密情報（そのジョブの全ステップに渡る）---"
+  {
+    for f in "$W"/*.y*ml; do
+      [[ -f "$f" ]] || continue
+      LC_ALL=C awk -v F="$f" '
+        function ind(s) { match(s, /^ */); return RLENGTH }
+        /^[ \t]*$/ || /^[ \t]*#/ { next }
+        {
+          k = ind($0); t = substr($0, k + 1)
+          if (inenv && k <= ek) inenv = 0
+          for (i in last) if (i + 0 >= k) delete last[i]
+          if (t ~ /^env:[ \t]*$/) {
+            # いちばん近い浅い行がステップ（- で始まる）なら、そのステップだけの env
+            p = -1; for (i in last) if (i + 0 < k && i + 0 > p) p = i + 0
+            if (!(p >= 0 && last[p] ~ /^- /)) { inenv = 1; ek = k; lvl = (k == 0 ? "ワークフロー全体" : "ジョブ全体") }
+          } else if (inenv && t ~ /\$\{\{[ \t]*secrets\./) {
+            printf "    %s:%d:%s（%sの env）\n", F, NR, $0, lvl
+          }
+          last[k] = t
+        }' "$f"
+    done
+  } | show
+  echo "  ※ そのジョブの第三者の Action と、run: で動く依存のスクリプトからも読める。使うステップの env: に置く（10 の 3-3）"
   echo "  --- 権限と秘密情報 ---"
   {
     for f in "$W"/*.y*ml; do

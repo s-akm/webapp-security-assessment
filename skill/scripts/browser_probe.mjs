@@ -6,7 +6,7 @@
 // 取得するもの:
 //   1. 同意前の第三者送信（Cookie を持たない素の訪問で、どこへ何が飛ぶか）と、
 //      リアルタイム通信（WebSocket）の接続先
-//   2. Cookie の属性（HttpOnly / Secure / SameSite）
+//   2. Cookie の属性（HttpOnly / Secure / SameSite / Domain / Path）
 //   3. localStorage / sessionStorage に置かれたキーの名前（値は取得しない）
 //   4. CSP の実効性（ヘッダと <meta> の両方。実際に適用される指令で判定し、Report-Only か、違反の発生も見る）
 //   5. 認証後の画面に関わるキャッシュヘッダ
@@ -432,11 +432,15 @@ async function probe(browser, base, host, paths) {
         c.httpOnly ? "HttpOnly" : "**HttpOnly なし**",
         c.secure ? "Secure" : "**Secure なし**",
         `SameSite=${c.sameSite || "未設定"}`,
+        // Domain 属性があると、ブラウザは先頭に . を付けて持つ（サブドメインにも届く）。無ければ発行したホストだけ
+        c.domain.startsWith(".") ? `**Domain=${c.domain}（サブドメインにも届く）**` : "ホストのみ",
+        `Path=${c.path}`,
       ].join(" / ");
       console.log(`  ${c.name.padEnd(34)} ${flags}`);
     }
     console.log("");
     console.log("  ※ 認証に使う Cookie に HttpOnly が無ければ、XSS が成立した時点で持ち出される");
+    console.log("    そのときの境界はオリジンで、Path は境界にならない。同じホストの公開ページで動く第三者スクリプト（1 節）からも読める（02 の B-2）");
   }
 
   // --------------------------------------------------------------------------

@@ -319,7 +319,13 @@ Vercel のようなマネージド構成でも、`.github/workflows/` は**秘�
   コミットハッシュでの固定が基本だが、**それだけでは足りない**。固定した Action の中で別の Action をタグ参照していれば、
   そこは固定されない（Trivy の事例）。**フォーク側のコミットを指すハッシュでないか**も確かめる
 - **外部から来る値を `run:` に直接埋め込んでいないか。** PR のタイトルやブランチ名を `${{ }}` で `run:` に書くと、
-  シェルに注入できる（nx の根本原因）。環境変数に入れてから参照するのが正しい
+  シェルに注入できる（nx の根本原因）。環境変数に入れてから参照するのが正しい。**手動実行の入力（`inputs`）も同じ書き方で注入になる。**
+  入力できるのは書き込みの権限を持つ人か、呼び出し元のワークフローだが、呼び出し元が PR の題名などを渡していれば外部の値と同じになる。
+  秘密情報を持つジョブなら指摘にする
+- **秘密情報を、使うステップの `env:` に置いているか。** ジョブ全体やワークフロー全体の `env:` に置くと、そのジョブの全ステップ
+  （第三者の Action、`run:` で動く依存のスクリプト）から読める。LLM の鍵や CMS の書き込みの鍵を CI に置く構成で起きやすい（`references/12-ai-features.md` の 9 節）
+- **人が数を指定できる一括処理に上限があるか。** 手動実行の入力で本数や件数を渡すワークフロー（生成して公開する、一斉に送る）は、
+  入力に上限が無いと、従量課金の費用と公開の量がそのまま伸びる
 - **`pull_request_target` / `workflow_run` で PR の中身を取得して動かしていないか。** 秘密情報を持った状態で
   他人のコードが走る。`actions/checkout` は既定で**フォークからの PR** の取得を拒否するようになった
   （v7 で 2026-06、v2〜v6 の最新版にも 2026-07 に取り込み。v1 には無い）が、**古い版のハッシュで固定していれば、この修正は入らない**。
@@ -338,8 +344,9 @@ grep -rnE 'uses:[[:space:]]*docker://' $W 2>/dev/null
 # 危険なトリガーと PR の中身の取得
 grep -rnE 'pull_request_target|workflow_run|issue_comment' $W 2>/dev/null
 grep -rnE 'allow-unsafe-pr-checkout|cache-mode:|head\.(sha|ref)|refs/pull/|gh pr checkout' $W 2>/dev/null
-# 外部から来る値の ${{ }} 展開。run: | の複数行ブロックの中にも来るので、ファイル全体で拾い、run: の中かを目で見る
-grep -rnE '\$\{\{[[:space:]]*(github\.event\.(issue|pull_request|comment|review|head_commit|commits|pages)|github\.head_ref)' $W 2>/dev/null
+# 外部から来る値と手動実行の入力の ${{ }} 展開。run: | の複数行ブロックの中にも来るので、ファイル全体で拾い、run: の中かを目で見る
+# （scripts/audit_grep.sh の 20 節は run: の中かを判定し、外部の値なら ★ を付ける。ジョブ全体の env: の秘密情報も出す）
+grep -rnE '\$\{\{[[:space:]]*(github\.event\.(issue|pull_request|comment|review|head_commit|commits|pages|discussion|workflow_run|inputs)|github\.head_ref|inputs\.)' $W 2>/dev/null
 # 権限と秘密情報
 grep -rLE '^permissions:' $W/*.y*ml 2>/dev/null          # トップレベルの permissions が無い
 grep -rnE 'permissions:[[:space:]]*write-all|id-token:[[:space:]]*write' $W 2>/dev/null

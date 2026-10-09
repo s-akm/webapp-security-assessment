@@ -37,6 +37,7 @@
 | CIS Benchmarks | Docker **v1.8.0**（2025-08）／ Kubernetes **v2.0.1**（2026-06。K8s 1.34 / 1.35）／ PostgreSQL 18 **v1.0.0**（2026-05）・PostgreSQL 17 **v2.0.0**（2026-09）。`references/13-infrastructure.md` から参照 | cisecurity.org |
 | IPA 非機能要求グレード | **2018**（本体の最新。**2023-08 からアーカイブ扱いで更新は止まっている**）。関連資料「重要情報を扱うシステムの要求策定ガイド」は **Ver.1.1（2026-07-27）** | ipa.go.jp |
 | IPA 情報セキュリティ10大脅威 | **2026**（2026-01-29）。組織編 3 位に「AI の利用をめぐるサイバーリスク」が初選出。依頼者への説明に使う | ipa.go.jp |
+| IPA 中小企業の情報セキュリティ対策ガイドライン | **第 4.0 版（2026-03-27）**。情報セキュリティ 5 か条にバックアップが加わって **6 か条**になり、自社診断に「ウェブサイトを安全に運用する」などが加わった。SCS 評価制度の基本的な考え方に沿う。**組織の面（体制・委託・漏えい時の対応・バックアップ）の照合先**として、台帳の観点の一覧の運用の行（`references/03-runtime-verification.md` の 11 節）と突き合わせる。報告書に当てはめ表としては載せない | ipa.go.jp/security/keihatsu/sme/guideline |
 | SCS 評価制度（経済産業省・IPA） | **★3 / ★4**（制度構築方針 2026-03-27、要求事項 2026-04-21）。★3・★4 は 2026 年度末頃の申請受付開始を目指す（経済産業省、2026-05-20 更新）。この資料の「取引先から水準を求められたとき（SCS 評価制度）」 | meti.go.jp/policy/netsecurity/scs.html、ipa.go.jp/security/scs |
 | 個人情報保護法 | **令和 8 年改正が公布済み・本体は未施行**（2026-07-10 成立、07-17 公布。2027-01-17 に先行施行されるのは罰則と公示送達だけ。本体は公布から 2 年以内の政令で定める日で、委員会の見込みは 2028 年春〜7 月。政令・規則・ガイドラインは策定中） | ppc.go.jp/personalinfo/legal/r8kaiseihogohou |
 | 個人情報保護委員会ガイドライン（通則編） | **令和 8 年 6 月一部改正**が最新（条番号は 6 月 14 日時点のもの。**改正法の成立前の軽微な改正で、改正法には未対応**）。安全管理措置は「10（別添）」の 7 区分 | ppc.go.jp/personalinfo/legal/guidelines_tsusoku |
@@ -71,12 +72,28 @@ Benchmark を選ぶ**。
 - 取引先が ASVS の水準（L1 / L2 / L3）で要求してきたとき
 - **自分の監査に抜けが無いかを、評価者が自己点検するとき**（報告書には載せない）
 
-このスキルの `references/02-code-audit.md` は ASVS の章立てとおおむね対応している。
-認可 = V8、認証 = V6、セッション = V7、トークン = V9、OAuth = V10、入出力 = V1 / V2、
-Webhook と外部連携 = V4、暗号 = V11、通信 = V12、設定 = V13、データ保護 = V14、ログ = V16。
-02 の外にある資料で扱う章もある。Web のフロントエンド = V3（`references/07-web-vulnerabilities.md` の 1-6・2・3 節）、
-ファイルの扱い = V5（07 の 6 節）、安全なコーディングと依存 = V15（`references/10-dependencies.md`）。
-**対応しない章もある**（WebRTC など）。対象に無い技術の章は飛ばしてよい。
+このスキルの資料と ASVS 5.0 の章の対応は次のとおり（章の名前は OWASP の GitHub の 5.0 の目次で 2026-10-09 に確かめた）。
+
+| ASVS 5.0 の章 | このスキルの資料 |
+|---|---|
+| V1 Encoding and Sanitization・V2 Validation and Business Logic | 02 の D 節、07 の 0・1・9 節 |
+| V3 Web Frontend Security | 07 の 1-6・2・3 節、09 の 2・4 節 |
+| V4 API and Web Service（GraphQL・HTTP の解釈の食い違い・WebSocket） | 07 の 10 節（GraphQL・desync）、07 の 11 節（WebSocket） |
+| V5 File Handling | 07 の 6 節 |
+| V6 Authentication | 02 の B-1・B-3（再設定・再認証・多要素認証のサーバー側での強制） |
+| V7 Session Management | 02 の B-2（停止やパスワードの変更でのセッションの終了を含む）、09 の 7 節 |
+| V8 Authorization | 02 の A 節（A-6 代理ログイン、A-7 状態と失効を含む） |
+| V9 Self-contained Tokens | 02 の B-4 |
+| V10 OAuth and OIDC | 02 の B-5（nonce・識別子・アカウントの連携を含む） |
+| V11 Cryptography・V12 Secure Communication | 02 の N・O 節、03 の 9 節（証明書と TLS の版） |
+| V13 Configuration | 03 の 6〜8・10 節、02 の I 節 |
+| V14 Data Protection | 02 の C-4（URL に載せない）、07 の 7 節（キャッシュ）・9-2 節（応答の項目）・9-3 節（段階開示）、09 の 2 節（保存領域）、08 |
+| V15 Secure Coding and Architecture | `references/10-dependencies.md`、02 の H 節 |
+| V16 Security Logging and Error Handling | 02 の G 節（G-3 検知と通知、ログの注入）、02 の D-3・K-2、07 の 8 節（途中で失敗したときの巻き戻し） |
+| V17 WebRTC | 扱わない（ビデオ通話の機能を持つ案件だけが対象。そのときは章の要件を直接当てる） |
+
+**「対応している」は、章の論点を観点として持っているということで、章の要件をすべて写しているということではない。**
+自己点検で使うときは、該当する章の要件を ASVS の本文で 1 つずつ読む。対象に無い技術の章は飛ばしてよい。
 
 上の行にある `standards-reviewed` の日付が、この表を最後に確認した日になる。
 **評価に入る前に、この表の版が今も最新かを発行元のサイトで確かめる。** 日付が半年以上前なら、
@@ -106,9 +123,9 @@ Webhook と外部連携 = V4、暗号 = V11、通信 = V12、設定 = V13、デ�
 | A05 | Injection | SQL・コマンド・テンプレート、XSS、出力の無害化（監査 D-1 / D-2 / D-3、`references/07-web-vulnerabilities.md` の 0 節） |
 | A06 | Insecure Design | 濫用対策の欠落、レート制限、設計上の前提（監査 F） |
 | A07 | Authentication Failures | 認証の強度、セッション、多要素認証（監査 B ／ 実機確認） |
-| A08 | Software or Data Integrity Failures | Webhook の署名検証、ビルドの完全性、依存の取得元（監査 M） |
-| A09 | Security Logging and Alerting Failures | 監査ログと、**気づく仕組み**（監査 G） |
-| A10 | Mishandling of Exceptional Conditions | fail-open、エラー処理の失敗、例外時の挙動（監査 K） |
+| A08 | Software or Data Integrity Failures | Webhook の署名検証（監査 M）、ビルドの完全性と依存の取得元（`references/10-dependencies.md` の 2・3 節） |
+| A09 | Security Logging and Alerting Failures | 監査ログ（監査 G-1）と、**気づく仕組み**（G-3、`references/03-runtime-verification.md` の 11 節の運用 3・4） |
+| A10 | Mishandling of Exceptional Conditions | fail-open、エラー処理の失敗、例外時の挙動（監査 K）、途中で失敗したときの巻き戻し（07 の 8 節）、エラー文を応答に返さない（D-3、`audit_grep.sh` の 12 節） |
 
 **2021 版からの変化のうち、報告に関わるのは 3 つ。**
 
@@ -177,7 +194,7 @@ Webhook と外部連携 = V4、暗号 = V11、通信 = V12、設定 = V13、デ�
 | API6 | Unrestricted Access to Sensitive Business Flows | F-1。**自動化されると困る流れ**（予約の買い占め、大量申込）に対策があるか |
 | API7 | Server Side Request Forgery | 07 の 5 節 |
 | API8 | Security Misconfiguration | I 節、実機確認 |
-| API9 | Improper Inventory Management | **使われていない旧版の API が生きていないか**（J 節）。`/v1` が残っていないか |
+| API9 | Improper Inventory Management | **使われていない旧版の API が生きていないか**（J 節の「使われていない入口」と、A-1 のルート一覧の版ごとの重複。`/v1` が残っていないか）。本番以外の環境とサブドメインの棚卸し（03 の 7・9 節） |
 | API10 | Unsafe Consumption of APIs | **呼び出している外部 API の応答を検証しているか。** 信頼して流し込んでいないか（07 の 9-2 節。取り込んだ値を画面に出す経路は 07 の 1-4） |
 
 **API3 と API9 は、一般の Top 10 では拾いにくい。** この 2 つのために当てはめる価値がある。
@@ -248,7 +265,7 @@ EMV 3-D セキュアの導入を求める」とし、根拠に割賦販売法 35
 
 | 求めていること | このスキルで見るところ |
 |---|---|
-| 不正ログイン対策 | 02 の B-3（認証の周辺経路）、03 の 3 節（認証基盤の設定）、02 の F-2（レート制限） |
+| 不正ログイン対策（決済前の「会員登録時」「会員ログイン時」「属性情報変更時」のそれぞれを考慮し、附属文書 20 の対策から 1 つ以上。6.0 版の ⅳ で確かめた） | 02 の B-3（認証の周辺経路。再認証・変更の通知・試行の上限）、03 の 3 節（認証基盤の設定）、02 の F-2（レート制限）。場面ごとに、どの対策が入っているかを台帳のカード決済のシートに書く |
 | EMV 3-D セキュアの導入 | 範囲外（決済代行の管理画面か契約で分かるので、依頼者に確かめてもらう。上の「EMV 3-D セキュアには期限があった」の段落） |
 
 **この評価は「脆弱性診断」の代わりにならない。** ガイドラインの診断・ペネトレーションテストは

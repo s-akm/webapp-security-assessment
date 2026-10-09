@@ -392,7 +392,8 @@ contains "audit_grep: 計測タグ"                    "GoogleTagManager"  "$A"
 contains "audit_grep: 検証せず復号する JWT"       "jwt.decode"        "$A"
 contains "audit_grep: Webhook の受け口"           "app/api/webhook"   "$A"
 contains "audit_grep: 例外の握りつぶし"           "catch (e) {}"      "$A"
-contains "audit_grep: LLM を呼んでいるか"         "アプリ自身が LLM"  "$A"
+# 依存の定義に SDK があるだけで、呼び出しの無い題材。アプリ自身が呼んでいるとは言わず、16 節で呼び出しを探させる
+contains "audit_grep: LLM を呼んでいるか（依存だけなら、そう言う）" "有 → 依存に LLM の SDK がある" "$A"
 contains "audit_grep: 予測できる乱数"             "Math.random"       "$A"
 contains "audit_grep: 弱いハッシュ"               "createHash('md5')" "$A"
 contains "audit_grep: 証明書の検証を切っている"    "rejectUnauthorized" "$A"
@@ -590,16 +591,22 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   absent   "audit_grep[版]: 15 系をサポート外と言わない"             "サポート外"                     "$S1B"
   # 2026 年 7 月・9 月の勧告。修正前の版に ★ を付け、修正版には付けない（ロックファイルの解決結果で判定する）
   NV="$(mktemp -d)"
-  for v in 16.3.0 16.3.3 15.5.22 15.5.24; do
+  for v in 16.3.0 16.3.3 16.3.5 16.3.6 16.3.7 16.3.8 15.5.22 15.5.24 15.5.27; do
     mkdir -p "$NV/$v"; printf '{"packages": {"node_modules/next": {\n      "version": "%s"\n    }}}\n' "$v" > "$NV/$v/package-lock.json"
     eval "S1B_${v//./_}=\"\$(bash \"\$SKILL/scripts/audit_grep.sh\" \"\$NV/\$v\" 2>&1 | LC_ALL=C awk 'index(\$0, \"=== 1b.\") == 1 { f = 1; next } f && /^=== / { exit } f')\""
   done
   rm -rf "$NV"
-  contains "audit_grep[版]: 16.3.0 に 2026-09-08 の critical の勧告"      "GHSA-2xp9-vwfh-vxw4"            "$S1B_16_3_0"
+  contains "audit_grep[版]: 16.3.0 に 2026-08-26 の critical の勧告"      "GHSA-2xp9-vwfh-vxw4"            "$S1B_16_3_0"
   absent   "audit_grep[版]: 16.3.0 は 2026-07-22 の勧告群の修正後"        "2026-07-22 の勧告群"            "$S1B_16_3_0"
-  absent   "audit_grep[版]: 16.3.3 には 2026-09-08 の勧告の ★ を付けない" "GHSA-2xp9-vwfh-vxw4"            "$S1B_16_3_3"
-  contains "audit_grep[版]: 15.5.22 に 2026-09-08 の critical の勧告"     "GHSA-2xp9-vwfh-vxw4"            "$S1B_15_5_22"
-  absent   "audit_grep[版]: 15.5.24 には ★ を付けない"                   "★"                              "$(printf '%s\n' "$S1B_15_5_24" | grep -E '^  next ')"
+  absent   "audit_grep[版]: 16.3.3 には 2026-08-26 の勧告の ★ を付けない" "GHSA-2xp9-vwfh-vxw4"            "$S1B_16_3_3"
+  contains "audit_grep[版]: 15.5.22 に 2026-08-26 の critical の勧告"     "GHSA-2xp9-vwfh-vxw4"            "$S1B_15_5_22"
+  contains "audit_grep[版]: 16.3.5 に 2026-09-23 の next/og の critical の勧告" "GHSA-vcvr-r3jv-pc5j"         "$S1B_16_3_5"
+  absent   "audit_grep[版]: 16.3.6 には next/og の勧告の ★ を付けない"   "GHSA-vcvr-r3jv-pc5j"            "$S1B_16_3_6"
+  absent   "audit_grep[版]: 15 系には next/og の勧告の ★ を付けない"     "GHSA-vcvr-r3jv-pc5j"            "$S1B_15_5_22"
+  contains "audit_grep[版]: 16.3.7 に 2026-10-01 の勧告群"                "2026-10-01 の勧告群"            "$S1B_16_3_7"
+  contains "audit_grep[版]: 15.5.24 に 2026-10-01 の勧告群"               "2026-10-01 の勧告群"            "$S1B_15_5_24"
+  absent   "audit_grep[版]: 16.3.8 には ★ を付けない"                    "★"                              "$(printf '%s\n' "$S1B_16_3_8" | grep -E '^  next |^      ★ next ')"
+  absent   "audit_grep[版]: 15.5.27 には ★ を付けない"                   "★"                              "$(printf '%s\n' "$S1B_15_5_27" | grep -E '^  next |^      ★ next ')"
   # 判定表がいつの勧告まで見ているかを、評価者が評価の時点で読めること
   contains "audit_grep[版]: 判定表の照合日と経過日数を出す"          "判定表を公式の勧告と照合した日"   "$S1B"
   if grep -E '照合した日: [0-9-]+（[0-9]+ 日前）' <<<"$S1B" >/dev/null; then
@@ -636,8 +643,10 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   if grep -E 'config\.toml: api$' <<<"$S19" >/dev/null; then ng "audit_grep[基盤]: verify_jwt = true の関数を咎めない" "api が出ている"
   else ok "audit_grep[基盤]: verify_jwt = true の関数を咎めない"; fi
   contains "audit_grep[基盤]: Firebase の誰でも読めるルール"         "★ 誰でも: ./firestore.rules:5" "$S19"
+  contains "audit_grep[基盤]: Firebase の変える項目を絞らない書き込みを並べる" "変える項目を絞らない書き込み: ./firestore.rules:11:" "$S19"
+  absent   "audit_grep[基盤]: Firebase の affectedKeys で絞った書き込みは並べない（条件が複数行）" "firestore.rules:14:" "$S19"
   contains "audit_grep[基盤]: ログイン済みなら誰でも"               "ログイン済みなら誰でも: ./firestore.rules:8" "$S19"
-  absent   "audit_grep[基盤]: 所有者を照合するルールは咎めない"      "firestore.rules:11"            "$S19"
+  absent   "audit_grep[基盤]: 所有者を照合するルールを、ログイン済みなら誰でもに入れない" "ログイン済みなら誰でも: ./firestore.rules:11" "$S19"
   contains "audit_grep[基盤]: 何も保護しない clerkMiddleware"        "既定では何も保護しない"         "$S19"
   if grep -E 'convex/messages\.ts: list +★ 認証の確認なし' <<<"$S19" >/dev/null; then ok "audit_grep[基盤]: 認証を確かめない Convex の関数"
   else ng "audit_grep[基盤]: 認証を確かめない Convex の関数" "messages.ts の list が★で出ない"; fi
@@ -659,6 +668,27 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   contains "audit_grep[CI]: 秘密情報の出力"                          'echo ${{ secrets.NPM_TOKEN }}'  "$S20"
   contains "audit_grep[CI]: npm install を使うビルド"                "ci.yml:13"                      "$S20"
   absent   "audit_grep[CI]: npm ci は咎めない"                        "npm ci"                         "$S20"
+  contains "audit_grep[CI]: run: の中の外部の値に ★ を付ける"       "★ .github/workflows/ci.yml:12:" "$S20"
+
+  # CI のスクリプトだけが LLM を呼び、生成物を CMS へ公開する構成（題材 ci-llm）。0 節が「アプリ自身」と言わず、
+  # 16 節が呼び出しの置き場を分け、20 節が run: の中の inputs とジョブ全体の env の秘密情報を出す。正しく作った側は咎めない
+  CL="$TMP/ci-llm"
+  fixture_cp "$ROOT/tests/fixtures/ci-llm" "$CL"
+  CLALL="$(bash "$SKILL/scripts/audit_grep.sh" "$CL" 2>&1)"
+  CL0="$(printf '%s\n' "$CLALL" | LC_ALL=C awk 'index($0, "=== 0.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+  CL16="$(printf '%s\n' "$CLALL" | LC_ALL=C awk 'index($0, "=== 16.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+  CL20="$(printf '%s\n' "$CLALL" | LC_ALL=C awk 'index($0, "=== 20.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+  contains "audit_grep[LLM]: CI・スクリプトだけの呼び出しを、アプリ自身と言わずに分ける（0 節）" "有 → CI・スクリプトから LLM を呼んでいる" "$CL0"
+  absent   "audit_grep[LLM]: CI・スクリプトだけの呼び出しを「アプリ自身」と言わない（0 節）" "アプリ自身が LLM を呼んでいる" "$CL0"
+  contains "audit_grep[LLM]: 0 節で 12 を読む資料に挙げる" "references/12-ai-features.md" "$CLALL"
+  contains "audit_grep[LLM]: スクリプトの呼び出しを CI・スクリプトとして並べる（16 節）" "CI・スクリプト  ./scripts/gen.mjs:2:" "$CL16"
+  contains "audit_grep[LLM]: ワークフローに置いた LLM の鍵を並べる（16 節）" "ワークフロー    .github/workflows/gen.yml:13:" "$CL16"
+  contains "audit_grep[CI]: run: の中の inputs を並べる" "gen.yml:18:          node scripts/gen.mjs --count \${{ inputs.count }}（run: の中）" "$CL20"
+  contains "audit_grep[CI]: env: に入れた inputs は run: の外と示す" "gen.yml:22:          COUNT: \${{ inputs.count }}（run: の外）" "$CL20"
+  contains "audit_grep[CI]: ジョブ全体の env: に置いた秘密情報を並べる" "gen.yml:13:      LLM_KEY: \${{ secrets.ANTHROPIC_API_KEY }}（ジョブ全体の env）" "$CL20"
+  absent   "audit_grep[CI]: ステップの env: に置いた秘密情報は咎めない" "CMS_WRITE_TOKEN" "$CL20"
+  absent   "audit_grep[CI]: with: の引数として渡す外部の値に ★ を付けない" "★ .github/workflows/gen.yml:26:" "$CL20"
+  contains "audit_grep[CI]: with: の引数として渡す外部の値は run: の外と示す" "gen.yml:26:          title: \${{ github.event.pull_request.title }}（run: の外" "$CL20"
   # 21. インストール時の防御
   contains "audit_grep[依存]: インストール時のスクリプト"            "@scope/native-thing"            "$S21"
   contains "audit_grep[依存]: 公式レジストリ以外の取得元"            "公式レジストリ以外から取っている依存" "$S21"
@@ -1193,9 +1223,9 @@ else
   for mode in none owasp full; do
     M="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-$mode.xlsx" --frameworks "$mode" 2>&1)"
     case "$mode" in
-      none)  want="シート 6 枚" ;;
-      owasp) want="シート 7 枚" ;;
-      full)  want="シート 9 枚" ;;
+      none)  want="シート 7 枚" ;;
+      owasp) want="シート 8 枚" ;;
+      full)  want="シート 10 枚" ;;
     esac
     contains "make_register: --frameworks $mode で $want" "$want" "$M"
   done
@@ -1206,14 +1236,14 @@ else
   # 以前は owasp / full で両方が並んでいた（コメントと 06 は「並べない」と書いていた）。
   M3="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api.xlsx" --frameworks full --api 2>&1)"
   contains "make_register: --api（full）で OWASP のシートを API のシートに置き換える" "4_API_Top10" "$M3"
-  contains "make_register: --api（full）でもシートは 9 枚" "シート 9 枚" "$M3"
+  contains "make_register: --api（full）でもシートは 10 枚（★の判定を含む）" "シート 10 枚" "$M3"
   absent "make_register: --api（full）で一般の Top 10 と両方を並べない" "OWASP_Top10," "$M3"
   M4="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api-owasp.xlsx" --api 2>&1)"
   contains "make_register: --api（owasp）で OWASP のシートを API のシートに置き換える" "7_API_Top10" "$M4"
-  contains "make_register: --api（owasp）でもシートは 7 枚" "シート 7 枚" "$M4"
+  contains "make_register: --api（owasp）でもシートは 8 枚（★の判定を含む）" "シート 8 枚" "$M4"
   absent "make_register: --api（owasp）で一般の Top 10 と両方を並べない" "7_枠組みへの当てはめ" "$M4"
   M5="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api-none.xlsx" --frameworks none --api 2>&1)"
-  contains "make_register: --api（none）で API のシートが 1 枚増える" "シート 7 枚" "$M5"
+  contains "make_register: --api（none）で API のシートが 1 枚増える" "シート 8 枚" "$M5"
   # 窓枠（pane）の無いシートで、選択範囲が窓枠を指していないこと。openpyxl は枠の固定を外しても選択範囲の pane を残し、
   # Excel が開くたびに「修復されたレコード: … パーツ内のビュー」を出していた（実案件の台帳で、総合評価のシートがこの形だった）。
   # openpyxl で読み直すと見えないので、中の XML を直接読む。生成したすべての組み合わせの台帳で確かめる
@@ -1325,6 +1355,24 @@ PY
 
   # 台帳の構成（references/04-findings-register.md）。判定・優先度・状態は別の軸で、
   # 見送りとクローズは状態の値。集計は「判定が問題ありで、状態がクローズでも見送りでもないもの」。
+  # 版の記録。--skill-version を省いても、配布物の並び（スキルの直下の VERSION）なら版が入り、VERSION が無ければ空欄と知らせる。
+  # 古い版の写しで評価した回を、台帳から見分けられるようにするため
+  mkdir -p "$TMP/mr-dist/scripts" "$TMP/mr-bare/scripts"
+  cp "$SKILL/scripts/make_register.py" "$TMP/mr-dist/scripts/"; cp "$SKILL/scripts/make_register.py" "$TMP/mr-bare/scripts/"
+  printf '9.8.7\n' > "$TMP/mr-dist/VERSION"
+  "$PY_BIN" "$TMP/mr-dist/scripts/make_register.py" "$TMP/r-ver-dist.xlsx" >/dev/null 2>&1
+  MV="$("$PY_BIN" "$TMP/mr-bare/scripts/make_register.py" "$TMP/r-ver-bare.xlsx" 2>&1)"
+  contains "make_register: VERSION が見つからなければ、版が空欄だと知らせる" "評価に使ったスキルの版は空欄（VERSION が見つからない）" "$MV"
+  MVD="$("$PY_BIN" - "$TMP/r-ver-dist.xlsx" "$TMP/r-ver-bare.xlsx" <<'PYEOF' 2>&1
+import sys
+from openpyxl import load_workbook
+def v(p):
+    sm = load_workbook(p).worksheets[0]
+    return [sm.cell(r, 2).value for r in range(1, 20) if sm.cell(r, 1).value == "評価に使ったスキルの版"]
+print(v(sys.argv[1]), v(sys.argv[2]))
+PYEOF
+)"
+  contains "make_register: 配布物の並びでは、スキルの直下の VERSION を版に入れる（VERSION が無い写しは空欄）" "['9.8.7'] [None]" "$MVD"
   M6="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-card.xlsx" --card --skill-version 9.9.9-FIXTURE 2>&1)"
   contains "make_register: --card でカード決済のシートが末尾に増える（owasp なら 8 枚目）" "8_カード決済" "$M6"
   M7="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-card-full.xlsx" --frameworks full --card 2>&1)"
@@ -1444,8 +1492,8 @@ for label, wb, fname in (("owasp", owasp, "3_指摘事項一覧"), ("full", full
     check(f"整合の確認: 集計の範囲の外に書いた行を数える（{label}）",
           f"'{fname}'!${heads['ID']}${last + 1}:" in f6, f6)
     # 観点の一覧（04）: 02 の A〜O と 07 の 0〜11 節の行があり、結果は 4 つの値から選び、空欄の数を整合の確認が数える
-    obs = [r for r in range(1, sm.max_row + 1) if isinstance(sm.cell(r, 1).value, str) and sm.cell(r, 1).value[:3] in ("02 ", "07 ")]
-    check(f"観点の一覧: 02 の A〜O と 07 の 0〜11 節の 27 行がある（{label}）", len(obs) == 27, str(len(obs)))
+    obs = [r for r in range(1, sm.max_row + 1) if isinstance(sm.cell(r, 1).value, str) and (sm.cell(r, 1).value[:3] in ("02 ", "07 ", "03 ", "08 ") or sm.cell(r, 1).value.startswith("運用 "))]
+    check(f"観点の一覧: 02 の A〜O・07 の 0〜11 節・03 の 1〜10 節・08 の 1〜5 節・運用 8 行の 50 行がある（{label}）", len(obs) == 50, str(len(obs)))
     dvs = [(str(d.sqref), d.formula1) for d in sm.data_validations.dataValidation]
     want_sq = f"B{obs[0]}:B{obs[-1]}" if obs else "?"
     check(f"観点の一覧: 結果の列を 4 つの値から選ばせる（{label}）",
@@ -1467,15 +1515,19 @@ def premise(wb, key):
             return sm.cell(r, 2).value
     return "（欄が無い）"
 check("--skill-version の値が「評価に使ったスキルの版」に入る", premise(card, "評価に使ったスキルの版") == "9.9.9-FIXTURE", str(premise(card, "評価に使ったスキルの版")))
-check("--skill-version が無ければ「評価に使ったスキルの版」は空欄", premise(owasp, "評価に使ったスキルの版") is None, str(premise(owasp, "評価に使ったスキルの版")))
+import os
+_vf = os.path.join(os.path.dirname(sys.argv[6]), "..", "..", "VERSION")
+_rv = open(_vf, encoding="utf-8").read().strip() if os.path.exists(_vf) else None
+check("--skill-version が無ければ、置き場の VERSION を「評価に使ったスキルの版」に入れる（リポジトリなら skill/ の 1 つ上）",
+      premise(owasp, "評価に使ったスキルの版") == _rv, f"{premise(owasp, '評価に使ったスキルの版')} / VERSION {_rv}")
 
 cs = card["8_カード決済"]
 ct = " ".join(str(c.value) for row in cs.iter_rows() for c in row if c.value)
-for kw in ("6.4.3", "11.6.1", "SAQ A", "EMV 3-D セキュア", "6.1 版"):
+for kw in ("6.4.3", "11.6.1", "SAQ A", "EMV 3-D セキュア", "6.1 版", "属性情報変更時"):
     check(f"カード決済のシートに {kw} がある", kw in ct)
 n5 = sum(1 for r in range(5, cs.max_row + 1) if str(cs.cell(r, 2).value or "").startswith("脆弱性対策 "))
 check("カード決済のシートに EC 加盟店の脆弱性対策が 5 項目ある", n5 == 5, str(n5))
-check("カード決済のシートは full でも末尾に 1 枚", cardfull.sheetnames[-1] == "9_カード決済", str(cardfull.sheetnames))
+check("カード決済のシートは full でも番号付きのシートの末尾に 1 枚（その後ろは ★の判定だけ）", cardfull.sheetnames[-2:] == ["9_カード決済", "★の判定"], str(cardfull.sheetnames))
 # OWASP・API のシートの判定も一覧から選ぶ（06 の 適合／条件付き適合／不適合）。自由記述だと表記が揺れる
 for name, wb_, sheet in (("OWASP（owasp）", owasp, "7_枠組みへの当てはめ"), ("OWASP（full）", full, "4_OWASP_Top10"),
                          ("API", apiw, "7_API_Top10")):
@@ -1493,6 +1545,108 @@ PYEOF
       NG) ng "make_register: $name" "$detail" ;;
     esac
   done <<< "$V3"
+
+  # --stars。audit_grep.sh の ★ の一覧を「★の判定」に 1 行ずつ取り込む。コードの行（場所:行番号: の後ろ）は写さない
+  # （対象の写しで、秘密情報が混ざりうる）。スクリプトが書いた説明（「場所: 説明」）は補足に残す
+  cat > "$TMP/stars-audit.txt" <<'EOF'
+=== 対象 ===
+  （題材）
+=== ★ の一覧（3 件。1 件ずつ判定して台帳に残す） ===
+  [2m.] ★ src/routes/orders.ts:42:  const token = "STARS-FIXTURE-CODE-7Q";
+  [3.] ★ src/views/page.tsx:7:        dangerouslySetInnerHTML={{ __html: body }}
+  [20.] ★ .github/workflows/ci.yml: トップレベルの permissions が無い（既定の権限で動く）
+  ※ 問題あり・問題なし・判断保留のどれかにし、問題なしも理由を「確認の方法」に書く。
+EOF
+  MS="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-stars.xlsx" --stars "$TMP/stars-audit.txt" 2>&1)"
+  contains "make_register: --stars で ★ の一覧の件数を取り込んだと言う" "★ を 3 行取り込んだ" "$MS"
+  MSV="$("$PY_BIN" - "$TMP/r-stars.xlsx" "$TMP/r-owasp.xlsx" <<'PYEOF' 2>&1
+import sys
+from openpyxl import load_workbook
+wb = load_workbook(sys.argv[1]); ws = wb["★の判定"]
+rows = [tuple(c.value for c in r[:6]) for r in ws.iter_rows(min_row=5, max_row=7)]
+allv = " ".join(str(c.value) for r in ws.iter_rows() for c in r if c.value)
+print("行:", rows)
+print("写し:", "STARS-FIXTURE-CODE-7Q" in allv or "dangerouslySetInnerHTML" in allv)
+dv = [(str(d.sqref), d.formula1) for d in ws.data_validations.dataValidation]
+print("入力規則:", dv)
+sm = wb.worksheets[0]
+labels = [sm.cell(r, 1).value for r in range(1, sm.max_row + 1)]
+print("整合:", "★ の判定で、判定が空欄の行" in labels, "★ の判定で、問題ありなのに指摘の ID が台帳に無い行" in labels)
+print("雛形:", load_workbook(sys.argv[2]).sheetnames[-1])
+PYEOF
+)"
+  contains "make_register: --stars で節と場所（ファイル:行）を取り込む" "('★-1', '2m', 'src/routes/orders.ts:42', None, None, None)" "$MSV"
+  contains "make_register: --stars でスクリプトの説明は補足に残す" "('★-3', '20', '.github/workflows/ci.yml', None, None, 'トップレベルの permissions が無い（既定の権限で動く）')" "$MSV"
+  contains "make_register: --stars でコードの写しを台帳に入れない" "写し: False" "$MSV"
+  contains "make_register: ★の判定の判定を 3 つの値から選ばせる" "('D5:D2000', '\"問題あり,問題なし,判断保留\"')" "$MSV"
+  contains "make_register: 整合の確認が ★ の判定の空欄と、台帳に無い ID を数える" "整合: True True" "$MSV"
+  contains "make_register: --stars が無くても ★の判定のシートを末尾に作る" "雛形: ★の判定" "$MSV"
+  printf '=== 対象 ===\n' > "$TMP/stars-none.txt"
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-stars-none.xlsx" --stars "$TMP/stars-none.txt" >/dev/null 2>&1 || [[ -e "$TMP/r-stars-none.xlsx" ]]; then
+    ng "make_register: --stars の出力に ★ の一覧が無ければ止まる（別のファイルを渡した）"
+  else ok "make_register: --stars の出力に ★ の一覧が無ければ止まる（別のファイルを渡した）"; fi
+
+  # 枠組みのシートの根拠の確かめ（整合の確認）。OWASP・API のシートがある構成にだけ出し、無い構成には出さない
+  MFW="$("$PY_BIN" - "$TMP/r-owasp.xlsx" "$TMP/r-api-owasp.xlsx" "$TMP/r-none.xlsx" <<'PYEOF' 2>&1
+import sys
+from openpyxl import load_workbook
+def labels(p):
+    sm = load_workbook(p).worksheets[0]
+    return [str(sm.cell(r, 1).value) for r in range(1, sm.max_row + 1) if "枠組みのシートで" in str(sm.cell(r, 1).value)]
+o, a, n = (labels(p) for p in sys.argv[1:4])
+print("owasp:", len(o), "api:", len(a), "none:", len(n))
+f = load_workbook(sys.argv[1]).worksheets[0]
+print("式:", [f.cell(r, 2).value for r in range(1, f.max_row + 1) if "全行同じ文" in str(f.cell(r, 1).value)])
+PYEOF
+)"
+  contains "make_register: 整合の確認が枠組みのシートの根拠を 3 通り数える（owasp・api。none には出さない）" "owasp: 3 api: 3 none: 0" "$MFW"
+  contains "make_register: 全行同じ文の比べ方は 255 文字を超える文でも比べられる形（SUMPRODUCT）" "SUMPRODUCT(--('7_枠組みへの当てはめ'!\$D\$5:\$D\$14=INDEX(" "$MFW"
+  # carry_check.py。再評価で前回の ID が消えた・参照切れ・番号の使い回しを出す（11 の 3 節）。
+  # 題材は架空の台帳 2 冊。前回: S-1・S-2・U-1・U-2。今回: S-1（書き直しただけ）・U-1（別の意味に使い回し）を残し、
+  # S-2 を実機確認の表から参照だけしている。資料の節の参照（02 の A-1）と CVE・GHSA の番号は ID に数えない
+  "$PY_BIN" - "$TMP/cc-prev.xlsx" "$TMP/cc-cur.xlsx" "$TMP/cc-same.xlsx" <<'PYEOF'
+import sys
+from openpyxl import Workbook
+def book(path, sheets):
+    wb = Workbook(); wb.remove(wb.active)
+    for name, rows in sheets:
+        ws = wb.create_sheet(name)
+        for r in rows: ws.append(r)
+    wb.save(path)
+book(sys.argv[1], [("指摘事項一覧", [["ID", "指摘事項"],
+    ["S-1", "注文の詳細を返すハンドラが、注文の持ち主を照らし合わせずに返す"],
+    ["S-2", "応答の CSP が frame-ancestors だけで、読み込めるスクリプトを絞っていない"]]),
+  ("未確認事項", [["No", "確認したい情報"],
+    ["U-1", "外部に預けているデータの契約（委託の契約）と保存の地域"],
+    ["U-2", "漏えいが起きたときの連絡体制と手順書の有無"]])])
+book(sys.argv[2], [("指摘事項一覧", [["ID", "指摘事項"],
+    ["S-1", "【前回から未解消】注文の詳細を返すハンドラが、持ち主を照らし合わせずに注文を返す"]]),
+  ("実機確認", [["区分", "結果", "関連ID"], ["ヘッダ", "CSP は frame-ancestors のみ。CVE-2025-29927 と GHSA-ab12-cd34 は該当なし。02 の A-1 で確認", "S-2"]]),
+  ("未確認事項", [["No", "確認したい情報"],
+    ["U-1", "バックアップを置く端末の暗号化"]])])
+book(sys.argv[3], [("指摘事項一覧", [["ID", "指摘事項"],
+    ["S-1", "注文の詳細を返すハンドラが、注文の持ち主を照らし合わせずに返す"],
+    ["S-2", "応答の CSP が frame-ancestors だけ"]]),
+  ("未確認事項", [["No", "確認したい情報"],
+    ["U-1", "外部に預けているデータの契約と保存の地域"],
+    ["U-2", "漏えい時の連絡体制と手順書の有無"]])])
+PYEOF
+  CC="$("$PY_BIN" "$SKILL/scripts/carry_check.py" "$TMP/cc-prev.xlsx" "$TMP/cc-cur.xlsx" 2>&1)"; CC_RC=$?
+  if [[ $CC_RC -eq 2 ]]; then ok "carry_check: 消えた ID か参照切れがあれば 2"
+  else ng "carry_check: 消えた ID か参照切れがあれば 2" "終了コード $CC_RC: $(tail -2 <<<"$CC" | tr '\n' ' ')"; fi
+  contains "carry_check: 前回にあって今回に無い ID を出す（指摘）" "  S-2  前回の 指摘事項一覧" "$CC"
+  contains "carry_check: 前回にあって今回に無い ID を出す（未確認事項）" "  U-2  前回の 未確認事項" "$CC"
+  contains "carry_check: 今回の台帳で参照しているのに行の無い ID を出す" "  S-2  実機確認!C2" "$CC"
+  contains "carry_check: 同じ番号を別の意味に使った ID を見比べる候補に出す" "  U-1  前回: 外部に預けているデータ" "$CC"
+  absent   "carry_check: 書き直しただけの行は使い回しの候補に出さない" "  S-1  前回:" "$CC"
+  absent   "carry_check: 資料の節の参照（02 の A-1）を ID に数えない" "  A-1 " "$CC"
+  absent   "carry_check: CVE・GHSA の番号の一部を ID に数えない" "VE-20" "$CC"
+  CS="$("$PY_BIN" "$SKILL/scripts/carry_check.py" "$TMP/cc-prev.xlsx" "$TMP/cc-same.xlsx" 2>&1)"; CS_RC=$?
+  if [[ $CS_RC -eq 0 ]] && grep -F '（0 件。' <<<"$CS" >/dev/null; then ok "carry_check: 全件を引き継いでいれば 0"
+  else ng "carry_check: 全件を引き継いでいれば 0" "終了コード $CS_RC: $(tr '\n' ' ' <<<"$CS" | cut -c1-200)"; fi
+  "$PY_BIN" "$SKILL/scripts/carry_check.py" "$TMP/cc-prev.xlsx" "$TMP/no-such.xlsx" >/dev/null 2>&1; CN_RC=$?
+  if [[ $CN_RC -eq 1 ]]; then ok "carry_check: 台帳が開けなければ 1"
+  else ng "carry_check: 台帳が開けなければ 1" "終了コード $CN_RC"; fi
 fi
 
 # --- recon.sh / browser_probe.mjs は実サイトへ出る。発火台を立てて確かめる ---
@@ -1871,6 +2025,9 @@ else
     contains "browser_probe[実地]: 同意前の第三者送信を数える"     "127.0.0.1" "$P"
     contains "browser_probe[実地]: 成立しなかった送信を区別する"   "成立せず"  "$P"
     contains "browser_probe[実地]: HttpOnly の無い Cookie を検出"  "**HttpOnly なし**" "$P"
+    # Cookie の届く範囲。HttpOnly の無いセッションは、管理画面だけでなく同じオリジンのどのページからも読める（02 の B-2）
+    contains "browser_probe[実地]: Cookie の届く範囲（ホストのみか・Path）を出す" "ホストのみ / Path=/" "$P"
+    contains "browser_probe[実地]: HttpOnly の無い Cookie は、Path が境界にならないと添える" "Path は境界にならない" "$P"
     contains "browser_probe[実地]: 保存領域の認証情報らしきキー"   "authToken" "$P"
     contains "browser_probe[実地]: CSP の unsafe-inline を検出"    "unsafe-inline がある" "$P"
     contains "browser_probe[実地]: セキュリティヘッダの欠如を検出" "[無] x-frame-options" "$P"
@@ -2106,6 +2263,38 @@ if printf '%s\n' "$S2M" | LC_ALL=C awk '/← ログインは確かめている/ 
   ok "audit_grep[2m]: ログインを確かめているものを先に並べる"
 else ng "audit_grep[2m]: ログインを確かめているものを先に並べる" "並びが違う"; fi
 
+# 2n 節（代理ログインと、メールアドレスで決める役割）。題材はここで作る。判定の中身は定義で決まるので、
+# 一覧を読む行と判定の関数の定義だけを並べ、呼び出し箇所と通知の宛先の一覧は並べない
+NE="$TMP/impersonate-email"; mkdir -p "$NE/lib" "$NE/app/api/admin/impersonate" "$NE/app/api/admin/users"
+printf 'const ADMIN_EMAILS = (process.env.ADMIN_EMAILS ?? "").split(",");\nexport function isAdminEmail(email) {\n  return ADMIN_EMAILS.includes(email);\n}\nconst OPS = process.env.OPERATOR_NOTIFY_EMAILS;\n' > "$NE/lib/auth.js"
+printf 'export async function POST(req) {\n  const link = await admin.auth.admin.generateLink({ type: "magiclink", email: target.email });\n  return link;\n}\n' > "$NE/app/api/admin/impersonate/route.js"
+printf 'export async function GET(req) {\n  if (!isAdminEmail(user.email)) return new Response(null, { status: 403 });\n}\n' > "$NE/app/api/admin/users/route.js"
+S2N="$(bash "$SKILL/scripts/audit_grep.sh" "$NE" 2>&1 | LC_ALL=C awk 'index($0, "=== 2n.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+contains "audit_grep[2n]: 代理ログインの入口を並べる"                         "app/api/admin/impersonate/route.js:2:" "$S2N"
+contains "audit_grep[2n]: 管理者のメールの一覧を読む行を並べる"               "lib/auth.js:1:"                 "$S2N"
+contains "audit_grep[2n]: メールで決める判定の関数の定義を並べる"             "lib/auth.js:2:"                 "$S2N"
+absent   "audit_grep[2n]: 判定の呼び出し箇所は並べない"                       "app/api/admin/users/route.js"   "$S2N"
+absent   "audit_grep[2n]: 通知の宛先の一覧は並べない"                         "lib/auth.js:5:"                 "$S2N"
+
+# 3 節の誤検出（JS の論理和 || raw を、テンプレートの | raw と取り違えない）・2j 節の固定の転送先・12 節のエラー文の返却。題材はここで作る
+MX="$TMP/misc-fp"; mkdir -p "$MX/app/api/a" "$MX/app/api/b" "$MX/app/api/c" "$MX/views"
+printf 'function f(raw) {\n  if (!raw || raw.length > 30000) return null;\n}\n' > "$MX/raw.js"
+printf '<p>{{ body | raw }}</p>\n' > "$MX/views/page.twig"
+printf 'export async function GET(req) {\n  const to = req.nextUrl.searchParams.get("to") === "agency" ? "/admin" : "/admin/fc";\n  return NextResponse.redirect(new URL(to, req.url));\n}\n' > "$MX/app/api/a/route.ts"
+printf 'export async function GET(req) {\n  const to = req.nextUrl.searchParams.get("to");\n  return NextResponse.redirect(new URL(to, req.url));\n}\n' > "$MX/app/api/b/route.ts"
+printf 'export async function POST(req) {\n  const { error } = await db.from("t").insert({});\n  if (error) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });\n  return NextResponse.json({ ok: true });\n}\n' > "$MX/app/api/c/route.ts"
+MXALL="$(bash "$SKILL/scripts/audit_grep.sh" "$MX" 2>&1)"
+MX3="$(printf '%s\n' "$MXALL" | LC_ALL=C awk 'index($0, "=== 3.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+MX2J="$(printf '%s\n' "$MXALL" | LC_ALL=C awk 'index($0, "=== 2j.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+MX12="$(printf '%s\n' "$MXALL" | LC_ALL=C awk 'index($0, "=== 12.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+absent   "audit_grep[3]: JS の論理和を、テンプレートの raw のフィルタと取り違えない"     "raw.js:2:"                      "$MX3"
+contains "audit_grep[3]: テンプレートの | raw には ★ を付ける"                 "★ views/page.twig:1:"           "$MX3"
+absent   "audit_grep[2j]: 固定の転送先に置き換えるだけの行に ★ を付けない"     "★ app/api/a/route.ts:2:"        "$MX2J"
+contains "audit_grep[2j]: 固定の転送先に置き換える行は、そう添えて並べる"     "固定の転送先に置き換えている"   "$MX2J"
+contains "audit_grep[2j]: 値をそのまま転送先に使う行には ★ を付ける"         "★ app/api/b/route.ts:2:"        "$MX2J"
+contains "audit_grep[12]: DB のエラー文をそのまま応答に返す行を並べる"       "app/api/c/route.ts:3:"          "$MX12"
+absent   "audit_grep[12]: 定型の応答は並べない"                               "app/api/c/route.ts:4:"          "$MX12"
+
 # 3 節（SQL 以外の問い合わせ・テンプレートを組み立てる）。架空の題材 query-injection。
 # 問い合わせの書き方の表と「差し込み」の組み合わせで、値を差し込む行に ★ を付ける
 QI="$TMP/query-injection"
@@ -2283,8 +2472,15 @@ while IFS= read -r h; do k="${h%%.*}"; grep -qF "\"02 ${k}. " "$SKILL/scripts/ma
   < <(grep -oE '^## [A-Z]\. ' "$SKILL/references/02-code-audit.md" | sed 's/^## //')
 while IFS= read -r h; do k="${h%%.*}"; grep -qF "\"07 ${k}. " "$SKILL/scripts/make_register.py" || obs_miss="$obs_miss 07-$k"; done \
   < <(grep -oE '^## [0-9]+\. ' "$SKILL/references/07-web-vulnerabilities.md" | sed 's/^## //')
-if [[ -z "$obs_miss" ]]; then ok "台帳の観点の一覧が、02 と 07 の節の見出しをすべて持つ"
-else ng "台帳の観点の一覧が、02 と 07 の節の見出しをすべて持つ" "足りない:$obs_miss"; fi
+# 03 は 1〜10 節（11 節は運用の行で持つ）、08 は 1〜5 節（6 節は範囲外の記録）。運用の行は 03 の 11 節の表と揃える
+while IFS= read -r h; do k="${h%%.*}"; [[ "$k" -le 10 ]] || continue; grep -qF "\"03 ${k}. " "$SKILL/scripts/make_register.py" || obs_miss="$obs_miss 03-$k"; done \
+  < <(grep -oE '^## [0-9]+\. ' "$SKILL/references/03-runtime-verification.md" | sed 's/^## //')
+while IFS= read -r h; do k="${h%%.*}"; [[ "$k" -le 5 ]] || continue; grep -qF "\"08 ${k}. " "$SKILL/scripts/make_register.py" || obs_miss="$obs_miss 08-$k"; done \
+  < <(grep -oE '^## [0-9]+\. ' "$SKILL/references/08-privacy-compliance.md" | sed 's/^## //')
+while IFS= read -r h; do grep -qF "\"${h}\"" "$SKILL/scripts/make_register.py" || obs_miss="$obs_miss ${h%%.*}"; done \
+  < <(grep -oE '^\| 運用 [0-9]+\. [^|]+' "$SKILL/references/03-runtime-verification.md" | sed -E 's/^\| //; s/[[:space:]]+$//')
+if [[ -z "$obs_miss" ]]; then ok "台帳の観点の一覧が、02・07・03・08 の節の見出しと、03 の 11 節の運用の行をすべて持つ"
+else ng "台帳の観点の一覧が、02・07・03・08 の節の見出しと、03 の 11 節の運用の行をすべて持つ" "足りない:$obs_miss"; fi
 # 語の一覧に正規表現として読めない行があれば、語の道具が止まる（手元の一覧はすべて読める行なので、壊れた一覧を作って確かめる）
 IWB="$TMP/idw-broken"; mkdir -p "$IWB/tests"; printf 'goodword\nbad[word\n' > "$IWB/tests/ngwords.local"
 bash "$ROOT/build/identifying-words.sh" "$IWB" >/dev/null 2>&1; iwrc=$?
@@ -2373,6 +2569,47 @@ absent   "audit_grep[★一覧]: 説明文の ★ を数えない"              
 if [[ "$(printf '%s\n' "$RTALL" | grep -c '=== ★ の一覧')" == "1" ]] && grep -F '同じ原因のもの' <<<"$(printf '%s\n' "$RTALL" | tail -4)" >/dev/null; then
   ok "audit_grep[★一覧]: 出力の最後に 1 回だけ出す"
 else ng "audit_grep[★一覧]: 出力の最後に 1 回だけ出す" "無いか、最後でないか、2 回出ている"; fi
+
+# version_check.sh。手元に入れた古い写しで評価しないための最初の確かめ。ネットワークに出ないよう、
+# 問い合わせ先を手元のタグ付きのリポジトリにする（WSA_REPO）。2.9.0 と 2.10.0 で、数字として比べているかも見る
+if command -v git >/dev/null 2>&1; then
+  VR="$TMP/vc-remote"; mkdir -p "$VR"
+  git -C "$VR" init -q && git -C "$VR" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m t \
+    && git -C "$VR" tag v2.9.0 && git -C "$VR" tag v2.10.0 && git -C "$VR" tag not-a-version
+  vc_case() {  # $1: 写しの VERSION（空なら置かない） $2: 問い合わせ先 → VC_OUT・VC_RC
+    rm -rf "$TMP/vc-skill"; mkdir -p "$TMP/vc-skill/scripts"
+    cp "$SKILL/scripts/version_check.sh" "$TMP/vc-skill/scripts/"
+    [[ -n "$1" ]] && printf '%s\n' "$1" > "$TMP/vc-skill/VERSION"
+    VC_OUT="$(WSA_REPO="$2" bash "$TMP/vc-skill/scripts/version_check.sh" 2>&1)"; VC_RC=$?
+  }
+  vc_case 2.9.0 "$VR"
+  if [[ $VC_RC -eq 2 ]] && grep -F '公開の最新版   2.10.0' <<<"$VC_OUT" >/dev/null && grep -F 'この版で評価を続けない' <<<"$VC_OUT" >/dev/null; then
+    ok "version_check: 公開より古い写しは 2 で止め、最新の版（数字として最大のタグ）を示す"
+  else ng "version_check: 公開より古い写しは 2 で止め、最新の版（数字として最大のタグ）を示す" "終了コード $VC_RC: $(tr '\n' ' ' <<<"$VC_OUT" | cut -c1-200)"; fi
+  contains "version_check: 古いときは取り直し方を出す（対象のリポジトリの外に置く）" "--branch v2.10.0" "$VC_OUT"
+  vc_case 2.10.0 "$VR"
+  if [[ $VC_RC -eq 0 ]] && grep -F '判定           最新' <<<"$VC_OUT" >/dev/null; then ok "version_check: 最新なら 0"
+  else ng "version_check: 最新なら 0" "終了コード $VC_RC"; fi
+  vc_case 2.11.0 "$VR"
+  if [[ $VC_RC -eq 0 ]] && grep -F '公開の最新より新しい' <<<"$VC_OUT" >/dev/null; then ok "version_check: 公開より新しい作業ツリーは 0 で、その旨を出す"
+  else ng "version_check: 公開より新しい作業ツリーは 0 で、その旨を出す" "終了コード $VC_RC"; fi
+  vc_case 2.9.0 "$TMP/vc-no-such-repo"
+  if [[ $VC_RC -eq 3 ]] && grep -F '確かめられない' <<<"$VC_OUT" >/dev/null; then ok "version_check: 公開元に届かなければ 3（最新と言わない）"
+  else ng "version_check: 公開元に届かなければ 3（最新と言わない）" "終了コード $VC_RC"; fi
+  vc_case "" "$VR"
+  if [[ $VC_RC -eq 3 ]] && grep -F 'VERSION が見当たらない' <<<"$VC_OUT" >/dev/null; then ok "version_check: VERSION が無ければ 3"
+  else ng "version_check: VERSION が無ければ 3" "終了コード $VC_RC"; fi
+  vc_case 2.9.0 ""
+  if [[ $VC_RC -eq 3 ]] && grep -F '公開元の URL が分からない' <<<"$VC_OUT" >/dev/null; then ok "version_check: 公開元の URL が渡されなければ 3（URL を書き込んでいない）"
+  else ng "version_check: 公開元の URL が渡されなければ 3（URL を書き込んでいない）" "終了コード $VC_RC"; fi
+  # 引数でも渡せる（依頼の文面の URL をそのまま渡す。末尾の / と .git は落とす）
+  rm -rf "$TMP/vc-skill"; mkdir -p "$TMP/vc-skill/scripts"; cp "$SKILL/scripts/version_check.sh" "$TMP/vc-skill/scripts/"; printf '2.10.0\n' > "$TMP/vc-skill/VERSION"
+  VC_OUT="$(WSA_REPO= bash "$TMP/vc-skill/scripts/version_check.sh" "$VR/" 2>&1)"; VC_RC=$?
+  if [[ $VC_RC -eq 0 ]]; then ok "version_check: 公開元を引数で受け取る"
+  else ng "version_check: 公開元を引数で受け取る" "終了コード $VC_RC: $(tr '\n' ' ' <<<"$VC_OUT" | cut -c1-160)"; fi
+else
+  skip "version_check（git が無い）"
+fi
 
 # ==========================================================================
 head_ "4. 実地の評価の道具 — 題材の前処理と採点が正しいか（tests/eval/。ネットワークには出ない）"

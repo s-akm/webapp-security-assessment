@@ -8,7 +8,7 @@
 - ロール名（anon / authenticated）は構成に合わせて書き換える
 - Q1・Q2 は public 以外のスキーマも取る（03 の 1 節の SQL は public だけ）。Exposed schemas に public 以外があるとき、
   そこも API から届くため。Supabase の内部のスキーマ（auth・storage など）の行も出るので、public と Exposed schemas の行から読む
-- Q9〜Q11 は 03 に無い読み取り。Q9 は 08 の 4 節の「保有件数と最古の登録日」。auth.users は Supabase の認証の表で、
+- Q12 は 03 の 1 節の 4 番（既定の権限）。Q9〜Q11 は 03 に無い読み取り。Q9 は 08 の 4 節の「保有件数と最古の登録日」。auth.users は Supabase の認証の表で、
   保有件数を別の表で数える構成なら表の名前を書き換える（件数と日付だけを返す形は崩さない）
 - Q10 は、アプリが直接つなぐロールが rolbypassrls か rolsuper なら、その経路では行ごとの権限制御が働かないことを見る
 - Q11 に pg_net や http のような外へ通信する拡張があれば、Q4 の関数（とくに anon_exec が true のもの）の中で使っていないかを
@@ -187,7 +187,8 @@ order by p.schemaname, p.tablename;
 ## Q8. 多要素認証の登録の数（件数だけ）
 
 ```sql
-select count(*) as total, count(*) filter (where status = 'verified') as verified
+select count(*) as factors,
+       count(distinct user_id) filter (where status = 'verified') as users_verified
 from auth.mfa_factors;
 ```
 
@@ -230,6 +231,20 @@ order by rolname;
 
 ```sql
 select extname, extversion from pg_extension order by extname;
+```
+
+```
+返ってきた行数:
+結果（そのまま貼り付け）:
+
+```
+
+## Q12. これから作るものに自動で付く権限（既定の権限）
+
+```sql
+select pg_get_userbyid(d.defaclrole) as creator, n.nspname, d.defaclobjtype, d.defaclacl
+from pg_default_acl d left join pg_namespace n on n.oid = d.defaclnamespace
+where d.defaclacl::text ~ '(anon|authenticated|=)';
 ```
 
 ```
