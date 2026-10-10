@@ -130,7 +130,8 @@ else warn "強い断定（必ず／絶対に）が $n_must 箇所" "多すぎる
 # 3-5. README に書いた数値が実態と合っているか。手で書いた数は必ずずれる。
 #      実際に「スクリプト 4 本」「52 の枠組み」が更新漏れで残っていた。
 n_ref="$(ls "$SKILL"/references/*.md | wc -l | tr -d ' ')"
-n_scr="$(ls "$SKILL"/scripts/* | wc -l | tr -d ' ')"
+# ファイルだけを数える（ls に入れると、ディレクトリ（__pycache__ など）の中身まで並んで数を誤る）
+n_scr="$(find "$SKILL/scripts" -maxdepth 1 -type f ! -name '.*' | wc -l | tr -d ' ')"
 # realistic・iac・mobile は枠組みの題材ではない（README でも別に書いている）
 n_fix="$(ls -d "$ROOT"/tests/fixtures/repo* | grep -vcE '/repo-(realistic|iac|mobile)$')"
 n_run="$(printf '%s' "$out" | grep -oE '成功 [0-9]+ / 失敗' | tail -1 | grep -oE '[0-9]+')"

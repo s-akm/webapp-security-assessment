@@ -21,6 +21,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 def load_overlap():
     p = os.path.join(ROOT, "skill", "scripts", "carry_check.py")
+    # skill/ の中に __pycache__ を作らない（配布物の検査がスクリプトの数を数え違える。CI で実際に起きた）
+    sys.dont_write_bytecode = True
     spec = importlib.util.spec_from_file_location("carry_check", p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # openpyxl は load() の中でだけ読み込むので、ここでは要らない
