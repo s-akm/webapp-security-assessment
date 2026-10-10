@@ -2533,6 +2533,179 @@ if [[ -d .github/workflows ]]; then
     done
   } | show
   echo "  ※ そのジョブの第三者の Action と、run: で動く依存のスクリプトからも読める。使うステップの env: に置く（10 の 3-3）"
+  echo "  --- checkout が資格情報を残したまま、作業ツリーを成果物に上げる（同じジョブの中）---"
+  {
+    for f in "$W"/*.y*ml; do
+      [[ -f "$f" ]] || continue
+      LC_ALL=C awk -v F="$f" '
+        function ind(s) { match(s, /^ */); return RLENGTH }
+        function broadpath(v) { gsub(/["\047 \t]/, "", v); return v ~ /^(\.|\.\/|\.\/\*\*|\*|\*\*|\$\{\{github\.workspace\}\}\/?)$/ }
+        # upload-artifact は v4.4.0（v3 系は v3.2.0）から隠しファイル（.git）を既定で除く。v3・v4 の動くタグは新しい版を指す
+        function hides(v,   a, n) {
+          if (v == "") return 0
+          n = split(v, a, "."); a[1] += 0; a[2] += 0
+          if (a[1] >= 5) return 1
+          if (a[1] == 4) return n == 1 || a[2] >= 4
+          if (a[1] == 3) return n == 1 || a[2] >= 2
+          return 0
+        }
+        function endstep() {
+          if (st == "co" && !pc && co == "") co = sl
+          if (st == "up" && broad) {
+            if (!hid && hides(uv)) { if (ups == "") { ups = sl; upv = uv } }
+            else if (upr == "") { upr = sl; urs = (hid ? "include-hidden-files: true" : (uv == "" ? "版が分からない" : "v" uv " は隠しファイルも上げる")) }
+          }
+          st = ""; pc = 0; broad = 0; hid = 0; uv = ""; pm = -1
+        }
+        function endjob() {
+          endstep()
+          if (co != "" && upr != "") { print "  ★ " F ":" co; print "  ★ " F ":" upr "（" urs "）" }
+          else if (co != "" && ups != "") { print "    " F ":" co; print "    " F ":" ups "（v" upv " は隠しファイルを既定で除くので、.git は上がらない）" }
+          co = ""; upr = ""; ups = ""
+        }
+        BEGIN { pm = -1 }
+        /^[ \t]*(#|$)/ { next }
+        {
+          k = ind($0); t = substr($0, k + 1)
+          if (pm >= 0 && k > pm) { if (broadpath(t)) broad = 1; next }
+          pm = -1
+          if (t ~ /^jobs:[ \t]*$/) { jobs = 1; jk = -1; next }
+          if (jobs && k == 0) { endjob(); jobs = 0 }
+          if (jobs && k > 0 && t ~ /^[A-Za-z0-9_-]+:[ \t]*$/ && (jk < 0 || k == jk)) { endjob(); jk = k; next }
+          if (t ~ /^- /) endstep()
+          if (t ~ /^(- )?uses:[ \t]*["\047]?actions\/checkout@/) { st = "co"; sl = NR ":" $0 }
+          if (t ~ /^(- )?uses:[ \t]*["\047]?actions\/upload-artifact@/) {
+            st = "up"; sl = NR ":" $0; r = t; sub(/^.*upload-artifact@/, "", r); sub(/[ \t"\047#].*$/, "", r)
+            if (r ~ /^v?[0-9]+(\.[0-9]+)*$/ && length(r) < 40) { uv = r; sub(/^v/, "", uv) }
+            else if (match(t, /#[ \t]*v?[0-9]+(\.[0-9]+)*/)) { uv = substr(t, RSTART, RLENGTH); sub(/^#[ \t]*v?/, "", uv) }
+          }
+          if (st == "co" && t ~ /^persist-credentials:[ \t]*["\047]?false/) pc = 1
+          if (st == "up" && t ~ /^include-hidden-files:[ \t]*["\047]?true/) hid = 1
+          if (st == "up" && t ~ /^path:/) {
+            v = t; sub(/^path:[ \t]*/, "", v)
+            if (v ~ /^[|>]/) pm = k; else if (broadpath(v)) broad = 1
+          }
+        }
+        END { endjob() }' "$f"
+    done
+  } | show
+  echo "  ※ actions/checkout は既定で GITHUB_TOKEN を .git/config に残す。.git を含む作業ツリーを成果物に上げると、成果物を取れる人に渡る。"
+  echo "    checkout に persist-credentials: false を付けるか、上げる範囲をビルドの出力に絞る。★ の無い行も、残ったトークンは同じジョブの後のステップから読める（10 の 3-3）"
+  # 既知の勧告がある版の Action。GitHub の勧告データベース（actions の分類）を照合日に取り出した表。版はタグか、SHA の後ろの版の注記で決める。
+  # 照合日より後の勧告には ★ が付かない。表に無い Action も、評価の時点で勧告データベースを見る
+  ACT_ADV_REVIEWED="2026-10-10"
+  echo "  --- 既知の勧告がある版の Action（GitHub の勧告データベースと照合した日: ${ACT_ADV_REVIEWED}）---"
+  ACT_ADV="$(cat <<'ADV'
+actions/download-artifact	>= 4.0.0, < 4.1.3	4.1.3	GHSA-cxww-7g56-2vh6	high
+actions/runner	< 2.283.4	2.283.4	GHSA-2c6m-6gqh-6qg3	high
+actions/runner	>= 2.284.0, < 2.285.2	2.285.2	GHSA-2c6m-6gqh-6qg3	high
+actions/runner	>= 2.286.0, < 2.289.4	2.289.4	GHSA-2c6m-6gqh-6qg3	high
+actions/runner	>= 2.290.0, < 2.293.1	2.293.1	GHSA-2c6m-6gqh-6qg3	high
+actions/runner	>= 2.294.0, < 2.296.1	2.296.2	GHSA-2c6m-6gqh-6qg3	high
+afichet/openexr-viewer	< 0.6.1	0.6.1	GHSA-99jg-r3f4-rpxj	critical
+anthropics/claude-code-action	< 1.0.74	1.0.74	GHSA-8q5r-mmjf-575q	medium
+aquasecurity/setup-trivy	< 0.2.6	0.2.6	GHSA-69fq-xp46-6x23	critical
+aquasecurity/trivy-action	< 0.35.0	0.35.0	GHSA-69fq-xp46-6x23	critical
+aquasecurity/trivy-action	>= 0.31.0, < 0.34.0	0.34.0	GHSA-9p44-j4g5-cfx5	medium
+atlassian/gajira-create	< 2.0.1	2.0.1	GHSA-4xqx-pqpj-9fqw	critical
+azure/setup-kubectl	< 3	3	GHSA-p756-rfxh-x63h	low
+boldestdungeon/steam-workshop-deploy	< 2.0.0	2.0.0	GHSA-x6gv-2rvh-qmp6	critical
+broadinstitute/cromwell	>= 87, < 90	90	GHSA-phf6-hm3h-x8qp	critical
+buildalon/setup-steamcmd	< 1.1.0	1.1.0	GHSA-mj96-mh85-r574	high
+bullfrogsec/bullfrog	< 0.8.4	0.8.4	GHSA-m32f-fjw2-37v3	medium
+canonical/get-workflow-version-action	< 1.0.1	1.0.1	GHSA-26wh-cc3r-w6pj	high
+check-spelling/check-spelling	< 0.0.19	0.0.19	GHSA-g86g-chm8-7r2p	critical
+dawidd6/action-download-artifact	< 6	6	GHSA-5xr6-xhww-33m4	high
+embano1/wip	< 2	2	GHSA-rg3q-prf8-qxmp	high
+fish-shop/syntax-check	< 1.6.12	1.6.12	GHSA-xj87-mqvh-88w2	medium
+github/codeql-action	>= 2.26.11, < 3.0.0		GHSA-vqf5-2xx6-9wfm	high
+github/codeql-action	>= 3.26.11, <= 3.28.2	3.28.3	GHSA-vqf5-2xx6-9wfm	high
+google-github-actions/run-gemini-cli	< 0.1.22	0.1.22	GHSA-jj69-4grx-fqj5	critical
+google-github-actions/run-gemini-cli	< 0.1.22	0.1.22	GHSA-wpqr-6v78-jr5g	critical
+gouef/githubtoplanguages	< 1.1.4	1.1.4	GHSA-c3xh-98xp-6qhf	high
+gradle/gradle-build-action	< 2.4.2	2.4.2	GHSA-h3qr-39j9-4r5v	high
+hashicorp/vault-action	< 2.2.0	2.2.0	GHSA-4mgv-m5cm-f9h7	high
+j178/prek-action	<= 1.0.5	1.0.6	GHSA-pwf7-47c3-mfhx	critical
+kartverket/github-workflows	< 2.7.5	2.7.5	GHSA-f9qj-7gh3-mhj4	high
+lycheeverse/lychee-action	< 2.0.2	2.0.2	GHSA-65rg-554r-9j5x	medium
+m00nl1ght-dev/steam-workshop-deploy	< 4	4	GHSA-x6gv-2rvh-qmp6	critical
+njzjz/wenxian	<= 0.3.1		GHSA-r4fj-r33x-8v88	critical
+ozi-project/publish	>= 1.13.2, < 1.13.6	1.13.6	GHSA-2487-9f55-2vg9	medium
+psf/black	< 26.3.0	26.3.0	GHSA-v53h-f6m7-xcgm	high
+pypa/gh-action-pypi-publish	< 1.13.0	1.13.0	GHSA-vxmw-7h4f-hqxh	low
+rageagainstthepixel/setup-steamcmd	< 1.3.0	1.3.0	GHSA-c5qx-p38x-qf5w	high
+reviewdog/action-setup	= 1		GHSA-qmg3-hpqr-gqvc	high
+rlespinasse/github-slug-action	<= 1.1.0	1.1.1	GHSA-7f32-hm4h-w77q	medium
+rlespinasse/github-slug-action	>= 2.0.0, <= 2.1.0	2.1.1	GHSA-7f32-hm4h-w77q	medium
+rlespinasse/github-slug-action	>= 4.0.0, < 4.4.1	4.4.1	GHSA-6q4m-7476-932w	high
+shadd0wtaka/zen-ai-pentest	<= 3.0.0		GHSA-f67f-hcr6-94mf	critical
+shivammathur/setup-php	< 2.37.1	2.37.1	GHSA-5wxr-w449-57cm	medium
+shivammathur/setup-php	>= 2.25.0, < 2.37.1	2.37.1	GHSA-pqwm-q9pv-ph8r	medium
+some-natalie/ghas-to-csv	< 1	1	GHSA-634p-93h9-92vh	medium
+sonarsource/sonarqube-scan-action	>= 4.0.0, < 6.0.0	6.0.0	GHSA-5xq9-5g24-4g6f	high
+sonarsource/sonarqube-scan-action	>= 4.0.0, <= 5.3.0	5.3.1	GHSA-f79p-9c5r-xg88	high
+step-security/harden-runner	< 2.10.2	2.10.2	GHSA-g85v-wf27-67xc	low
+step-security/harden-runner	< 2.14.2	2.14.2	GHSA-cpmj-h4f6-r6pq	medium
+step-security/harden-runner	<= 2.15.1	2.16.0	GHSA-46g3-37rh-v698	medium
+step-security/harden-runner	<= 2.15.1	2.16.0	GHSA-g699-3x6g-wm3g	medium
+step-security/harden-runner	>= 0.12.0, < 2.12.0	2.12.0	GHSA-mxr3-8whj-j74r	medium
+super-linter/super-linter	>= 6.0.0, < 8.3.1	8.3.1	GHSA-r79c-pqj3-577x	high
+super-linter/super-linter/slim	>= 6.0.0, < 8.3.1	8.3.1	GHSA-r79c-pqj3-577x	high
+tiryoh/actions-mkdocs	<= 0.24.0	0.25.0	GHSA-6p2j-742g-835f	medium
+tj-actions/branch-names	< 7.0.7	7.0.7	GHSA-8v8w-v8xg-79rf	critical
+tj-actions/branch-names	<= 8.2.1	9.0.0	GHSA-gq52-6phf-x2r6	critical
+tj-actions/changed-files	< 41	41	GHSA-mcph-m25j-8j63	high
+tj-actions/changed-files	<= 45.0.7	46.0.1	GHSA-mrrh-fwg8-r2c3	high
+tj-actions/verify-changed-files	< 17	17	GHSA-ghm2-rq8q-wrhc	high
+ultralytics/actions	<= 0.0.2	0.0.3	GHSA-7x29-qqmq-v6qc	high
+wktk/conflibot	< 1.2.1	1.2.1	GHSA-2qvg-qr73-mqxp	critical
+xygeni/xygeni-action	>= 5, < 6.4.0	6.4.0	GHSA-f8q5-h5qh-33mh	critical
+ADV
+)"
+  {
+    for f in "$W"/*.y*ml; do
+      [[ -f "$f" ]] || continue
+      ACT_ADV="$ACT_ADV" LC_ALL=C awk -v F="$f" '
+        function vcmp(a, b,   x, y, n, m, i, p, q) {
+          n = split(a, x, "."); m = split(b, y, "."); if (m > n) n = m
+          for (i = 1; i <= n; i++) { p = x[i] + 0; q = y[i] + 0; if (p < q) return -1; if (p > q) return 1 }
+          return 0
+        }
+        function inrange(v, r,   c, n, i, w, op, d) {
+          n = split(r, c, ",")
+          for (i = 1; i <= n; i++) {
+            w = c[i]; gsub(/^[ \t]+|[ \t]+$/, "", w)
+            if (!match(w, /^(<=|>=|<|>|=)/)) return 0
+            op = substr(w, 1, RLENGTH); w = substr(w, RLENGTH + 1); gsub(/^[ \t]+/, "", w)
+            d = vcmp(v, w)
+            if ((op == "<" && d >= 0) || (op == "<=" && d > 0) || (op == ">" && d <= 0) || (op == ">=" && d < 0) || (op == "=" && d != 0)) return 0
+          }
+          return 1
+        }
+        BEGIN { N = split(ENVIRON["ACT_ADV"], L, "\n"); for (i = 1; i <= N; i++) { split(L[i], c, "\t"); pk[i] = c[1]; rg[i] = c[2]; fx[i] = c[3]; ad[i] = c[4] "・" c[5] } }
+        /^[ \t]*#/ { next }
+        match($0, /uses:[ \t]*["\047]?[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+[^@ \t"\047]*@[^ \t"\047#]+/) {
+          u = substr($0, RSTART, RLENGTH); sub(/^uses:[ \t]*["\047]?/, "", u)
+          name = tolower(u); sub(/@.*/, "", name); split(name, parts, "/"); pkg = parts[1] "/" parts[2]
+          ref = u; sub(/^[^@]*@/, "", ref); ver = ""
+          if (ref ~ /^v?[0-9]+(\.[0-9]+)*$/ && length(ref) < 40) { ver = ref; sub(/^v/, "", ver) }  # 40 桁は数字だけのハッシュ
+          else if (match($0, /#[ \t]*v?[0-9]+(\.[0-9]+)*/)) { ver = substr($0, RSTART, RLENGTH); sub(/^#[ \t]*v?/, "", ver) }
+          if (ver == "") next
+          sv = ver
+          # v4 や v4.3 は動くタグ（その系列の最新を指す）。系列の最新まで範囲に入るときだけ ★ にする
+          n = split(ver, vp, "."); while (n < 3) { ver = ver ".999999"; n++ }
+          for (i = 1; i <= N; i++) if (pk[i] == pkg && inrange(ver, rg[i]))
+            printf "  ★ %s:%d:%s（%s %s は %s の範囲。%s）\n", F, NR, $0, pkg, sv, ad[i], (fx[i] != "" ? "修正は " fx[i] : "修正版なし")
+        }' "$f"
+    done
+  } | show
+  echo "  ※ 勧告の中身を読んで判断する。タグが乗っ取られた勧告なら、ハッシュで固定した正規のコミットは影響を受けない（固定した日と勧告の期間を比べる）。"
+  echo "    版が分からない参照（ブランチ・版の注記の無い SHA）は照合しない。表に無い勧告もあるので、使っている Action の勧告を評価の時点で見る（10 の 1 節・3-3）"
+  echo "  --- Action の入力で、道具を最新（latest）で入れている行 ---"
+  {
+    grep -rnE '^[[:space:]]+[A-Za-z_-]*version:[[:space:]]*["'"'"']?latest["'"'"']?[[:space:]]*$' "$W" 2>/dev/null | pfx "  ★ "
+  } | show
+  echo "  ※ 走るたびに別の版の道具が入る（乗っ取られた版も入る）。版を固定する（10 の 3-3）"
   echo "  --- 権限と秘密情報 ---"
   {
     for f in "$W"/*.y*ml; do

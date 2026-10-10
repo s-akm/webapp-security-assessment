@@ -1,0 +1,15 @@
+name: deps
+on: push
+permissions:
+  contents: read
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: tj-actions/changed-files@v44.5.1
+      - uses: tj-actions/changed-files@v45
+      - uses: tj-actions/changed-files@v40
+      - uses: hashicorp/vault-action@1111111111111111111111111111111111111111 # v2.1.0
+      - uses: hashicorp/vault-action@2222222222222222222222222222222222222222 # v2.2.0
+      - uses: dawidd6/action-download-artifact@main
+      # - uses: step-security/harden-runner@v1.0.0

@@ -232,6 +232,30 @@ mutate "audit_grep: inputs の展開を拾わない（旧構成）" "scripts/aud
   's = s.replace("CI_IN=\x27(github\\.event\\.inputs|inputs)\\.[A-Za-z0-9_-]+\x27", "CI_IN=\x27NO-SUCH-INPUT\x27")'
 mutate "audit_grep: ジョブ全体の env: を見ない（旧構成）" "scripts/audit_grep.sh" "ジョブ全体の env: に置いた秘密情報を並べる" \
   's = s.replace("if (!(p >= 0 && last[p] ~ /^- /)) { inenv = 1;", "if (0) { inenv = 1;")'
+mutate "audit_grep: checkout と成果物の組を見ない（旧構成）" "scripts/audit_grep.sh" "資格情報を残す checkout に ★ を付ける" \
+  's = s.replace("if (co != \"\" && upr != \"\") {", "if (0) {")'
+mutate "audit_grep: 隠しファイルを既定で除く版にも ★ を付ける" "scripts/audit_grep.sh" "隠しファイルを既定で除く版に ★ を付けない" \
+  's = s.replace("if (!hid && hides(uv))", "if (0)")'
+mutate "audit_grep: include-hidden-files を見ない" "scripts/audit_grep.sh" "include-hidden-files: true に ★ を付ける" \
+  's = s.replace("include-hidden-files:[ \\t]*[\"\\047]?true/) hid = 1", "include-hidden-files:[ \\t]*[\"\\047]?true/) hid = 0")'
+mutate "audit_grep: persist-credentials: false を見ない" "scripts/audit_grep.sh" "persist-credentials: false のジョブは咎めない" \
+  's = s.replace("?false/) pc = 1", "?false/) pc = 0")'
+mutate "audit_grep: 前のジョブの checkout を持ち越す" "scripts/audit_grep.sh" "checkout の無いジョブへ前のジョブの checkout を持ち越さない" \
+  's = s.replace("co = \"\"; upr = \"\"; ups = \"\"", "upr = \"\"; ups = \"\"")'
+mutate "audit_grep: 複数行の path を読まない" "scripts/audit_grep.sh" "複数行の path も読み" \
+  's = s.replace("if (v ~ /^[|>]/) pm = k;", "if (0) pm = k;")'
+mutate "audit_grep: Action の勧告の表と照合しない（旧構成）" "scripts/audit_grep.sh" "勧告の範囲の版のタグに ★ を付ける" \
+  's = s.replace("if (pk[i] == pkg && inrange(ver, rg[i]))", "if (0)")'
+mutate "audit_grep: ハッシュの後ろの版の注記を読まない" "scripts/audit_grep.sh" "ハッシュの後ろの版の注記で勧告と照合する" \
+  's = s.replace("else if (match($0, /#[ \\t]*v?[0-9]+(\\.[0-9]+)*/)) { ver =", "else if (0) { ver =")'
+mutate "audit_grep: 数字だけのハッシュを版と読む" "scripts/audit_grep.sh" "ハッシュの後ろの版の注記で勧告と照合する" \
+  's = s.replace("&& length(ref) < 40) { ver = ref;", ") { ver = ref;")'
+mutate "audit_grep: 動くタグを系列の先頭の版として照合する" "scripts/audit_grep.sh" "系列の最新が範囲の外の動くタグは咎めない" \
+  's = s.replace("while (n < 3) { ver = ver \".999999\"; n++ }", "while (n < 3) { ver = ver \".0\"; n++ }")'
+mutate "audit_grep: 道具を latest で入れる入力を拾わない（旧構成）" "scripts/audit_grep.sh" "道具を latest で入れる入力に ★ を付ける" \
+  's = s.replace("]?latest[", "]?NO-SUCH-LATEST[")'
+mutate "audit_grep: Action の勧告の表に照合日を書かない" "scripts/audit_grep.sh" "Action の勧告の表に照合日が書いてある" \
+  's = s.replace("  ACT_ADV_REVIEWED=\"", "  ACT_ADV_REVIEWED=\"未")'
 mutate "audit_grep: LLM の呼び出しの置き場を分けない（旧構成）" "scripts/audit_grep.sh" "CI・スクリプトだけの呼び出しを、アプリ自身と言わずに分ける" \
   's = s.replace("elif [[ -n \"$llm_batch$llm_ci\" ]]; then", "elif false; then")'
 

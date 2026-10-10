@@ -1,0 +1,62 @@
+name: build
+on: push
+permissions:
+  contents: read
+jobs:
+  old-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make
+      - uses: actions/upload-artifact@v4.3.6
+        with:
+          name: all
+          path: .
+  hidden-on:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取得
+        uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ws
+          include-hidden-files: true
+          path: ${{ github.workspace }}
+  multi-line:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@0123456789abcdef0123456789abcdef01234567
+        with:
+          name: ml
+          path: |
+            ./
+  no-persist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/upload-artifact@v3.1.0
+        with:
+          path: .
+  dist-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v3.1.0
+        with:
+          path: dist/
+  new-default:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          path: .
+  upload-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/upload-artifact@v3.1.0
+        with:
+          path: .

@@ -267,6 +267,8 @@ check_reviewed "基準の版に最終確認日が書いてある" "$SKILL/refere
   'standards-reviewed:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}' "基準の版"
 check_reviewed "既知の勧告の判定表に照合日が書いてある" "$SKILL/scripts/audit_grep.sh" \
   '^ADVISORIES_REVIEWED="[0-9]{4}-[0-9]{2}-[0-9]{2}"' "audit_grep.sh 1b 節の勧告の判定表"
+check_reviewed "Action の勧告の表に照合日が書いてある" "$SKILL/scripts/audit_grep.sh" \
+  '^[[:space:]]*ACT_ADV_REVIEWED="[0-9]{4}-[0-9]{2}-[0-9]{2}"' "audit_grep.sh 20 節の Action の勧告の表"
 check_reviewed "実地の評価で使うモデルに確認日が書いてある" "$ROOT/tests/eval/run-eval.sh" \
   '^EVAL_MODEL_REVIEWED="[0-9]{4}-[0-9]{2}-[0-9]{2}"' "実地の評価で使うモデル（tests/eval/run-eval.sh）"
 
@@ -689,6 +691,35 @@ if [[ -d "$ROOT/tests/fixtures/supply-baas" ]]; then
   absent   "audit_grep[CI]: ステップの env: に置いた秘密情報は咎めない" "CMS_WRITE_TOKEN" "$CL20"
   absent   "audit_grep[CI]: with: の引数として渡す外部の値に ★ を付けない" "★ .github/workflows/gen.yml:26:" "$CL20"
   contains "audit_grep[CI]: with: の引数として渡す外部の値は run: の外と示す" "gen.yml:26:          title: \${{ github.event.pull_request.title }}（run: の外" "$CL20"
+  # 成果物・Action の版・道具の版（題材 ci-artifacts）。小見出しごとに切り出す（20 節の他の一覧にも同じ行が出るので）
+  CA="$TMP/ci-artifacts"
+  fixture_cp "$ROOT/tests/fixtures/ci-artifacts" "$CA"
+  CAALL="$(bash "$SKILL/scripts/audit_grep.sh" "$CA" 2>&1)"
+  sub20() { printf '%s\n' "$CAALL" | LC_ALL=C awk -v h="$1" 'index($0, h) > 0 { f = 1; next } f && /^  --- / { exit } f && /^=== / { exit } f'; }
+  CAA="$(sub20 "--- checkout が資格情報を残したまま")"
+  CAV="$(sub20 "--- 既知の勧告がある版の Action")"
+  CAL="$(sub20 "--- Action の入力で、道具を最新")"
+  contains "audit_grep[CI]: 資格情報を残す checkout に ★ を付ける" "★ .github/workflows/build.yml:9:      - uses: actions/checkout@v4" "$CAA"
+  contains "audit_grep[CI]: 隠しファイルも上げる古い upload-artifact に ★ を付ける" "★ .github/workflows/build.yml:11:      - uses: actions/upload-artifact@v4.3.6（v4.3.6 は隠しファイルも上げる）" "$CAA"
+  contains "audit_grep[CI]: include-hidden-files: true に ★ を付ける" "★ .github/workflows/build.yml:20:      - uses: actions/upload-artifact@v4（include-hidden-files: true）" "$CAA"
+  contains "audit_grep[CI]: 複数行の path も読み、版が分からない参照に ★ を付ける" "★ .github/workflows/build.yml:29:      - uses: actions/upload-artifact@0123456789abcdef0123456789abcdef01234567（版が分からない）" "$CAA"
+  absent   "audit_grep[CI]: persist-credentials: false のジョブは咎めない" "build.yml:40:" "$CAA"
+  absent   "audit_grep[CI]: ビルドの出力だけを上げるジョブは咎めない" "build.yml:47:" "$CAA"
+  absent   "audit_grep[CI]: checkout の無いジョブへ前のジョブの checkout を持ち越さない" "build.yml:60:" "$CAA"
+  contains "audit_grep[CI]: 隠しファイルを既定で除く版は ★ を付けずに並べる" "    .github/workflows/build.yml:54:      - uses: actions/upload-artifact@v4（v4 は隠しファイルを既定で除くので" "$CAA"
+  absent   "audit_grep[CI]: 隠しファイルを既定で除く版に ★ を付けない" "★ .github/workflows/build.yml:54:" "$CAA"
+  contains "audit_grep[CI]: Action の勧告の表の照合日を出す" "--- 既知の勧告がある版の Action（GitHub の勧告データベースと照合した日: " "$CAALL"
+  contains "audit_grep[CI]: 勧告の範囲の版のタグに ★ を付ける" "★ .github/workflows/deps.yml:9:      - uses: tj-actions/changed-files@v44.5.1（" "$CAV"
+  contains "audit_grep[CI]: ハッシュの後ろの版の注記で勧告と照合する" "★ .github/workflows/deps.yml:12:" "$CAV"
+  absent   "audit_grep[CI]: 修正版の注記のハッシュは咎めない" "deps.yml:13:" "$CAV"
+  absent   "audit_grep[CI]: 系列の最新が範囲の外の動くタグは咎めない" "deps.yml:10:" "$CAV"
+  contains "audit_grep[CI]: 系列の全体が範囲に入る動くタグに ★ を付ける" "★ .github/workflows/deps.yml:11:" "$CAV"
+  absent   "audit_grep[CI]: 版の分からない参照（ブランチ）は照合しない" "deps.yml:14:" "$CAV"
+  absent   "audit_grep[CI]: コメントの行は照合しない" "deps.yml:15:" "$CAV"
+  contains "audit_grep[CI]: 道具を latest で入れる入力に ★ を付ける" "★ .github/workflows/tools.yml:11:          version: latest" "$CAL"
+  contains "audit_grep[CI]: 引用符付きの latest も拾う" "★ .github/workflows/tools.yml:14:" "$CAL"
+  absent   "audit_grep[CI]: 版を固定した入力は咎めない" "tools.yml:17:" "$CAL"
+  absent   "audit_grep[CI]: lts/* のような版の指定は咎めない" "tools.yml:18:" "$CAL"
   # 21. インストール時の防御
   contains "audit_grep[依存]: インストール時のスクリプト"            "@scope/native-thing"            "$S21"
   contains "audit_grep[依存]: 公式レジストリ以外の取得元"            "公式レジストリ以外から取っている依存" "$S21"

@@ -324,6 +324,18 @@ Vercel のようなマネージド構成でも、`.github/workflows/` は**秘�
   秘密情報を持つジョブなら指摘にする
 - **秘密情報を、使うステップの `env:` に置いているか。** ジョブ全体やワークフロー全体の `env:` に置くと、そのジョブの全ステップ
   （第三者の Action、`run:` で動く依存のスクリプト）から読める。LLM の鍵や CMS の書き込みの鍵を CI に置く構成で起きやすい（`references/12-ai-features.md` の 9 節）
+- **`actions/checkout` が資格情報を残したまま、作業ツリーを成果物に上げていないか。** checkout は既定で `GITHUB_TOKEN` を
+  `.git/config` に書き残す。同じジョブで `actions/upload-artifact` が `path: .` や `${{ github.workspace }}` のように
+  `.git` を含む範囲を上げると、成果物を取れる人（公開リポジトリなら誰でも）にトークンが渡る。
+  `upload-artifact` は v4.4.0（v3 系は v3.2.0）から隠しファイルを既定で除くので、それより前の版か
+  `include-hidden-files: true` のときに上がる。上がらない版でも、残ったトークンは同じジョブの後のステップ
+  （第三者の Action、依存のスクリプト）から読める。checkout に `persist-credentials: false` を付けるか、上げる範囲をビルドの出力に絞る
+- **既知の勧告がある版の Action を使っていないか。** Action も依存の一つで、GitHub の勧告データベースに
+  `actions` の分類で載る（乗っ取られた版、秘密情報を漏らす版）。ハッシュで固定していても、固定した版が勧告の範囲なら残る。
+  版はタグか、ハッシュの後ろの版の注記（`# v1.2.3`）で決める。`scripts/audit_grep.sh` の 20 節は照合した日の表で ★ を付けるが、
+  その日より後の勧告は載らないので、使っている Action の勧告を評価の時点で見る
+- **Action の入力で、道具を最新（`version: latest` など）で入れていないか。** Action をハッシュで固定しても、
+  中で入れる道具が走るたびに変わる。乗っ取られた版が出た時点で、次の実行から入る。版を固定する
 - **人が数を指定できる一括処理に上限があるか。** 手動実行の入力で本数や件数を渡すワークフロー（生成して公開する、一斉に送る）は、
   入力に上限が無いと、従量課金の費用と公開の量がそのまま伸びる
 - **`pull_request_target` / `workflow_run` で PR の中身を取得して動かしていないか。** 秘密情報を持った状態で
@@ -347,6 +359,11 @@ grep -rnE 'allow-unsafe-pr-checkout|cache-mode:|head\.(sha|ref)|refs/pull/|gh pr
 # 外部から来る値と手動実行の入力の ${{ }} 展開。run: | の複数行ブロックの中にも来るので、ファイル全体で拾い、run: の中かを目で見る
 # （scripts/audit_grep.sh の 20 節は run: の中かを判定し、外部の値なら ★ を付ける。ジョブ全体の env: の秘密情報も出す）
 grep -rnE '\$\{\{[[:space:]]*(github\.event\.(issue|pull_request|comment|review|head_commit|commits|pages|discussion|workflow_run|inputs)|github\.head_ref|inputs\.)' $W 2>/dev/null
+# 資格情報を残す checkout と、作業ツリーを上げる成果物（同じジョブにあるかは目で見る。20 節はジョブごとに判定する）
+grep -rnE 'actions/checkout@|persist-credentials:' $W 2>/dev/null
+grep -rnA6 'actions/upload-artifact@' $W 2>/dev/null | grep -E 'path:[[:space:]]*["'"'"']?(\.|\./|\*\*?|\$\{\{[[:space:]]*github\.workspace[[:space:]]*\}\})["'"'"']?[[:space:]]*$'
+# 道具を最新で入れる入力
+grep -rnE '^[[:space:]]+[A-Za-z_-]*version:[[:space:]]*["'"'"']?latest' $W 2>/dev/null
 # 権限と秘密情報
 grep -rLE '^permissions:' $W/*.y*ml 2>/dev/null          # トップレベルの permissions が無い
 grep -rnE 'permissions:[[:space:]]*write-all|id-token:[[:space:]]*write' $W 2>/dev/null
