@@ -3247,6 +3247,48 @@ if [[ "$(awk -F'\t' 'NR == 2 { print $4 }' "$OLDL/history.tsv" 2>/dev/null)" == 
   ok "eval: --score-only で、題材の名前の控えが無い古い出力は、作業場所の名前から題材を読む"
 else ng "eval: --score-only で、題材の名前の控えが無い古い出力は、作業場所の名前から題材を読む" "history.tsv の題材が $(awk -F'\t' 'NR == 2 { print $4 }' "$OLDL/history.tsv" 2>/dev/null || echo 無し)"; fi
 
+# 評価するエージェントに答えの一覧を見せない。エージェントの置き場（ws）と出力の置き場（out）を分け、読める範囲を許可で絞り、
+# それでも答えの置き場に触れた回は採点も記録もしない
+if [[ -f "$ED/$EW/ws/target/app/server.js" && -f "$ED/$EW/out/answers.json" && ! -e "$ED/$EW/ws/out" ]]; then
+  ok "eval: 答えの一覧は、エージェントに見せる置き場（ws）の外に置く"
+else ng "eval: 答えの一覧は、エージェントに見せる置き場（ws）の外に置く" "$(cd "$ED/$EW" 2>/dev/null && find . -maxdepth 2 | tr '\n' ' ')"; fi
+RE_ALLOW="$(awk '/--allowedTools/ { print; exit }' "$ROOT/tests/eval/run-eval.sh")"
+if [[ -n "$RE_ALLOW" ]] && ! grep -E '(^|[[:space:]])(Read|Grep|Glob)([[:space:]]|$)|Bash\((cat|head|tail|sed|ls|grep|wc|find)[ *]' <<<"$RE_ALLOW" >/dev/null; then
+  ok "eval: 読む道具をパスの指定なしで許さない（作業場所の外の答えの一覧まで読める）"
+else ng "eval: 読む道具をパスの指定なしで許さない（作業場所の外の答えの一覧まで読める）" "$RE_ALLOW"; fi
+contains "eval: 出力の置き場を読む道具を拒否する" '"Read(/$OUT/**)" "Read(/$OUT_REAL/**)"' "$(cat "$ROOT/tests/eval/run-eval.sh")"
+LK="$TMP/eval-leak"; rm -rf "$LK"; mkdir -p "$LK/run/out" "$LK/local"
+printf '{"items": [{"id": "A", "scope": "in", "category": "x", "locations": [{"file": "a.js", "line": 1}], "ranges": []}], "secrets": []}\n' > "$LK/run/out/answers.json"
+printf '{"structured_output": {"findings": [{"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y", "locations": [{"file": "a.js", "line": 1}]}], "unconfirmed": [{"id": "U-1", "text": "a", "blocks": []}], "maintain": []}}\n' > "$LK/run/out/result.json"
+LKOUT="$(cd "$LK/run/out" && pwd -P)"
+python3 - "$LK/run/out" "$LKOUT" <<'PY'
+import json, sys
+d, real = sys.argv[1], sys.argv[2]
+def tr(name, cmd):
+    e = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}
+    open(d + "/" + name, "w", encoding="utf-8").write(json.dumps(e, ensure_ascii=False) + "\n")
+tr("clean.jsonl", "cd " + real.rsplit("/out", 1)[0] + "/ws; wc -l evidence/audit-grep.txt")
+tr("touch.jsonl", "cat " + real + "/answers.json")
+# 別名の書き方（macOS の /var と /private/var など）でも拾うかを見るため、もう 1 つは実体のパスで書き、確かめるときはシンボリックリンクで渡す
+tr("alias.jsonl", "ls " + real)
+tr("rel.jsonl", "cat ../out/answers.json")
+PY
+ln -sfn "$LK/run" "$LK/link"
+if python3 "$ROOT/tests/eval/leak_check.py" "$LK/run/out" "$LK/run/out/clean.jsonl" >/dev/null \
+   && ! python3 "$ROOT/tests/eval/leak_check.py" "$LK/run/out" "$LK/run/out/touch.jsonl" >/dev/null \
+   && ! python3 "$ROOT/tests/eval/leak_check.py" "$LK/link/out" "$LK/run/out/alias.jsonl" >/dev/null; then
+  ok "eval: 答えの一覧の置き場に触れた呼び出しを拾う（パスの別名の書き方も）"
+else ng "eval: 答えの一覧の置き場に触れた呼び出しを拾う（パスの別名の書き方も）" "触れていない記録で失敗したか、触れた記録を通した"; fi
+if ! python3 "$ROOT/tests/eval/leak_check.py" "$LK/run/out" "$LK/run/out/rel.jsonl" >/dev/null; then
+  ok "eval: 答えの一覧に相対パスで触れた呼び出しも拾う"
+else ng "eval: 答えの一覧に相対パスで触れた呼び出しも拾う" "../out/answers.json を読む呼び出しを通した"; fi
+mv "$LK/run/out/touch.jsonl" "$LK/run/out/transcript-止められた-1.jsonl"; rm -f "$LK/run/out/clean.jsonl" "$LK/run/out/alias.jsonl" "$LK/run/out/rel.jsonl"
+printf '{"type": "result"}\n' > "$LK/run/out/transcript.jsonl"
+WSA_EVAL_LOCAL="$LK/local" bash "$ROOT/tests/eval/run-eval.sh" --score-only "$LK/run/out" --record >/dev/null 2>&1; LKRC=$?
+if [[ $LKRC -ne 0 && ! -f "$LK/local/history.tsv" ]]; then
+  ok "eval: 答えの一覧の置き場に触れた回は、当て直しの前の記録でも、採点も記録もしない"
+else ng "eval: 答えの一覧の置き場に触れた回は、当て直しの前の記録でも、採点も記録もしない" "終了コード ${LKRC}、history.tsv $( [[ -f "$LK/local/history.tsv" ]] && echo あり || echo 無し)"; fi
+
 # 版の比較（compare.py）。版を上げてよいかの判定に使うので、劣後を見逃さないか・足りない回数で「劣後なし」と言わないかを確かめる。
 # 架空の題材 t1 で、旧 9.9.0 と新 9.9.1 を比べる。コミットは git で解けない語にして、版の名前でまとめさせる
 cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル] [新の回ごとのモデル（空白区切り）] [新の答えの数] [未コミットの回を足す] [新の回で対照に誤検出するか]

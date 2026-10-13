@@ -56,6 +56,13 @@ sys.exit(0 if r and not r.get("is_error") and (r.get("structured_output") or {})
     tail -c 400 "$out/claude.log" 2>/dev/null >&2 || true
     return 1
   fi
+  # 評価するエージェントが答えの一覧（出力の置き場）に触れた回は、採点も記録もしない。許可で読めなくしてあるが、
+  # 許可の書き方の誤りや CLI の変更で読めるようになっても、数字を記録しないようにする（当て直しの前の記録も見る）
+  local trs=("$out"/transcript*.jsonl)
+  if [[ -f "${trs[0]}" ]] && ! python3 "$EVAL/leak_check.py" "$out" "${trs[@]}" >&2; then
+    echo "評価するエージェントが答えの一覧の置き場に触れた。採点も記録もしない" >&2
+    return 1
+  fi
   local tr=(); [[ -f "$out/transcript.jsonl" ]] && tr=(--transcript "$out/transcript.jsonl")
   python3 "$EVAL/score.py" "$out/answers.json" "$out/result.json" --summary "$out/summary.json" ${tr[@]+"${tr[@]}"} | tee "$out/report.txt"
   # 守ること 3: 結果に鍵の値や個人情報が混ざっていないか。スキル自身の検査で見る
@@ -140,7 +147,10 @@ BASE="${WSA_EVAL_DIR:-${TMPDIR:-/tmp}/wsa-eval}"
 # 作業場所の名前は日時と乱数だけにする。評価するエージェントは作業ディレクトリのパスを見るので、題材（教材）の名前を入れると
 # 答えを思い出す手掛かりになる。題材の名前は out/target に控え、採点と記録はそこから読む（target_of）
 WORK="$BASE/$(date +%Y%m%d-%H%M%S)-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
-SRC="$WORK/target"; OUT="$WORK/out"
+# エージェントに見せる置き場（ws: 題材と事前の洗い出しの出力）と、答えの一覧などの出力の置き場（out）を分ける。
+# 同じディレクトリの下に並べると、エージェントが作業場所の直下に cd したときに out/ が見える（2.29.0 までの回は毎回 cd していた）。
+# 読める範囲は、下の許可で題材と事前の洗い出しの出力だけに絞る
+WS="$WORK/ws"; SRC="$WS/target"; OUT="$WORK/out"
 mkdir -p "$SRC" "$OUT"
 printf '%s\n' "$TARGET" > "$OUT/target"; printf '%s\n' "$COMMIT" > "$OUT/target_commit"
 
@@ -200,7 +210,7 @@ fi
 # 許可の条件（読むことと audit_grep.sh の単独の呼び出し）に合わず止められる（初回の実測で 3 回止められ、1 度も回らなかった）。
 # 出力の置き場は題材の外で、答えの一覧（$OUT）とも分ける。スキルを題材の中に置く前に実行する
 # （後で実行すると、スキル自身のファイルまで監査の対象に混ざる。2.20.1 までの実測で recon.sh の行が出ていた）
-EVID="$WORK/evidence"; mkdir -p "$EVID"
+EVID="$WS/evidence"; mkdir -p "$EVID"
 # 当てるスキル。--skill-ref なら、その版の skill/ と VERSION を git から取り出す（事前の洗い出しの audit_grep.sh もその版のものを使う）
 SKILL_SRC="$ROOT/skill"; SKILL_VERSION_FILE="$ROOT/VERSION"
 if [[ -n "$SKILL_REF" ]]; then
@@ -259,16 +269,20 @@ if sys.argv[5]:
           "- 新しく見つけたものは、前回の続きの番号から振る\n")
 print(t, end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt" "$NO_ANSWERS" "${PREVIOUS:+$EVID/previous-register.json}")"
 printf '%s\n' "$prompt" > "$OUT/prompt.txt"
+# 拒否の規則のパスは、/var と /private/var のように書き方が分かれるので、実体のパスでも並べる
+OUT_REAL="$(cd "$OUT" && pwd -P)"
 args=(-p "$prompt"
   --output-format stream-json --verbose --json-schema "$(cat "$EVAL/schema.json")"
   --add-dir "$EVID"
   --setting-sources project --strict-mcp-config --no-session-persistence
   --max-budget-usd "$BUDGET"
   --permission-mode dontAsk
-  # 読むこととスキルの事前の洗い出しのスクリプトだけを許す。書き込み・ネットワーク・下位のエージェントは止める
-  --allowedTools Read Grep Glob Skill
-    "Bash(bash *audit_grep.sh*)" "Bash(grep *)" "Bash(ls *)" "Bash(wc *)" "Bash(head *)" "Bash(sed -n *)" "Bash(cat *)"
-  --disallowedTools WebFetch WebSearch Write Edit NotebookEdit Agent)
+  # 読めるのは、作業ディレクトリ（題材。スキルもこの中に置く）と --add-dir の事前の洗い出しの出力だけにする。
+  # Read・Grep・Glob をパスの指定なしで許すと、作業場所の外の答えの一覧（out/answers.json）まで読める。
+  # Bash の cat・head・sed などはパスで絞れないので許さない（読むことは Read で足りる）。許すのはスキルと事前の洗い出しのスクリプトだけ
+  --allowedTools Skill "Bash(bash *audit_grep.sh*)"
+  --disallowedTools WebFetch WebSearch Write Edit NotebookEdit Agent
+    "Read(/$OUT/**)" "Read(/$OUT_REAL/**)" "Grep(/$OUT/**)" "Grep(/$OUT_REAL/**)" "Glob(/$OUT/**)" "Glob(/$OUT_REAL/**)")
 args+=(--model "$MODEL")
 # 実行の記録（stream-json）を残し、最後の result の行を採点に使う。記録からスキルの使われ方も数える
 # 指摘が 0 件で終わった回（モデル側の安全上の判定で台帳の書き出しが途中から止められた回）は、同じモデルで当て直す（--retries。既定 1 回）。

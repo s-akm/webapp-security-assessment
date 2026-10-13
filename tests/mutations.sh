@@ -906,6 +906,22 @@ mutate "eval: バイナリも中身を確かめる" "../tests/eval/prep_anchors.
   's = s.replace("    if b\x27\\0\x27 in b:\n        return None\n", "", 1)'
 mutate "eval: ロックファイルも消し残しを確かめる" "../tests/eval/prep_anchors.py" "ロックファイルの依存の注記は、消し残しに数えない" \
   's = s.replace("(locks or p.name.lower() not in LOCKFILES)", "True", 1)'
+mutate "eval: 答えの一覧をエージェントの置き場の中に置く" "../tests/eval/run-eval.sh" "エージェントに見せる置き場（ws）の外に置く" \
+  's = s.replace("SRC=\"$WS/target\"; OUT=\"$WORK/out\"", "SRC=\"$WS/target\"; OUT=\"$WS/out\"", 1)'
+mutate "eval: 読む道具をパスの指定なしで許す" "../tests/eval/run-eval.sh" "読む道具をパスの指定なしで許さない" \
+  's = s.replace("  --allowedTools Skill ", "  --allowedTools Read Grep Glob Skill ", 1)'
+mutate "eval: Bash の cat を許す" "../tests/eval/run-eval.sh" "読む道具をパスの指定なしで許さない" \
+  's = s.replace("  --allowedTools Skill \"Bash(bash *audit_grep.sh*)\"", "  --allowedTools Skill \"Bash(bash *audit_grep.sh*)\" \"Bash(cat *)\"", 1)'
+mutate "eval: 出力の置き場を読む道具を拒否しない" "../tests/eval/run-eval.sh" "出力の置き場を読む道具を拒否する" \
+  's = s.replace("\"Read(/$OUT/**)\" \"Read(/$OUT_REAL/**)\" ", "", 1)'
+mutate "eval: 答えの置き場に触れた回も採点する" "../tests/eval/run-eval.sh" "当て直しの前の記録でも、採点も記録もしない" \
+  's = s.replace("[[ -f \"${trs[0]}\" ]] && ! python3", "[[ -f \"${trs[0]}\" ]] && false && ! python3", 1)'
+mutate "eval: 当て直しの前の記録を答えの確かめから外す" "../tests/eval/run-eval.sh" "当て直しの前の記録でも、採点も記録もしない" \
+  's = s.replace("local trs=(\"$out\"/transcript*.jsonl)", "local trs=(\"$out\"/transcript.jsonl)", 1)'
+mutate "eval: 答えの置き場の実体のパスを見ない" "../tests/eval/leak_check.py" "パスの別名の書き方も" \
+  's = s.replace("(os.path.abspath(path), os.path.realpath(path))", "(os.path.abspath(path),)", 1)'
+mutate "eval: 答えの一覧のファイル名を見ない" "../tests/eval/leak_check.py" "相対パスで触れた呼び出しも" \
+  's = s.replace(" + [\x27answers.json\x27]", "", 1)'
 mutate "eval: 作業場所の名前に題材の名前を入れる" "../tests/eval/run-eval.sh" "作業場所のパスに、題材の名前を入れない" \
   's = s.replace("WORK=\"$BASE/$(date", "WORK=\"$BASE/$TARGET-$(date", 1)'
 mutate "eval: 題材の名前を出力の置き場に控えない" "../tests/eval/run-eval.sh" "出力の置き場に控える" \
