@@ -70,8 +70,8 @@ while IFS= read -r ref; do
   [[ -f "$SKILL/$ref" ]] || missing="$missing $ref"
 done < <(grep -ohE '(references|scripts|templates)/[A-Za-z0-9._-]+' \
            "$SKILL/SKILL.md" "$SKILL"/references/*.md "$SKILL"/templates/*.md | sort -u)
-if [[ -z "$missing" ]]; then ok "SKILL.md と references が参照するファイルはすべて実在する"
-else ng "参照先が実在する" "見つからない:$missing"; fi
+if [[ -z "$missing" ]]; then ok "参照先が実在する（SKILL.md・references・templates が参照するファイル）"
+else ng "参照先が実在する（SKILL.md・references・templates が参照するファイル）" "見つからない:$missing"; fi
 
 # 逆向き。実在するのに SKILL.md から参照されていないファイルが無いか
 orphan=""
@@ -487,9 +487,9 @@ while IFS=: read -r fw mark guard danger; do
     F2I="$(printf '%s\n' "$F" | LC_ALL=C awk 'index($0, "=== 2i.") == 1 { f = 1; next } f && /^=== / { exit } f')"
     contains "audit_grep[$fw]: 単一の入口の分岐のうち、認可の無いものに ★ を付ける" "★ " "$F2I"
   elif grep -F "← ガード検出なし" <<<"$F2" >/dev/null; then
-    ok "audit_grep[$fw]: ガードの無いハンドラを名指しする"
+    ok "audit_grep[$fw]: ガードの無いハンドラを示す（名指し）"
   elif printf '%s\n' "$F2" | LC_ALL=C awk 'match($0, /\(定義 [0-9]+ \/ ガード [0-9]+\)/) { t = substr($0, RSTART, RLENGTH); gsub(/[^0-9 ]/, "", t); split(t, a, " "); if (a[1] > a[2]) f = 1 } END { exit !f }'; then
-    ok "audit_grep[$fw]: 定義数とガード数の差で示す"
+    ok "audit_grep[$fw]: ガードの無いハンドラを示す（定義数とガード数の差）"
   else
     ng "audit_grep[$fw]: ガードの無いハンドラを示す" "2 節に、空欄も、ガードより多い定義も出ていない"
   fi

@@ -79,6 +79,26 @@ PY
 )"
 if [[ -z "$dead" ]]; then ok "変異の置き換えが、すべて今の対象のファイルに一致する（空振りする変異が無い）"
 else ng "空振りする変異がある" "$(printf '%s' "$dead" | head -5 | tr '\n' ' ')"; fi
+# 変異が失敗を期待する検査の名前が、1 で実行した tests/run.sh の出力にまだあるか。検査の名前を変えると、その変異は
+# 欠陥を見つけても「失敗しなかった」と出て、週 1 回の全件の実行まで気づけない。2.29.0 で観点の一覧の検査の名前を変えたあと、
+# 次の週 1 回の実行で初めて表に出た。照らし方は mutations.sh と同じ（色を外した出力の「✓ / ✗ 名前」の行を、期待の文字列を拡張正規表現として探す）。
+# ソースの文字列とは照らさない（名前を変数や正規表現で組み立てる検査があり、ソースには現れない）
+nameless=""
+while IFS=$'\t' read -r m_name m_exp; do
+  [[ -z "$m_exp" ]] && continue
+  grep -E "[✓✗] .*${m_exp}" <<<"$out" >/dev/null || nameless="${nameless}${m_name}（「${m_exp}」）、"
+done < <(python3 - "$ROOT" <<'PY'
+import pathlib, re, sys
+src = (pathlib.Path(sys.argv[1]) / 'tests/mutations.sh').read_text(encoding='utf-8')
+for name, _rel, exp in re.findall(r'''mutate "([^"]*)" "([^"]*)" "([^"]*)" \\\n''', src):
+    if '$' not in name and '$' not in exp:
+        # ソースの二重引用符の中の書き方（\\[ など）を、シェルが mutate に渡す文字列（\[）に戻す
+        print(f'{name}\t' + re.sub(r'\\([\\"$`])', r'\1', exp))
+PY
+)
+if [[ -z "$nameless" ]]; then ok "変異が失敗を期待する検査が、すべて tests/run.sh の出力にある（名前のずれが無い）"
+elif [[ "${n_skip:-0}" -gt 0 ]]; then warn "変異が失敗を期待する検査が、tests/run.sh の出力に見当たらない（省略した検査の塊があるので確定しない）" "${nameless%、}"
+else ng "変異が失敗を期待する検査が、tests/run.sh の出力に見当たらない（検査の名前を変えたら、変異の 3 つ目の引数も合わせる）" "${nameless%、}"; fi
 
 # ==========================================================================
 head_ "3. スキル自身が方針を守っているか"

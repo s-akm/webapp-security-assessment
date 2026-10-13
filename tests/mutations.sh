@@ -662,7 +662,7 @@ mutate "語の一覧: 読めない行でも止めない" "../build/identifying-w
   's = s.replace("printf \x27\x27 | grep -E -- \"$w\" >/dev/null 2>&1; [[ $? -eq 2 ]] && bad=$((bad + 1))", ":", 1)'
 mutate "台帳: 観点の一覧の空欄を数えない" "scripts/make_register.py" "観点の一覧の結果の空欄を数える" \
   's = s.replace("checks.append((\"観点の一覧で、結果が空欄の行\"", "checks.append((\"観点の一覧で、結果の欄\"", 1)'
-mutate "台帳: 観点の一覧から節を落とす" "scripts/make_register.py" "02 と 07 の節の見出しをすべて持つ" \
+mutate "台帳: 観点の一覧から節を落とす" "scripts/make_register.py" "02・07・03・08 の節の見出しと" \
   's = s.replace("\"07 5. SSRF\",", "", 1)'
 mutate "04: 複数のハンドラをまとめた範囲を許す" "references/04-findings-register.md" "ハンドラごとに分けると決めている" \
   's = s.replace("複数のハンドラにまたがる指摘は、1 つの範囲にまとめず、ハンドラごとに場所を分けて並べる", "複数のハンドラにまたがる指摘は、1 つの範囲にまとめてよい", 1)'
