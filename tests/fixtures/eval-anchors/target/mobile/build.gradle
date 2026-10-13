@@ -1,0 +1,4 @@
+android {
+  // weak: debuggable release build
+  buildTypes { release { debuggable true } }
+}

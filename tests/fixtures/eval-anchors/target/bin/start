@@ -1,0 +1,3 @@
+#!/bin/sh
+# injection: arguments are passed through to the shell
+exec sh -c "$@"
