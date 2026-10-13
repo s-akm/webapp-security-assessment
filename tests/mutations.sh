@@ -258,6 +258,51 @@ mutate "audit_grep: Action の勧告の表に照合日を書かない" "scripts/
   's = s.replace("  ACT_ADV_REVIEWED=\"", "  ACT_ADV_REVIEWED=\"未")'
 mutate "audit_grep: LLM の呼び出しの置き場を分けない（旧構成）" "scripts/audit_grep.sh" "CI・スクリプトだけの呼び出しを、アプリ自身と言わずに分ける" \
   's = s.replace("elif [[ -n \"$llm_batch$llm_ci\" ]]; then", "elif false; then")'
+# 外部の値を環境ファイル（GITHUB_ENV・GITHUB_OUTPUT・GITHUB_PATH）に書き込む形（題材 ci-envfile）
+mutate "audit_grep: 環境ファイル: 外部の値の書き込みに ★ を付けない（旧構成）" "scripts/audit_grep.sh" "外部の値の式を環境ファイルに書く行に ★ を付ける" \
+  's = s.replace("else { star = 1; why = \"。改行を含めれば", "else { star = 0; why = \"。改行を含めれば")'
+mutate "audit_grep: 環境ファイル: 書き込み先を GITHUB_ENV だけにする" "scripts/audit_grep.sh" "ジョブの env: で受けた値を GITHUB_OUTPUT に書く行に ★ を付ける" \
+  's = s.replace("|%)GITHUB_(ENV|OUTPUT|PATH)", "|%)GITHUB_(ENV)")'
+mutate "audit_grep: 環境ファイル: ステップの env: を読まない" "scripts/audit_grep.sh" "run: より後ろの env: で受けた値を書く行に ★ を付ける" \
+  's = s.replace("if (sid) sc = (kk == ik + 2 ? \"s\" sid : \"\")", "if (sid) sc = \"\"")'
+mutate "audit_grep: 環境ファイル: ジョブの env: を読まない" "scripts/audit_grep.sh" "ジョブの env: で受けた値を GITHUB_OUTPUT に書く行に ★ を付ける" \
+  's = s.replace("else if (jid && kk == jk + 2) sc = \"j\" jid", "else if (0) sc = \"j\" jid")'
+mutate "audit_grep: 環境ファイル: ワークフローの env: を読まない" "scripts/audit_grep.sh" "ワークフローの env: で受けた値を GITHUB_PATH に書く行に ★ を付ける" \
+  's = s.replace("else if (k == 0) sc = \"w\"", "else if (0) sc = \"w\"")'
+mutate "audit_grep: 環境ファイル: run: の中の代入を追わない" "scripts/audit_grep.sh" "run: の中で外部の値を代入した名前を追う" \
+  's = s.replace("LT[b, a] = x; LIT", "LT[b, a] = 0; LIT")'
+mutate "audit_grep: 環境ファイル: まとめ書きの中身を読まない" "scripts/audit_grep.sh" "まとめ書きの中の値に、区切りが固定と示して ★ を付ける" \
+  's = s.replace("{ unit(gs + 1, n, w, 0);", "{ unit(n, n, w, 0);")'
+mutate "audit_grep: 環境ファイル: 固定の区切りに ★ を付けない" "scripts/audit_grep.sh" "まとめ書きの中の値に、区切りが固定と示して ★ を付ける" \
+  's = s.replace("else if (HK == \"F\") { star = 1;", "else if (HK == \"F\") { star = 0;")'
+mutate "audit_grep: 環境ファイル: 固定の文字列を代入した区切りを実行ごとに作ったと読む" "scripts/audit_grep.sh" "固定の文字列を代入した変数の区切りを固定と読む" \
+  's = s.replace("if (((b SUBSEP v) in LIT) && LIT[b, v]) return", "if (0) return")'
+mutate "audit_grep: 環境ファイル: 実行ごとに作る区切りを固定と読む" "scripts/audit_grep.sh" "区切りを実行ごとに作る形は ★ を付けずに並べる" \
+  's = s.replace("return \"R:\" d", "return \"F:\" d")'
+mutate "audit_grep: 環境ファイル: 区切りを閉じたことを読まない" "scripts/audit_grep.sh" "区切りを閉じたあとの書き込みは区切りの外と読む" \
+  's = s.replace("else if (HK != \"\" && index(s, HD) && s !~ /=/)", "else if (0)")'
+mutate "audit_grep: 環境ファイル: 改行を除いた値にも ★ を付ける" "scripts/audit_grep.sh" "改行を除いて書く行に ★ を付けない" \
+  's = s.replace("if (x == 1 && strips(s)) x = 2", "if (0) x = 2")'
+mutate "audit_grep: 環境ファイル: シェルのヒアドキュメントの中身を読まない" "scripts/audit_grep.sh" "シェルのヒアドキュメントで書く値に ★ を付ける" \
+  's = s.replace("if (hw != \"\") unit(hs + 1, n - 1, hw, hq)", "if (0) unit(hs + 1, n - 1, hw, hq)")'
+mutate "audit_grep: 環境ファイル: 引用符付きのヒアドキュメントの変数も展開すると読む" "scripts/audit_grep.sh" "引用符付きのヒアドキュメントの変数は展開しないと読む" \
+  's = s.replace("hq = (hd ~ /^[\"\\047]/)", "hq = 0")'
+mutate "audit_grep: 環境ファイル: PowerShell の変数の参照を読まない" "scripts/audit_grep.sh" "PowerShell の env: の参照で書く行に ★ を付ける" \
+  's = s.replace("|\\$env:[A-Za-z_][A-Za-z0-9_]*|process", "|process")'
+mutate "audit_grep: 環境ファイル: 式の中の env.名前 を引かない" "scripts/audit_grep.sh" "式の中の env.名前 で書く行に ★ を付ける" \
+  's = s.replace("if (b && match(e, /env", "if (0 && match(e, /env")'
+mutate "audit_grep: 環境ファイル: ジョブを区別しない" "scripts/audit_grep.sh" "別のジョブの env: の名前を持ち越さない" \
+  's = s.replace("jk = k; jid = ++JID;", "jk = k; jid = 1;")'
+mutate "audit_grep: 環境ファイル: ステップを区別しない" "scripts/audit_grep.sh" "別のステップの env: の名前を持ち越さない" \
+  's = s.replace("sid = ++SID", "sid = 1")'
+mutate "audit_grep: 環境ファイル: ブランチ名を改行を含みうる外部の値と同じに数える" "scripts/audit_grep.sh" "ブランチ名だけを書く行に ★ を付けない" \
+  's = s.replace("e2 = e; gsub(ENVIRON[\"CI_REF_RE\"], \"\", e2)", "e2 = e")'
+mutate "audit_grep: 環境ファイル: 人が渡す入力を数えない" "scripts/audit_grep.sh" "人が渡す入力の書き込みは ★ を付けずに並べる" \
+  's = s.replace("ENVIRON[\"CI_IN_RE\"]) ? 4 : 0", "ENVIRON[\"CI_IN_RE\"]) ? 0 : 0")'
+mutate "audit_grep: 環境ファイル: ファイルの中身の書き込みを並べない" "scripts/audit_grep.sh" "ファイルの中身の書き込みは ★ を付けずに並べる" \
+  's = s.replace("if (x == 0 && readsfile(trim(s))) x = 5", "if (0) x = 5")'
+mutate "audit_grep: 環境ファイル: 書き込まない行も判定する" "scripts/audit_grep.sh" "環境ファイルに書き込まない行は出さない" \
+  's = s.replace("if (w == \"\") continue", "if (0) continue")'
 
 mutate "audit_grep: 通知の宛先の一覧も役割の判定に並べる" "scripts/audit_grep.sh" "通知の宛先の一覧は並べない" \
   's = s.replace(" | grep -viE \x27NOTIFY|ALERT|_TO[^A-Z]|SENDER|FROM_\x27", "")'

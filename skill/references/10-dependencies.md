@@ -322,6 +322,27 @@ Vercel のようなマネージド構成でも、`.github/workflows/` は**秘�
   シェルに注入できる（nx の根本原因）。環境変数に入れてから参照するのが正しい。**手動実行の入力（`inputs`）も同じ書き方で注入になる。**
   入力できるのは書き込みの権限を持つ人か、呼び出し元のワークフローだが、呼び出し元が PR の題名などを渡していれば外部の値と同じになる。
   秘密情報を持つジョブなら指摘にする
+- **外部から来る値を、環境ファイル（`$GITHUB_ENV`・`$GITHUB_OUTPUT`・`$GITHUB_PATH`）に書き込んでいないか。** 環境ファイルは
+  「名前=値」を改行で区切って読む。値に改行を含めれば、`$GITHUB_ENV` なら同じジョブの後続のステップに別の環境変数
+  （`LD_PRELOAD`・`BASH_ENV` や、後続のステップが使う変数）を足して任意のコードを動かせ、`$GITHUB_OUTPUT` なら同じステップの別の出力を、
+  `$GITHUB_PATH` なら `PATH` の先頭に別のディレクトリを書き足せる。**`env:` で受けて `"$名前"` で使う形は、上のシェルへの注入は防ぐが、
+  この形は防がない**（値そのものを書き込むため）。`env:` で受けた変数を加工してから書く形も同じ。
+  複数行の「名前<<区切り」で書く形は、値の中に区切りだけの行があるとその後ろが別の値になる。GitHub の資料は「区切りが値の中の 1 行に現れないようにし、
+  値が任意ならこの形を使わずファイルに書く」としている。`EOF` のような固定の区切りは推測できるので、外部の値なら指摘にする。
+  区切りを実行ごとに作る（`uuidgen`・乱数）か、1 行の値なら改行を除く（`tr -d '\n'`）。`@actions/core` の `exportVariable`・`setOutput`
+  （`github-script` の `core.*` も）は区切りを実行ごとに作り、値が区切りを含めば止まるので、この形の穴は無い。
+  `workflow_run` で前のワークフローの成果物（PR の番号など）を読んで書く形は、成果物の中身が PR の側から来るので外部の値と同じ。
+  ブランチ名（`github.head_ref` など）は git の参照名の決まりで改行と空白を持てないので、この形で別の値は足せない
+  （書き込んだ値を後続の `run:` に `${{ env.名前 }}` で展開すれば、上のシェルへの注入になる）。
+  `NODE_OPTIONS` は `$GITHUB_ENV` では設定できない（GitHub の仕様）
+- **`contains()` で権限を決めていないか。第 1 引数が文字列か配列かで比べ方が変わる。** 第 1 引数が文字列なら、第 2 引数が
+  **部分文字列として含まれれば**真、配列なら**要素のどれかと一致すれば**真になる（どちらも大文字と小文字を区別しない）。
+  ラベル名・利用者名・ブランチ名を文字列のまま比べる形（`contains(github.event.label.name, 'admin')`、`contains(github.head_ref, 'release')`、
+  `contains('alice,bob', github.actor)`）は部分一致なので、`admin` を含むかで判定すればラベル `admin-bypass` が通り、
+  `alice,bob` の中にあるかで判定すれば利用者 `ali` が通る。権限の判定は `==` で比べるか、配列を受ける形にする。
+  配列を受ける形（`contains(github.event.pull_request.labels.*.name, 'admin')` のようなオブジェクトフィルタ、
+  `contains(fromJSON('["alice","bob"]'), github.actor)`）は要素ごとの比較で、正しい書き方なので指摘しない。
+  第 1 引数が `github.event.*.labels.*.name` のように `.*.` を含むか、`fromJSON` の配列かで見分ける
 - **秘密情報を、使うステップの `env:` に置いているか。** ジョブ全体やワークフロー全体の `env:` に置くと、そのジョブの全ステップ
   （第三者の Action、`run:` で動く依存のスクリプト）から読める。LLM の鍵や CMS の書き込みの鍵を CI に置く構成で起きやすい（`references/12-ai-features.md` の 9 節）
 - **`actions/checkout` が資格情報を残したまま、作業ツリーを成果物に上げていないか。** checkout は既定で `GITHUB_TOKEN` を
@@ -359,6 +380,11 @@ grep -rnE 'allow-unsafe-pr-checkout|cache-mode:|head\.(sha|ref)|refs/pull/|gh pr
 # 外部から来る値と手動実行の入力の ${{ }} 展開。run: | の複数行ブロックの中にも来るので、ファイル全体で拾い、run: の中かを目で見る
 # （scripts/audit_grep.sh の 20 節は run: の中かを判定し、外部の値なら ★ を付ける。ジョブ全体の env: の秘密情報も出す）
 grep -rnE '\$\{\{[[:space:]]*(github\.event\.(issue|pull_request|comment|review|head_commit|commits|pages|discussion|workflow_run|inputs)|github\.head_ref|inputs\.)' $W 2>/dev/null
+# 環境ファイルへの書き込み。値が外部の値か（env: で受けた名前・run: の中で代入した名前を辿る）と、「名前<<区切り」の区切りが固定かを目で見る
+# （20 節は env: と代入を辿り、外部の値なら ★ を付ける。区切りを実行ごとに作る形・改行を除く形・ブランチ名・入力・ファイルの中身は ★ を付けずに並べる）
+grep -rnE 'GITHUB_(ENV|OUTPUT|PATH)([^A-Za-z0-9_]|$)' $W 2>/dev/null
+# contains() の第 1 引数。文字列（部分一致）か、.*. のオブジェクトフィルタや fromJSON の配列（要素の一致）かを見る
+grep -rnE 'contains\(' $W 2>/dev/null
 # 資格情報を残す checkout と、作業ツリーを上げる成果物（同じジョブにあるかは目で見る。20 節はジョブごとに判定する）
 grep -rnE 'actions/checkout@|persist-credentials:' $W 2>/dev/null
 grep -rnA6 'actions/upload-artifact@' $W 2>/dev/null | grep -E 'path:[[:space:]]*["'"'"']?(\.|\./|\*\*?|\$\{\{[[:space:]]*github\.workspace[[:space:]]*\}\})["'"'"']?[[:space:]]*$'
