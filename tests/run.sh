@@ -1534,6 +1534,27 @@ for label, wb, fname in (("owasp", owasp, "3_指摘事項一覧"), ("full", full
     # 雛形の例示行どうしが食い違わない（U-1 の影響する項目が、指摘事項一覧の例示行の ID を指す）
     us = wb[un]
     check(f"未確認事項の例示行が指摘事項一覧の例示行の ID を指す（{label}）", us["E5"].value == fs["A4"].value, f"{us['E5'].value} / {fs['A4'].value}")
+    # 未確認事項の行き先（11 の 3 節）。U-x の行を消さず、確定・未確認のまま・取り下げのどれかを選ぶ列を、既存の 5 列の後ろに置く
+    # （前に置くと、影響する項目を指す整合の確認の数式と、前の版の台帳から行を移す手順がずれる）
+    uh = [us.cell(4, c).value for c in range(1, us.max_column + 1)]
+    check(f"未確認事項に行き先の 3 列が、既存の 5 列の後ろにある（{label}）",
+          uh[:8] == ["No", "確認したい情報", "重要度", "取得方法", "影響する項目", "行き先", "行き先の ID", "行き先の根拠"], str(uh))
+    # 04 の「未確認事項」の列の表と、雛形の列が同じ並び（資料だけ、雛形だけに列を足すと、どちらかが古いままになる）
+    sec04 = open(sys.argv[6], encoding="utf-8").read().split("\n## 未確認事項\n", 1)[-1].split("\n## ", 1)[0]
+    cols04 = [l.split("|")[1].strip() for l in sec04.split("\n") if l.startswith("| ") and not l.startswith("| 列 ")]
+    check(f"04 の未確認事項の列の表と、雛形の未確認事項の列が同じ並び（{label}）", cols04 == uh, f"04: {cols04} / 雛形: {uh}")
+    ud = lists(us).get("F", ([], None))
+    check(f"未確認事項の行き先は 確定／未確認のまま／取り下げ の入力規則（{label}）",
+          ud[0] == ["確定", "未確認のまま", "取り下げ"] and ud[1], str(ud))
+    f8 = find("行き先が確定なのに")
+    check(f"整合の確認: 未確認事項の行き先が確定なのに ID が空の行を数える（{label}）",
+          f8 == f"=SUMPRODUCT(('{un}'!$F$5:$F${last}=\"確定\")*('{un}'!$G$5:$G${last}=\"\"))", f8)
+    f9 = find("行き先があるのに")
+    check(f"整合の確認: 未確認事項の行き先があるのに根拠が空の行を数える（{label}）",
+          f9 == f"=SUMPRODUCT(('{un}'!$F$5:$F${last}<>\"\")*('{un}'!$H$5:$H${last}=\"\"))", f9)
+    # 「残る」は、再評価で確定・取り下げにした行も残す決まりと合わない（2.29.0 までの full は 7_残る未確認事項）
+    check(f"未確認事項のシートの名前と見出しに「残る」を付けない（{label}）",
+          "残る" not in un and "残る" not in str(us["A1"].value), f"{un} / {us['A1'].value}")
     # 分類の候補は 04 の「台帳の列」の分類と揃える
     cat = lv.get(heads.get("分類"), ([], None))
     check(f"分類の候補が 04 の分類と一致する（{label}）", set(cat[0]) == CATS and cat[1] is False, f"{cat} / 04: {sorted(CATS)}")
@@ -1658,9 +1679,9 @@ book(sys.argv[2], [("指摘事項一覧", [["ID", "指摘事項"],
 book(sys.argv[3], [("指摘事項一覧", [["ID", "指摘事項"],
     ["S-1", "注文の詳細を返すハンドラが、注文の持ち主を照らし合わせずに返す"],
     ["S-2", "応答の CSP が frame-ancestors だけ"]]),
-  ("未確認事項", [["No", "確認したい情報"],
-    ["U-1", "外部に預けているデータの契約と保存の地域"],
-    ["U-2", "漏えい時の連絡体制と手順書の有無"]])])
+  ("未確認事項", [["No", "確認したい情報", "行き先", "行き先の根拠"],
+    ["U-1", "外部に預けているデータの契約と保存の地域", "未確認のまま", "担当者が不在で、今回も聞けなかった"],
+    ["U-2", "漏えい時の連絡体制と手順書の有無", "取り下げ", "手順書の有無は U-1 の確認に含めた"]])])
 PYEOF
   CC="$("$PY_BIN" "$SKILL/scripts/carry_check.py" "$TMP/cc-prev.xlsx" "$TMP/cc-cur.xlsx" 2>&1)"; CC_RC=$?
   if [[ $CC_RC -eq 2 ]]; then ok "carry_check: 消えた ID か参照切れがあれば 2"
@@ -1678,6 +1699,59 @@ PYEOF
   "$PY_BIN" "$SKILL/scripts/carry_check.py" "$TMP/cc-prev.xlsx" "$TMP/no-such.xlsx" >/dev/null 2>&1; CN_RC=$?
   if [[ $CN_RC -eq 1 ]]; then ok "carry_check: 台帳が開けなければ 1"
   else ng "carry_check: 台帳が開けなければ 1" "終了コード $CN_RC"; fi
+  # 未確認事項の行き先（11 の 3 節）。前回の台帳は 2.29.0 までの full の雛形の名前（7_残る未確認事項）と 5 列のまま、
+  # 今回の台帳は今の雛形（r-full.xlsx）に行を書いたもの。前回の台帳は古い版の雛形で作られていることが多いので、
+  # シートの名前によらず読めることと、今の雛形の行き先の列を見出しで見つけることを確かめる
+  "$PY_BIN" - "$TMP/cc-old.xlsx" "$TMP/r-full.xlsx" "$TMP/cc-dest.xlsx" "$TMP/cc-dest-ok.xlsx" <<'PYEOF'
+import sys
+from openpyxl import Workbook, load_workbook
+wb = Workbook(); wb.remove(wb.active)
+ws = wb.create_sheet("6_指摘事項一覧"); ws.append(["ID", "判定", "指摘事項"])
+ws.append(["S-1", "問題あり", "注文の詳細を返すハンドラが、注文の持ち主を照らし合わせずに返す"])
+ws = wb.create_sheet("7_残る未確認事項"); ws.append(["No", "確認したい情報", "重要度", "取得方法", "影響する項目"])
+for r in (["U-1", "本番の注文 ID の採番の方式", "高", "担当者に聞く", "S-1"],
+          ["U-2", "漏えい時の連絡体制と手順書の有無", "中", "担当者に聞く", "—"],
+          ["U-3", "バックアップの保存期間と戻す手順", "低", "管理画面のバックアップの設定", "—"],
+          ["U-4", "管理コンソールの多要素認証の設定", "中", "管理画面のメンバーの一覧", "—"]):
+    ws.append(r)
+wb.save(sys.argv[1])
+def current(path, dests):
+    wb = load_workbook(sys.argv[2])
+    for w in wb.worksheets[1:]:   # 雛形の例示行と注記を消し、例示が指す ID（S-01・T-1）を残さない
+        for m in list(w.merged_cells.ranges):
+            if m.min_row > 2: w.unmerge_cells(str(m))
+        w.delete_rows(5 if w.title != "6_指摘事項一覧" else 4, w.max_row)
+    sm = wb.worksheets[0]
+    for r in range(1, sm.max_row + 1):
+        if str(sm.cell(r, 1).value or "").startswith("【"): sm.cell(r, 1).value = None
+    fs = wb["6_指摘事項一覧"]; fs["A4"], fs["G4"] = "S-1", "注文の詳細を返すハンドラが、注文の持ち主を照らし合わせずに返す"
+    fs["A5"], fs["G5"] = "S-2", "注文 ID が連番で、総当たりで他人の注文を指せる"
+    us = wb["7_未確認事項"]
+    rows = [["U-1", "本番の注文 ID の採番の方式", "高", "担当者に聞く", "S-1"],
+            ["U-2", "漏えい時の連絡体制と手順書の有無", "中", "担当者に聞く", "—"],
+            ["U-3", "バックアップの保存期間と戻す手順", "低", "管理画面のバックアップの設定", "—"],
+            ["U-4", "管理コンソールの多要素認証の設定", "中", "管理画面のメンバーの一覧", "—"]]
+    for i, (r, d) in enumerate(zip(rows, dests)):
+        for j, v in enumerate(r + d):
+            us.cell(5 + i, 1 + j, v)
+    wb.save(path)
+current(sys.argv[3], [["確定", "S-2", "2026-10-01 に依頼者の確認で、連番と分かった"], [None, None, None],
+                      ["あとで", None, "未定"], ["未確認のまま", None, "管理画面の閲覧権限を今回も得られなかった"]])
+current(sys.argv[4], [["確定", "S-2", "2026-10-01 に依頼者の確認で、連番と分かった"], ["取り下げ", None, "委託をやめ、前提が無くなった"],
+                      ["未確認のまま", None, "管理画面の閲覧権限を今回も得られなかった"], ["未確認のまま", None, "同上"]])
+PYEOF
+  CD="$("$PY_BIN" "$SKILL/scripts/carry_check.py" "$TMP/cc-old.xlsx" "$TMP/cc-dest.xlsx" 2>&1)"; CD_RC=$?
+  contains "carry_check: 前回の未確認事項で、今回の行き先が空の行を出す" "  U-2  今回の 7_未確認事項: 行き先が空" "$CD"
+  contains "carry_check: 前回の未確認事項で、今回の行き先が 3 つの値のどれでもない行を出す" "  U-3  今回の 7_未確認事項: 行き先が「あとで」" "$CD"
+  absent   "carry_check: 行き先を選んだ行は出さない" "  U-1  今回の" "$CD"
+  if [[ $CD_RC -eq 2 ]] && grep -F -- '--- 1. 前回にあって今回に無い ID（0 件' <<<"$CD" >/dev/null && grep -F -- '--- 2. 今回の台帳で参照しているのに行の無い ID（0 件' <<<"$CD" >/dev/null; then
+    ok "carry_check: 行き先を選んでいない行だけでも 2"
+  else ng "carry_check: 行き先を選んでいない行だけでも 2" "終了コード $CD_RC: $(tr '\n' ' ' <<<"$CD" | cut -c1-300)"; fi
+  CO="$("$PY_BIN" "$SKILL/scripts/carry_check.py" "$TMP/cc-old.xlsx" "$TMP/cc-dest-ok.xlsx" 2>&1)"; CO_RC=$?
+  if [[ $CO_RC -eq 0 ]] && grep -F '（前回 5 件・今回 6 件）' <<<"$CO" >/dev/null; then
+    ok "carry_check: 前回の台帳の古い名前のシート（7_残る未確認事項）の行を読み、全件の行き先を選んでいれば 0"
+  else ng "carry_check: 前回の台帳の古い名前のシート（7_残る未確認事項）の行を読み、全件の行き先を選んでいれば 0" "終了コード $CO_RC: $(tr '\n' ' ' <<<"$CO" | cut -c1-300)"; fi
+  contains "carry_check: 今回の台帳に行き先の列が無ければ（古い雛形のまま）そう言う" "  U-1  今回の 未確認事項 に「行き先」の列が無い" "$CC"
 fi
 
 # --- recon.sh / browser_probe.mjs は実サイトへ出る。発火台を立てて確かめる ---

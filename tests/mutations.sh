@@ -301,6 +301,29 @@ mutate "carry_check: 資料の節の参照を ID に数える" "scripts/carry_ch
   's = s.replace("                    if SECTION_REF.search(v[:m.start()]):\n                        continue\n", "")'
 mutate "carry_check: 番号の使い回しを見比べる候補に出さない" "scripts/carry_check.py" "同じ番号を別の意味に使った ID" \
   's = s.replace("< 0.2]", "< 0.0]")'
+# 未確認事項の行き先（確定・未確認のまま・取り下げ）。U-x の行を消さずに閉じる列と、それを確かめる整合の確認・carry_check
+mutate "carry_check: 前回の U の行き先を見ない" "scripts/carry_check.py" "今回の行き先が空の行を出す" \
+  's = s.replace("no_dest = [rid for rid in carried_u if rid not in no_column and cur_dests.get(rid) not in DESTS]", "no_dest = []")'
+mutate "carry_check: 行き先の値を確かめず、空でなければ通す" "scripts/carry_check.py" "今回の行き先が 3 つの値のどれでもない行を出す" \
+  's = s.replace("cur_dests.get(rid) not in DESTS]", "not cur_dests.get(rid)]")'
+mutate "carry_check: 行き先を選んでいない行を終了コードに数えない" "scripts/carry_check.py" "行き先を選んでいない行だけでも 2" \
+  's = s.replace("if missing or dangling or no_dest or no_column:", "if missing or dangling:")'
+mutate "carry_check: 行き先の列が無いことを言わない" "scripts/carry_check.py" "行き先の列が無ければ" \
+  's = s.replace("no_column = [rid for rid in carried_u if cur_dests.get(rid) is NO_COLUMN]", "no_column = []")'
+mutate "carry_check: 今の名前のシートしか読まない" "scripts/carry_check.py" "古い名前のシート" \
+  's = s.replace("    for ws in wb.worksheets:\n", "    for ws in [w for w in wb.worksheets if \"残る\" not in w.title]:\n", 1)'
+mutate "make_register: 行き先の列を影響する項目の前に置く" "scripts/make_register.py" "行き先の 3 列が、既存の 5 列の後ろにある" \
+  's = s.replace("(\"影響する項目\", 16),\n    (\"行き先\", 14), (\"行き先の ID\", 14), (\"行き先の根拠\", 60),", "(\"行き先\", 14), (\"行き先の ID\", 14), (\"行き先の根拠\", 60),\n    (\"影響する項目\", 16),")'
+mutate "make_register: 行き先に入力規則を付けない" "scripts/make_register.py" "行き先は 確定／未確認のまま／取り下げ の入力規則" \
+  's = s.replace("    add_list(ws, f\"{ucol(\x27行き先\x27)}5:{ucol(\x27行き先\x27)}{LAST}\", DESTS)\n", "")'
+mutate "make_register: 整合の確認で確定の行き先の ID を見ない" "scripts/make_register.py" "行き先が確定なのに ID が空の行を数える" \
+  's = s.replace("*({UDI}=\"\"))\x27", "*0)\x27")'
+mutate "make_register: 整合の確認で行き先の根拠を見ない" "scripts/make_register.py" "行き先があるのに根拠が空の行を数える" \
+  's = s.replace("*({UDR}=\"\"))\x27", "*0)\x27")'
+mutate "make_register: 未確認事項のシートの名前を 7_残る未確認事項 に戻す（旧構成）" "scripts/make_register.py" "名前と見出しに「残る」を付けない" \
+  's = s.replace("\"unknown\": \"7_未確認事項\",", "\"unknown\": \"7_残る未確認事項\",")'
+mutate "資料: 04 の未確認事項の列から行き先の ID を落とす" "references/04-findings-register.md" "04 の未確認事項の列の表と" \
+  's = "\n".join(l for l in s.split("\n") if not l.startswith("| 行き先の ID |"))'
 
 mutate "make_register: ★ の行のコードを台帳に写す" "scripts/make_register.py" "コードの写しを台帳に入れない" \
   's = s.replace("rows.append((sec, f\"{loc.group(1)}:{loc.group(2)}\", None))", "rows.append((sec, f\"{loc.group(1)}:{loc.group(2)}\", rest))")'
@@ -349,7 +372,7 @@ mutate "make_register: 整合の確認で未確認事項の影響先を見ない
 mutate "make_register: 整合の確認で範囲の外の行を数えない" "scripts/make_register.py" "集計の範囲の外に書いた行を数える" \
   's = s.replace("f\"=COUNTA({F}!${idc}${LAST + 1}:${idc}$1048576)\"", "\"=0\"")'
 mutate "make_register: 未確認事項の例示行を S-02 に戻す（例示どうしが食い違う）" "scripts/make_register.py" "未確認事項の例示行が指摘事項一覧の例示行の ID を指す" \
-  's = s.replace("\"S-01\"], example=True)", "\"S-02\"], example=True)")'
+  's = s.replace("\"S-01\", None, None, None], example=True)", "\"S-02\", None, None, None], example=True)")'
 mutate "make_register: 分類の候補を付けない" "scripts/make_register.py" "分類の候補が 04 の分類と一致する" \
   's = s.replace("    add_list(ws, f\"{fcol(\x27分類\x27)}4:{fcol(\x27分類\x27)}{LAST}\", CATEGORIES, strict=False)\n", "")'
 mutate "make_register: 根拠の強さの印を副題に書かない" "scripts/make_register.py" "副題に根拠の強さの印がある" \

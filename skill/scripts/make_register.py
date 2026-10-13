@@ -132,10 +132,13 @@ LAYOUTS = {
         "summary": "1_総合評価", "runtime": "2_実機確認サマリ",
         "privacy": "3_個人情報セキュリティ", "owasp": "4_OWASP_Top10",
         "ipa": "5_IPA非機能要求グレード", "findings": "6_指摘事項一覧",
-        "good": "6b_評価できる実装", "unknown": "7_残る未確認事項",
+        "good": "6b_評価できる実装", "unknown": "7_未確認事項",
         "roadmap": "8_対応ロードマップ",
     },
 }
+# full の未確認事項は、2.29.0 までは「7_残る未確認事項」だった。再評価で確定・取り下げにした行も残す決まり
+# （references/11-reassessment.md の 3 節）と合わないので「残る」を外した。前回の台帳を読む carry_check.py は
+# シートの名前で探さないので、古い名前の台帳もそのまま読める。
 # シートは LAYOUTS に書いた順に並ぶ（dict は挿入順を保つ）。
 # 枠組みシートの位置が構成ごとに違う（owasp は最後、full は指摘一覧の前）ため、
 # 全構成で共通の順序表を別に持つとここが必ずずれる。
@@ -169,6 +172,26 @@ FINDING_COLS = [
     ("指摘事項", 80), ("該当箇所", 36), ("想定される影響", 80),
     ("AI実装(h)", 10), ("人手(h)", 10), ("是正案", 80),
 ]
+
+
+# 未確認事項の列。整合の確認の数式はここから列の位置を引く。
+# 行き先の 3 列は、U-x を閉じるとき（再評価で前回の U-x を突き合わせたとき、依頼者の確認の結果を戻したとき）に書く。
+# まだ確かめていない初回の行は空欄。U-x の行は消さず、確定・未確認のまま・取り下げのどれかにする
+# （references/11-reassessment.md の 3 節、04 の「未確認事項」）。既存の 5 列（と、それを指す数式）の位置を
+# 変えないよう、後ろに足してある。前の版の台帳から行を移すときも、A〜E 列をそのまま写せる。
+UNKNOWN_COLS = [
+    ("No", 8), ("確認したい情報", 44), ("重要度", 10), ("取得方法", 70), ("影響する項目", 16),
+    ("行き先", 14), ("行き先の ID", 14), ("行き先の根拠", 60),
+]
+DESTS = ["確定", "未確認のまま", "取り下げ"]
+
+
+def ucol(name):
+    """未確認事項で、その列の文字（A, B, …）を返す。"""
+    for i, (h, _) in enumerate(UNKNOWN_COLS, start=1):
+        if h == name:
+            return get_column_letter(i)
+    raise KeyError(name)
 
 
 def fcol(name):
@@ -378,8 +401,11 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
     header_row(ws, r + 1, ["確かめること", "件数", ""], [30, 10, 4])
     ws.freeze_panes = None
     P = rng("優先度")
-    U = "'{}'!$E$5:$E${}".format(names["unknown"], LAST)
-    UNO = "'{}'!$A$5:$A${}".format(names["unknown"], LAST)
+    def urng(col):
+        c = ucol(col)
+        return "'{}'!${}$5:${}${}".format(names["unknown"], c, c, LAST)
+    U, UNO = urng("影響する項目"), urng("No")
+    UD, UDI, UDR = urng("行き先"), urng("行き先の ID"), urng("行き先の根拠")
     idc = fcol("ID")
     checks = [
         ("問題なしなのに優先度が「—」でない行", f'=COUNTIFS({J},"問題なし",{P},"<>—")'),
@@ -393,6 +419,13 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
         ("未確認事項の影響する項目が台帳に無い（ID を 1 つ書いたセル）",
          f'=SUMPRODUCT(({U}<>"")*({U}<>"—")*ISERROR(SEARCH("、",{U}))*ISERROR(SEARCH(",",{U}))'
          f'*ISERROR(SEARCH(" ",{U}))*(COUNTIF({A},{U})+COUNTIF({UNO},{U})=0))'),
+        # 未確認事項の行き先（11 の 3 節）。確定は判定を反映した指摘の ID を、どの行き先も根拠を書く。
+        # ID が台帳にあるかは carry_check.py の「参照しているのに行の無い ID」が確かめる。
+        # 空欄との比べ方は COUNTIFS の "" ではなく SUMPRODUCT にする（表計算ソフトによって空欄の数え方が違う）
+        ("未確認事項で、行き先が確定なのに行き先の ID が空の行",
+         f'=SUMPRODUCT(({UD}="確定")*({UDI}=""))'),
+        ("未確認事項で、行き先があるのに行き先の根拠が空の行",
+         f'=SUMPRODUCT(({UD}<>"")*({UDR}=""))'),
         (f"集計の範囲（{LAST} 行目まで）の外に書いた行",
          f"=COUNTA({F}!${idc}${LAST + 1}:${idc}$1048576)"),
     ]
@@ -534,20 +567,29 @@ def sheet_good(wb, names):
 
 def sheet_unknown(wb, names):
     ws = wb.create_sheet(names["unknown"])
-    title_block(ws, "残る未確認事項",
+    width = len(UNKNOWN_COLS)
+    title_block(ws, "未確認事項",
                 "コード監査と実機確認を経て、なお確定していない項目。"
                 "重要度「高」は、何かの作業を止めているもの。"
-                "「調べれば分かるもの」と「担当者しか知らないもの」を区別して書く。", 5)
-    header_row(ws, 4, ["No", "確認したい情報", "重要度", "取得方法", "影響する項目"], [8, 44, 10, 70, 16])
+                "「調べれば分かるもの」と「担当者しか知らないもの」を区別して書く。"
+                "「行き先」から右の 3 列は U-x を閉じるとき（再評価、依頼者の確認の結果を戻したとき）に書き、まだ確かめていない行は空欄にする。"
+                "U-x の行は消さず、確定・未確認のまま・取り下げのどれかを選ぶ（references/11-reassessment.md の 3 節）。", width)
+    header_row(ws, 4, [h for h, _ in UNKNOWN_COLS], [w for _, w in UNKNOWN_COLS])
     # 影響する項目は、指摘事項一覧の例示行（S-01）を指す。例示どうしが食い違うと、
     # 総合評価の「整合の確認」が雛形の時点で 0 にならない
     body_row(ws, 5, ["U-1", "本番の注文 ID の採番の方式（連番か、推測できない値か）", "高",
                      "担当者への確認が唯一の手段。採番は本番の DB の設定で決まり、評価者に閲覧権限が無いため。"
                      "連番かどうかで S-01 の影響（総当たりの手間）と優先度が変わる。",
-                     "S-01"], example=True)
+                     "S-01", None, None, None], example=True)
+    add_list(ws, f"{ucol('行き先')}5:{ucol('行き先')}{LAST}", DESTS)
     note(ws, 7,
          "【作業を止めているものは表の外にも書く】例:「U-1 は S-01 の優先度の判断を止める。"
-         "担当者への確認以外に取得手段がないため、着手と同時に依頼を出すこと。」", 5)
+         "担当者への確認以外に取得手段がないため、着手と同時に依頼を出すこと。」", width)
+    note(ws, 11,
+         "【行き先の書き方】確定: 「行き先の ID」に判定を反映した指摘の ID（S-x・N-x）、「行き先の根拠」に何で・いつ確かめたか。"
+         "未確認のまま: 根拠に今回も確かめられなかった理由（止めている指摘は「影響する項目」のまま）。"
+         "取り下げ: 根拠に理由（前提が無くなった、など）。別の U-x に統合したなら、統合先の U-x を「行き先の ID」に書く。"
+         "確定なのに ID が空の行と、行き先があるのに根拠が空の行は、総合評価の「整合の確認」が数える。", width)
     return ws
 
 
