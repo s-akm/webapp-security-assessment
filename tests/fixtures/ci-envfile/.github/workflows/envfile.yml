@@ -1,0 +1,125 @@
+name: envfile
+on:
+  issue_comment:
+  workflow_dispatch:
+    inputs:
+      label:
+        default: "x"
+permissions:
+  contents: read
+env:
+  WF_TITLE: ${{ github.event.issue.title }}
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    env:
+      JOB_BODY: ${{ github.event.comment.body }}
+    steps:
+      - name: direct
+        run: echo "TITLE=${{ github.event.issue.title }}" >> "$GITHUB_ENV"
+      - name: step env after run
+        run: |
+          echo "BODY=$BODY" >> $GITHUB_ENV
+        env:
+          BODY: ${{ github.event.comment.body }}
+      - name: job env to output
+        run: echo "body=${JOB_BODY}" >> "${GITHUB_OUTPUT}"
+      - name: workflow env to path
+        run: echo "$WF_TITLE" >> $GITHUB_PATH
+      - name: assigned first
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          REPLACED=$(echo "$BODY" | sed 's/FOO/BAR/g')
+          echo "MYVAR=$REPLACED" >> "$GITHUB_ENV"
+      - name: fixed delimiter in a group
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          {
+            echo "NOTE<<EOF"
+            echo "$BODY"
+            echo "EOF"
+          } >> "$GITHUB_ENV"
+      - name: fixed delimiter line by line
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          DELIM=END_OF_NOTE
+          echo "NOTE2<<$DELIM" >> $GITHUB_ENV
+          echo "$BODY" >> $GITHUB_ENV
+          echo "$DELIM" >> $GITHUB_ENV
+      - name: shell heredoc
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          cat <<EOT >> "$GITHUB_OUTPUT"
+          note<<EOF
+          $BODY
+          EOF
+          EOT
+      - name: powershell
+        shell: pwsh
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          "BODY=$env:BODY" >> $env:GITHUB_ENV
+      - name: env expression
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: echo "B=${{ env.BODY }}" >> "$GITHUB_ENV"
+  ok:
+    runs-on: ubuntu-latest
+    steps:
+      - name: random delimiter
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+          {
+            echo "NOTE<<$EOF"
+            echo "$BODY"
+            echo "$EOF"
+          } >> "$GITHUB_ENV"
+      - name: uuid delimiter
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          UUID=$(uuidgen)
+          echo "NOTE<<EOF$UUID" >> "$GITHUB_ENV"
+          echo "$BODY" >> "$GITHUB_ENV"
+          echo "EOF$UUID" >> "$GITHUB_ENV"
+          echo "AFTER=$BODY" >> "$GITHUB_ENV"
+      - name: newline removed
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: echo "BODY=$(echo "$BODY" | tr -d '\n')" >> "$GITHUB_ENV"
+      - name: not written
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: echo "$BODY"
+      - name: constant
+        run: echo "MODE=release" >> "$GITHUB_ENV"
+      - name: other job env is not here
+        run: echo "X=$JOB_BODY" >> "$GITHUB_ENV"
+      - name: other step env is not here
+        run: echo "Y=$BODY" >> "$GITHUB_ENV"
+      - name: quoted heredoc does not expand
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          cat <<'EOT' >> "$GITHUB_ENV"
+          Q=$BODY
+          EOT
+      - name: input
+        run: echo "LABEL=${{ inputs.label }}" >> "$GITHUB_ENV"
+      - name: file content
+        run: echo "PR_NUMBER=$(cat pr/.pr_number)" >> "$GITHUB_ENV"
+      - name: core toolkit
+        uses: actions/github-script@0123456789abcdef0123456789abcdef01234567
+        with:
+          script: core.exportVariable('T', context.payload.issue.title)
+      - name: branch name
+        env:
+          HEAD: ${{ github.head_ref }}
+        run: echo "BRANCH=$HEAD" >> "$GITHUB_ENV"

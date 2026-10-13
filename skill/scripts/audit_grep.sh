@@ -2865,6 +2865,8 @@ if [[ -d .github/workflows ]]; then
   # 利用者が自由に書ける値だけに絞る（head.sha のような 16 進の値は注入に使えない）。run: / script: の中
   # （1 行の値と、| や > で始まる複数行）にあるものに ★ を付ける。with: の引数として渡すだけなら注入にならない
   CI_EXT='github\.event\.(issue\.(title|body)|pull_request\.(title|body|head\.ref|head\.label|head\.repo\.default_branch)|comment\.body|review\.body|review_comment\.body|pages\.[^}]*page_name|commits\.[^}]*(message|author)|head_commit\.(message|author)|discussion\.(title|body)|workflow_run\.(head_branch|display_title|head_commit\.(message|author)))|github\.head_ref'
+  # 外部の値のうち、ブランチ名（と、それを含む「所有者:ブランチ」）。git の参照名は制御文字（改行を含む）と空白を持てない（git check-ref-format）
+  CI_REF='github\.event\.(pull_request\.(head\.ref|head\.label|head\.repo\.default_branch)|workflow_run\.head_branch)|github\.head_ref'
   # 人が渡す入力（workflow_dispatch の入力欄、workflow_call の呼び出し元が渡す値）
   CI_IN='(github\.event\.inputs|inputs)\.[A-Za-z0-9_-]+'
   # $1: 探す式（ERE）。正規表現の \ を awk の -v で崩さないよう、環境変数で渡す
@@ -2898,6 +2900,174 @@ if [[ -d .github/workflows ]]; then
   } | show
   echo "  ※ run: の中の inputs は、入力した値がシェルの命令として読まれる。入力できるのは書き込みの権限を持つ人か、呼び出し元の"
   echo "    ワークフローだが、呼び出し元が PR の題名などを渡していれば外部の値と同じになる。env: に入れてから \"\$名前\" で参照する（10 の 3-3）"
+  echo "  --- 外部の値を環境ファイル（GITHUB_ENV・GITHUB_OUTPUT・GITHUB_PATH）に書き込む行（run: の中。env: で受けた変数を経由するものも）---"
+  # 環境ファイルは「名前=値」と「名前<<区切り」を改行で区切って読む。値に改行を含む外部の値を書くと、別の値を書き足せる。
+  # env: で受けて "$名前" で使う形はシェルへの注入を防ぐが、値そのものを書き込むので、ここでは防がない。
+  # ステップ・ジョブ・ワークフローの env: で外部の値を受けた名前と、run: の中でそれを代入した名前を追い、書き込む行の値に来るかを見る。
+  # env: が run: より後ろに書かれることがあるので、ファイルを読み終えてから判定する
+  {
+    for f in "$W"/*.y*ml; do
+      [[ -f "$f" ]] || continue
+      CI_RE="$CI_EXT" CI_REF_RE="$CI_REF" CI_IN_RE="$CI_IN" LC_ALL=C awk -v F="$f" '
+        function ind(s) { match(s, /^ */); return RLENGTH }
+        function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+        # 値の種類: 1 外部の値、2 外部の値から改行を除いたもの、3 ブランチ名（改行を持てない）、4 人が渡す入力、5 ファイルの中身。小さいほど重い
+        function better(a, c) { return (a == 0 || (c != 0 && c < a)) ? c : a }
+        # ${{ }} の式の種類。式の中の env.名前 は env: で受けた値を引く（b はブロック。0 なら引かない）
+        function exprlvl(s, b,   r, e, e2, x, v) {
+          r = 0
+          while (match(s, /\$\{\{[^}]*\}\}/)) {
+            e = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+            # ブランチ名を除いても外部の値が残れば 1、ブランチ名だけなら 3
+            e2 = e; gsub(ENVIRON["CI_REF_RE"], "", e2)
+            x = (e2 ~ ENVIRON["CI_RE"]) ? 1 : ((e ~ ENVIRON["CI_RE"]) ? 3 : ((e ~ ENVIRON["CI_IN_RE"]) ? 4 : 0))
+            if (b && match(e, /env\.[A-Za-z_][A-Za-z0-9_]*/)) { v = substr(e, RSTART + 4, RLENGTH - 4); x = better(x, envlvl(v, b)) }
+            r = better(r, x)
+          }
+          return r
+        }
+        # 名前の値の種類。run: の中の代入、ステップ、ジョブ、ワークフローの env: の順に引く
+        function envlvl(v, b) {
+          if ((b SUBSEP v) in LT) return LT[b, v]
+          if ((("s" BS[b]) SUBSEP v) in E) return E["s" BS[b], v]
+          if ((("j" BJ[b]) SUBSEP v) in E) return E["j" BJ[b], v]
+          if (("w" SUBSEP v) in E) return E["w", v]
+          return 0
+        }
+        # 式と変数の参照（$名前・${名前}・PowerShell の $env:名前・JS の process.env.名前）。ns が真なら変数を展開しない（引用符付きのヒアドキュメント）
+        # どの名前から来たかを RV に残す
+        function reflvl(s, b, ns,   r, v, x) {
+          r = exprlvl(s, b); RV = ""
+          if (ns) return r
+          while (match(s, /\$\{?[A-Za-z_][A-Za-z0-9_]*|\$env:[A-Za-z_][A-Za-z0-9_]*|process\.env\.[A-Za-z_][A-Za-z0-9_]*/)) {
+            v = substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH)
+            sub(/^(\$\{?|\$env:|process\.env\.)/, "", v)
+            x = envlvl(v, b)
+            if (x != 0 && (r == 0 || x < r)) { r = x; RV = v }
+          }
+          return r
+        }
+        # 書き込み先。参照の形（$・${・$env:・env.・%）で書かれたものだけ
+        function target(s) {
+          if (!match(s, /(\$\{?|\$env:|env\.|%)GITHUB_(ENV|OUTPUT|PATH)([^A-Za-z0-9_]|$)/)) return ""
+          s = substr(s, RSTART, RLENGTH); sub(/^.*GITHUB_/, "GITHUB_", s); sub(/[^A-Za-z_]$/, "", s); return s
+        }
+        # 改行を除く（tr で改行を消す・置き換える形と、bash の置換で改行を消す形）
+        function strips(s) { return (s ~ /(^|[^A-Za-z0-9_])tr[ \t]/ && index(s, "\\n")) || index(s, "$\047\\n\047") }
+        function readsfile(s) { return s ~ /\$\([ \t]*(cat[ \t]|<)/ || s ~ /(^|[;&|][ \t]*)cat[ \t]+[^<>|&; \t]/ }
+        # 複数行の「名前<<区切り」。区切りが変数なら実行ごとに作ったもの（固定の文字列を代入していれば固定）
+        function header(s, b,   d, v) {
+          if (!match(s, /[A-Za-z0-9_]<<[ \t]*[^ \t"\047]+/)) return ""
+          d = substr(s, RSTART + 3, RLENGTH - 3); gsub(/[ \t]/, "", d)
+          if (index(d, "$")) {
+            v = d; sub(/^[^$]*\$\{?/, "", v); sub(/[^A-Za-z0-9_].*$/, "", v)
+            if (((b SUBSEP v) in LIT) && LIT[b, v]) return "F:" d
+            return "R:" d
+          }
+          return "F:" d
+        }
+        function body(i,   s) { s = L[i]; if (i == RK[b]) { sub(/^[ \t]*(- )?(run|script):[ \t]*/, "", s); if (s ~ /^[|>][-+0-9]*[ \t]*$/) s = "" } return s }
+        # i0〜i1 の行が w に書き込まれる。値に来るものを判定して出す
+        function unit(i0, i1, w, ns,   i, s, x, h, why, star, src) {
+          for (i = i0; i <= i1; i++) {
+            s = body(i)
+            h = (trim(s) ~ /^(cat|tee)([ \t]|<<)/) ? "" : header(s, b)
+            if (h != "") { HK = substr(h, 1, 1); HD = substr(h, 3) }
+            else if (HK != "" && index(s, HD) && s !~ /=/) { HK = ""; HD = ""; continue }
+            x = reflvl(s, b, ns); src = RV
+            if (x == 0 && readsfile(trim(s))) x = 5
+            if (x == 0) continue
+            if (x == 1 && strips(s)) x = 2
+            star = 0
+            src = (x == 5 ? "ファイルの中身。成果物や PR の中身なら外部の値と同じ" : ((x == 4 ? "人が渡す入力" : (x == 3 ? "ブランチ名" : "外部の値")) (src == "" ? "の式" : "を受けた " src)))
+            if (x == 1) {
+              if (HK == "R") why = "。区切りを実行ごとに作っている"
+              else if (HK == "F") { star = 1; why = "。区切りが固定（" HD "）で、推測できる" }
+              else { star = 1; why = "。改行を含めれば別の値を書き足せる" }
+            } else why = (x == 2 ? "。改行を除いている" : (x == 3 ? "。git の参照名は改行を持てない" : ""))
+            printf "%s%s:%d:%s（$%s へ。%s%s）\n", (star ? "  ★ " : "    "), F, i, L[i], w, src, why
+          }
+        }
+        {
+          L[NR] = $0
+          k = ind($0); t = substr($0, k + 1)
+          if (blk && t != "" && t !~ /^#/ && k <= bk) blk = 0
+          if (blk) { R[NR] = BID; next }
+          if (t == "" || t ~ /^#/) next
+          if (inenv && k <= envk) inenv = 0
+          if (k == 0) { jobs = (t ~ /^jobs:[ \t]*$/); jid = 0; jk = -1; insteps = 0; sid = 0 }
+          else if (jobs && t ~ /^[A-Za-z0-9_-]+:[ \t]*$/ && (jk < 0 || k == jk)) { jk = k; jid = ++JID; insteps = 0; sid = 0; next }
+          if (jid && t ~ /^steps:[ \t]*$/) { insteps = 1; sk = k; ik = -1; sid = 0; next }
+          if (insteps) {
+            if (t ~ /^- / && (ik < 0 ? k >= sk : k == ik)) { if (ik < 0) ik = k; sid = ++SID }
+            else if (k <= sk) { insteps = 0; sid = 0 }
+          }
+          tt = t; kk = k
+          if (t ~ /^- /) { tt = substr(t, 3); kk = k + 2 }
+          if (tt ~ /^env:[ \t]*$/) {
+            inenv = 1; envk = kk
+            # ステップの env・ジョブの env・ワークフローの env。それ以外（container の env など）は数えない
+            if (sid) sc = (kk == ik + 2 ? "s" sid : "")
+            else if (k == 0) sc = "w"
+            else if (jid && kk == jk + 2) sc = "j" jid
+            else sc = ""
+            next
+          }
+          if (inenv) {
+            if (sc != "" && match(t, /^[A-Za-z_][A-Za-z0-9_]*[ \t]*:/)) {
+              v = substr(t, 1, RLENGTH - 1); sub(/[ \t]+$/, "", v)
+              x = exprlvl(substr(t, RLENGTH + 1), 0)
+              if (x) E[sc, v] = x
+            }
+            next
+          }
+          if (tt ~ /^(run|script):/) {
+            BID++; R[NR] = BID; RK[BID] = NR; BS[BID] = sid; BJ[BID] = jid
+            if (tt ~ /^(run|script):[ \t]*[|>][-+0-9]*[ \t]*$/) { blk = 1; bk = kk }
+          }
+        }
+        END {
+          b = 0
+          for (n = 1; n <= NR; n++) {
+            if (!(n in R)) continue
+            if (R[n] != b) { b = R[n]; HK = ""; HD = ""; gs = 0; hd = "" }
+            tc = trim(body(n))
+            # シェルのヒアドキュメントの中身。区切りの行で閉じ、書き込み先が環境ファイルなら中身を判定する
+            if (hd != "") {
+              if (tc == hd) { if (hw != "") unit(hs + 1, n - 1, hw, hq); hd = "" }
+              continue
+            }
+            # 代入。値の種類を名前に引き継ぐ（外部の値を受けた名前を加工してから書く形）
+            if (match(tc, /^((export|local|readonly)[ \t]+|declare[ \t]+(-[A-Za-z]+[ \t]+)?)?[A-Za-z_][A-Za-z0-9_]*=/)) {
+              a = substr(tc, 1, RLENGTH - 1); sub(/^.*[ \t]/, "", a)
+              rhs = substr(tc, RLENGTH + 1)
+              x = reflvl(rhs, b, 0)
+              if (x == 1 && strips(rhs)) x = 2
+              if (x == 0 && readsfile(rhs)) x = 5
+              LT[b, a] = x; LIT[b, a] = (rhs !~ /[$\140]/)
+            }
+            w = target(tc)
+            if (tc ~ /^(cat|tee)([ \t]|<<)/ && match(tc, /<<-?[ \t]*["\047]?[A-Za-z_][A-Za-z0-9_]*/)) {
+              hd = substr(tc, RSTART, RLENGTH); sub(/^<<-?[ \t]*/, "", hd); hq = (hd ~ /^["\047]/); sub(/^["\047]/, "", hd)
+              hs = n; hw = w
+              continue
+            }
+            if (tc == "{") { gs = n; continue }
+            if (w == "") continue
+            if (gs && tc ~ /^\}/) { unit(gs + 1, n, w, 0); gs = 0; continue }
+            unit(n, n, w, 0)
+          }
+        }' "$f"
+    done
+  } | show
+  echo "  ※ 環境ファイルは「名前=値」を改行で区切って読む。値に改行を含めれば、GITHUB_ENV なら同じジョブの後続のステップに別の環境変数"
+  echo "    （LD_PRELOAD・BASH_ENV や、後続のステップが使う変数）を、GITHUB_OUTPUT なら同じステップの別の出力を、GITHUB_PATH なら PATH の先頭に"
+  echo "    別のディレクトリを書き足せる。env: で受けて \"\$名前\" で使う形はシェルへの注入を防ぐが、値を書き込むこの形は防がない（10 の 3-3）"
+  echo "  ※ 複数行の「名前<<区切り」は、値の中に区切りだけの行があると、その後ろが別の値として読まれる。区切りが固定の文字列（EOF など）なら推測できる。"
+  echo "    区切りを実行ごとに作る（uuidgen・乱数）か、1 行の値なら改行を除く（tr -d '\\n'）。@actions/core の exportVariable・setOutput は区切りを実行ごとに作る"
+  echo "  ※ ★ の無い行も、書き込む名前と値を確かめる。人が渡す入力は呼び出し元が PR の題名などを渡せば、ファイルの中身は workflow_run で"
+  echo "    成果物から読めば、外部の値と同じになる。ブランチ名は改行を持てないので別の値は足せないが、後続の run: に \${{ env.名前 }} で"
+  echo "    展開すればシェルへの注入になる。NODE_OPTIONS は GITHUB_ENV では設定できない（GitHub の仕様）"
   echo "  --- ジョブやワークフロー全体の env: に置いた秘密情報（そのジョブの全ステップに渡る）---"
   {
     for f in "$W"/*.y*ml; do
