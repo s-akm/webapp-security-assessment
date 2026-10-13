@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- デバッグのビルドだけ、手元の開発用のサーバーへ平文でつなぐ -->
+  <application android:usesCleartextTraffic="true" />
+</manifest>

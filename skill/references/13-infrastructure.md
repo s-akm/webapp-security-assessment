@@ -77,6 +77,8 @@ grep -nE '"?(5432|3306|6379|27017|9200|11211):' docker-compose*.y*ml compose*.y*
 
 ```bash
 grep -nE 'ARG .*(KEY|SECRET|TOKEN|PASSWORD)|ENV .*(KEY|SECRET|TOKEN|PASSWORD)' Dockerfile* 2>/dev/null
+# 秘密らしいファイルを入れる行と消す行（後の RUN で消していれば、入れた層に残る）
+grep -nE '^(COPY|ADD|RUN).*(\.env|\.npmrc|\.pypirc|\.netrc|id_rsa|\.pem|\.key|credentials)' Dockerfile* 2>/dev/null
 # 定義ファイルに平文で書いた秘密情報（compose の environment:、terraform.tfvars、K8s の ConfigMap）。
 # 名前と行番号だけを出し、値は画面に出さない
 grep -rnoiE '^[[:space:]]*-?[[:space:]]*"?[A-Za-z0-9_]*(KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Za-z0-9_]*"?[[:space:]]*[:=]' \
@@ -91,6 +93,11 @@ ls -la .dockerignore 2>/dev/null || echo "  .dockerignore が無い"
   `ConfigMap` は秘密情報を置く場所ではなく、`Secret` も暗号化ではない（4 節）
 - **`.dockerignore` が無い**と、`.env`・`.git`・鍵ファイルがそのまま入る。
   `.git` が入れば、履歴に残った秘密情報も一緒に配布される（C-2 と同じ話になる）
+- **秘密のファイルを `COPY`・`ADD` で入れてから、後の `RUN` で消していないか。** 命令ごとに層ができ、後の層の削除は
+  前の層の中身を消さない（OCI のイメージの仕様では、削除は上の層に置く印（whiteout）で隠すだけ）。イメージを取れば、入れた層から読める。
+  別の `RUN` で書き出してから消すのも同じ。**同じ `RUN` の中で書き出して消す**か、`RUN --mount=type=secret` で渡せば層に残らない
+  （Docker の公式の資料は、ビルドの秘密を `ARG`・`ENV` で渡さず、秘密のマウントを使うよう求めている）。
+  多段ビルドの前の段で入れて消したものは、配るイメージには入らない（ビルドのキャッシュと前の段のイメージには残る）
 - マルチステージビルドを使っていれば、最終段に開発用の道具が残っていないか
 
 ### 2-3. ベースイメージ
@@ -137,7 +144,9 @@ grep -rnE 'publicly_accessible|PubliclyAccessible|http_tokens|HttpTokens|metadat
 - 全開放の受信規則（`0.0.0.0/0`）が、管理用のポート（SSH・RDP）や**DB・キャッシュのポート**
   （PostgreSQL 5432・MySQL 3306・Redis 6379・MongoDB 27017・Elasticsearch 9200）に付いていないか
 - **RDS などのマネージド DB に `publicly_accessible = true` が付いていないか。** 受信規則と組み合わさると、
-  インターネットから DB へ直接つなげる
+  インターネットから DB へ直接つなげる。Terraform の `aws_db_instance` は書かなければ `false` だが、RDS の API
+  （CloudFormation の `PubliclyAccessible` もこれに従う）は、Aurora でない DB で `DBSubnetGroup` を指定しないと既定が `true` になる。
+  CloudFormation では、書いていないことも確かめる
 - **EC2 のインスタンスメタデータを IMDSv2 に限っているか**（Terraform は `metadata_options` の `http_tokens = "required"`、
   CloudFormation は `MetadataOptions` の `HttpTokens: required`）。指定が無ければ、作成時の既定（AMI やアカウントの設定）に任される。
   IMDSv1 が残っていると、アプリの SSRF（`references/07-web-vulnerabilities.md` の 5 節）から、インスタンスの資格情報を取られやすくなる
@@ -157,6 +166,9 @@ grep -rniE \
   --include='*.tf' --include='*.json' --include='*.y*ml' --include='*.ts' . 2>/dev/null | grep -v node_modules | head -20
 ```
 
+**並びを複数行に分けて書くと（`Action = [` の次の行に `"s3:*",`、YAML の `Action:` の次の行に `- "s3:*"`）、上の 1 行の検索では拾えない。**
+`scripts/audit_grep.sh` の 17 節は並びの中まで見る。手で探すときは、`Action`・`Resource` の並びを開いて読む。
+
 **`*` の権限は、その資格情報が漏れたときの被害範囲そのものになる。** `"s3:*"` のようなサービス単位の `*` も、
 そのサービスの中では同じ。`NotAction` は「列挙したもの以外すべて」を許すので、`*` と同じ重さで読む。
 `iam:PassRole` を `Resource: "*"` で持つ資格情報は、より強いロールを別の資源に渡して、その権限で動かせる。
@@ -165,7 +177,13 @@ CI に渡している資格情報が広い権限を持っていれば、`referen
 
 ### 3-3. 暗号化とログ
 
-- 保管データの暗号化が有効になっているか（既定で無効な資源がある）
+- 保管データの暗号化が有効になっているか（既定で無効な資源がある）。**Terraform の `aws_db_instance` の `storage_encrypted` は
+  書かなければ `false`**（`aws_rds_cluster` も `provisioned` では `false`、`serverless` では `true`）。RDS の API も既定は暗号化しない。
+  暗号化は作ったあとで切り替えられず、スナップショットからの作り直しになる
+
+```bash
+grep -rnE 'storage_encrypted|StorageEncrypted|kms_key_id|KmsKeyId' --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
+```
 - 監査ログ・アクセスログが有効か。**無効なら、事故のときに何も分からない**（02 の G 節）
 - ログの保存期間が決まっているか
 
@@ -192,7 +210,9 @@ grep -rnE 'backup_retention_period|skip_final_snapshot|deletion_protection|Delet
   --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
 ```
 
-- `backup_retention_period = 0`（`BackupRetentionPeriod: 0`）なら、自動バックアップが取られていない
+- `backup_retention_period = 0`（`BackupRetentionPeriod: 0`）なら、自動バックアップが取られていない。
+  **書いていないときの値は資料で食い違う**（Terraform の AWS プロバイダの資料は `aws_db_instance` の既定を `0`、RDS の API の資料は `1` と書く）。
+  書いていなければ、実機の保存期間を確かめる
 - `skip_final_snapshot = true` なら、削除のときに最後のスナップショットを残さない
 - `deletion_protection` が無いか `false` なら、削除の操作がそのまま通る。Terraform の `lifecycle { prevent_destroy = true }`、
   CloudFormation の `DeletionPolicy: Retain` / `Snapshot` も同じ役割
@@ -210,14 +230,28 @@ grep -rnE 'backup_retention_period|skip_final_snapshot|deletion_protection|Delet
 - **`Secret` は base64 であって暗号化ではない。** マニフェストがリポジトリにあれば、
   そこに書かれた値は平文と同じ扱いになる
 - `securityContext` — root で動いていないか、特権が付いていないか
-- **`hostNetwork: true`・`hostPID: true`・`hostPath` のボリュームが無いか。** ホストのネットワーク・プロセス・ファイルに
-  ポッドから届く。ログ収集などの基盤の部品以外で使っていれば、その理由を確かめる
+- **`hostNetwork: true`・`hostPID: true`・`hostIPC: true`・`hostPath` のボリュームが無いか。** ホストのネットワーク・プロセス・
+  共有メモリ・ファイルにポッドから届く。どれも Pod Security Standards の Baseline が禁じている。ログ収集などの基盤の部品以外で
+  使っていれば、その理由を確かめる
+- **`hostPath` でコンテナの実行環境のソケット（`/var/run/docker.sock`・`containerd.sock`）を渡していないか。** ソケットを持つポッドは、
+  ホストで任意のコンテナを動かせる（2-1 の compose の `docker.sock` と同じ）
 - **`automountServiceAccountToken` を `false` にしているか。** 既定ではポッドに API の資格情報が置かれ、
   ポッドが侵されると、そのサービスアカウントの権限でクラスタを操作される。API を呼ばないポッドには要らない
 - **`NetworkPolicy` があるか。** 無ければ、どのポッドからどのポッドへも通る
 - **Ingress に `tls:` の指定があるか。** 無ければ、外から平文の HTTP で届く
-- RBAC の広さ。`cluster-admin` を配っていないか
-- リソース制限（`limits`）があるか。無ければ 1 つのポッドで全体が落ちる
+- **Service の `type: NodePort` が意図したものか。** すべてのノードの IP の固定のポート（既定は 30000〜32767）で受ける。
+  ノードが外から届く場所にあれば、Ingress や認証を通らずにサービスへ届く
+- **RBAC の広さ。** `cluster-admin` を付与していないか（Kubernetes の公式の資料は、特に必要な場合を除いて使わないよう求めている）。
+  `verbs`・`resources` に `"*"` を書いていないか。`*` は今ある資源だけでなく、**後から増える資源の種類にも届く**
+- リソース制限（`limits`）があるか。無ければ 1 つのポッドで全体が落ちる。名前空間に `LimitRange` があれば、
+  書いていないコンテナに既定の上限が入る。Helm のテンプレートで値を差し込む書き方は、`values.yaml` まで読む
+
+```bash
+# コメントの行を除いて、ホストへ届く設定と RBAC の広さを見る
+grep -rnE '^[[:space:]]*(hostPID|hostIPC|hostNetwork|privileged):[[:space:]]*true|hostPath:|\.sock|cluster-admin|type:[[:space:]]*NodePort' \
+  --include='*.y*ml' . 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#' | grep -v node_modules | head -30
+grep -rnE -A3 '^[[:space:]]*-?[[:space:]]*(verbs|resources):' --include='*.y*ml' . 2>/dev/null | grep -F '"*"' | head
+```
 
 ---
 

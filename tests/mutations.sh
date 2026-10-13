@@ -489,6 +489,86 @@ mutate "17: 前の段の名前を版の固定の漏れに数える" "scripts/aud
   's = s.replace("skip = (tolower(img) in stage) ||", "skip = 0 ||", 1)'
 mutate "0: 下の階層のモバイルアプリを見ない" "scripts/audit_grep.sh" "下の階層のモバイルアプリも判定する" \
   's = s.replace("if [[ -z \"$mob\" ]]; then\n  f=\"$(nested_files pubspec.yaml", "if false; then\n  f=\"$(nested_files pubspec.yaml", 1)'
+
+# ---- 基盤とモバイルの資料の観点（0 節のロックファイルの組・17 節・18 節）----
+mutate "0 ロック: 定義が無くても対象外と言わない" "scripts/audit_grep.sh" "パッケージの定義が無ければロックファイルは対象外と言う" \
+  's = s.replace("-z \"$lock_defs_seen\" ]]; then", "-z \"$lock_defs_seen\" ]] && false; then", 1)'
+mutate "0 ロック: npm の定義を数えない" "scripts/audit_grep.sh" "npm の定義があってロックファイルが無ければ" \
+  's = s.replace("\x27npm|package.json|", "\x27npm|no-such-file.json|", 1)'
+mutate "0 ロック: Gradle の動的な版を見ない" "scripts/audit_grep.sh" "Gradle の動的な版にロックが無ければ" \
+  's = s.replace("hit=\"$(dyn_ver \"$defn\" \"$dre\")\"", "hit=\"\"", 1)'
+mutate "0 ロック: 固定の版も動的な版と読む" "scripts/audit_grep.sh" "正しく作った Android のアプリに ★ を付けない" \
+  's = s.replace("$0 ~ ENVIRON[\"DYN_RE\"]", "$0 ~ /[0-9]/", 1)'
+mutate "0 ロック: 固定した requirements.txt をロックと認めない" "scripts/audit_grep.sh" "requirements.txt をすべて == で固定していればロックの代わりと言う" \
+  's = s.replace("END { exit !(n > 0 && !bad) }", "END { exit 1 }", 1)'
+mutate "0 ロック: ツールの設定だけの定義も数える" "scripts/audit_grep.sh" "ツールの設定だけの pyproject.toml は定義に数えない" \
+  's = s.replace("|poetry.lock uv.lock Pipfile.lock pdm.lock|", "|poetry.lock uv.lock Pipfile.lock pdm.lock|.|", 1)'
+mutate "0 ロック: Go にもロックファイルを求める" "scripts/audit_grep.sh" "Go にロックファイルを求めない" \
+  's = s.replace("lock_note=\"$lock_note Go は go.mod が版を決め、ロックファイルを使わない。\"", "lock_star=\"$lock_star ★ Go\"", 1)'
+mutate "17 IaC: 複数行の並びの中を見ない" "scripts/audit_grep.sh" "複数行の Action の並びの中の s3:" \
+  's = s.replace("mode == 1 { if (wild($0))", "mode == 1 { if (0)", 1)'
+mutate "17 IaC: YAML の並びの中を見ない" "scripts/audit_grep.sh" "YAML の Action の並びの中のサービス単位の" \
+  's = s.replace("ind($0) >= kind) { if (wild($0))", "ind($0) >= kind) { if (0)", 1)'
+mutate "17 IaC: 外から届く DB を見ない" "scripts/audit_grep.sh" "外から届く DB に ★" \
+  's = s.replace("publicly_?accessible", "ZZZNOMATCH", 1)'
+mutate "17 IaC: 暗号化を書いていない DB を見ない" "scripts/audit_grep.sh" "暗号化を書いていない DB に ★" \
+  's = s.replace("else if (!enc && !sls && !rep) out(1", "else if (0) out(1", 1)'
+mutate "17 IaC: Terraform のコメントの行を読む" "scripts/audit_grep.sh" "正しく作った Terraform の定義を並べない" \
+  's = s.replace("(#|\\/\\/)/ { next }\n          { s = $0;", "(#|\\/\\/)/ { }\n          { s = $0;", 1)'
+mutate "17 IaC: 起動テンプレートを使うインスタンスにも IMDS を求める" "scripts/audit_grep.sh" "正しく作った Terraform の定義を並べない" \
+  's = s.replace("else if (!tokreq && !lt)", "else if (!tokreq)", 1)'
+mutate "17 IaC: IMDS の指定の無いインスタンスを見ない" "scripts/audit_grep.sh" "メタデータの方式を書いていないインスタンスに ★" \
+  's = s.replace("else if (!tokreq && !lt)", "else if (0)", 1)'
+mutate "17 K8s: hostPID を見ない" "scripts/audit_grep.sh" "hostPID に ★" \
+  's = s.replace("(hostPID|hostIPC|hostNetwork):", "(hostNetwork):", 1)'
+mutate "17 K8s: コメントの行を読む" "scripts/audit_grep.sh" "コメントアウトした hostNetwork を拾わない" \
+  's = s.replace("/^[ \\t]*#/ { next }\n      { s = $0; sub(", "/^[ \\t]*#/ { }\n      { s = $0; sub(", 1)'
+mutate "17 K8s: cluster-admin を見ない" "scripts/audit_grep.sh" "cluster-admin の付与に ★" \
+  's = s.replace("{ rr = i + 1; next }", "{ rr = 0; next }", 1)'
+mutate "17 K8s: RBAC の * の並びを見ない" "scripts/audit_grep.sh" "RBAC の verbs の \\* の並びに ★" \
+  's = s.replace("rk != \"\" && s ~ /^[ \\t]*-[ \\t]*", "rk != \"\" && s ~ /ZZZNOMATCH/ && s ~ /^[ \\t]*-[ \\t]*", 1)'
+mutate "17 K8s: hostPath のソケットを見分けない" "scripts/audit_grep.sh" "hostPath で docker.sock を渡すポッドに ★" \
+  's = s.replace("cri-dockerd)\\.sock/) out(1", "cri-dockerd)\\.sock/ && 0) out(1", 1)'
+mutate "17 K8s: 上限の無いコンテナを出さない" "scripts/audit_grep.sh" "上限の無いコンテナに ★" \
+  's = s.replace("if (!lim && !tpl) printf", "if (0) printf", 1)'
+mutate "17 K8s: limits を読み取らない" "scripts/audit_grep.sh" "正しく作ったマニフェストを並べない" \
+  's = s.replace("else if (s ~ /^[ \\t]*limits:/) lim = 1", "else if (0) lim = 1", 1)'
+mutate "17 K8s: NodePort を並べない" "scripts/audit_grep.sh" "NodePort を並べる" \
+  's = s.replace("?NodePort[", "?ZZZNOMATCH[", 1)'
+mutate "17 Docker: 後の層で消した秘密に ★ を付けない" "scripts/audit_grep.sh" "秘密のファイルを後の層で消す形に ★" \
+  's = s.replace("} else if (stg[x] == st) printf", "} else if (0) printf", 1)'
+mutate "17 Docker: 前の段で消したものにも ★ を付ける" "scripts/audit_grep.sh" "前の段で消したものは並べるだけ" \
+  's = s.replace("} else if (stg[x] == st) printf", "} else if (1) printf", 1)'
+mutate "17 Docker: 同じ RUN で書き出したものも数える" "scripts/audit_grep.sh" "同じ RUN で書き出して消したものを拾わない" \
+  's = s.replace("if (b in here) { gone[b] = 1; continue }", "", 1)'
+mutate "18 モバイル: 利用者の CA を見ない" "scripts/audit_grep.sh" "利用者が入れた CA を信頼する設定に ★" \
+  's = s.replace("s ~ /<certificates[^>]*src=\"user\"/ && !dov", "s ~ /ZZZNOMATCH/ && !dov", 1)'
+mutate "18 モバイル: debug-overrides を区別しない" "scripts/audit_grep.sh" "debug-overrides の中の設定を拾わない" \
+  's = s.replace("s ~ /<debug-overrides/ { dov = 1 }", "", 1)'
+mutate "18 モバイル: XML のコメントを外さない" "scripts/audit_grep.sh" "XML のコメントの中の設定を拾わない" \
+  's = s.replace("b = index(r, \"<!--\"); if (!b)", "b = 0; if (!b)", 1)'
+mutate "18 モバイル: debug のビルドの種類も数える" "scripts/audit_grep.sh" "debug のビルドの debuggable を拾わない" \
+  's = s.replace("if (name[j] == \"debug\") indbg = 1;", "", 1)'
+mutate "18 モバイル: Gradle の debuggable を見ない" "scripts/audit_grep.sh" "release のビルドの debuggable に ★" \
+  's = s.replace("s ~ /(isDebuggable|debuggable)[ \\t]*=?[ \\t]*true/ {", "s ~ /ZZZNOMATCH/ {", 1)'
+mutate "18 モバイル: WebView の設定を小文字の名前でだけ探す" "scripts/audit_grep.sh" "setAllowUniversalAccessFromFileURLs の true に ★" \
+  's = s.replace("set(AllowFileAccessFromFileURLs|AllowUniversalAccessFromFileURLs)", "set(allowFileAccessFromFileURLs|allowUniversalAccessFromFileURLs)", 1)'
+mutate "18 モバイル: React Native の WebView の属性を見ない" "scripts/audit_grep.sh" "React Native の WebView の属性に ★" \
+  's = s.replace("(allowFileAccessFromFileURLs|allowUniversalAccessFromFileURLs)[[:space:]]*=", "(ZZZNOMATCH)[[:space:]]*=", 1)'
+mutate "18 モバイル: コメントの行を落とさない" "scripts/audit_grep.sh" "コメントアウトした WebView の設定を拾わない" \
+  's = s.replace("nocomment() { LC_ALL=C awk", "nocomment() { cat; return; LC_ALL=C awk", 1)'
+mutate "18 モバイル: 平文の置き場への書き込みを名前で絞らない" "scripts/audit_grep.sh" "資格情報でない値の書き込みは並べるだけ" \
+  's = s.replace("nocomment | grep -E \"$SENS_KEY\")\"", "nocomment)\"", 1)'
+mutate "18 モバイル: 平文の置き場への書き込みに ★ を付けない" "scripts/audit_grep.sh" "資格情報の名前で平文の置き場に書く行に ★" \
+  's = s.replace("[[ -n \"$st18\" ]] && printf", "false && printf", 1)'
+mutate "18 モバイル: ログを語で絞らない" "scripts/audit_grep.sh" "資格情報の語の無いログは並べない" \
+  's = s.replace("| grep -iE \x27token|passw|secret|session|cookie|credential|email|phone|otp|card|jwt\x27 ", "", 1)'
+mutate "18 モバイル: コードの読み込みを並べない" "scripts/audit_grep.sh" "実行時のコードの読み込みを並べる" \
+  's = s.replace("\x27DexClassLoader|PathClassLoader|", "\x27ZZZNOMATCH|", 1)'
+mutate "18 モバイル: false の ATS も数える" "scripts/audit_grep.sh" "ATS の例外を false にした設定を拾わない" \
+  's = s.replace("{ if (s ~ /<true\\/>/) out(\"n\", pk ==", "{ if (1) out(\"n\", pk ==", 1)'
+mutate "18 モバイル: src/debug/ を区別しない" "scripts/audit_grep.sh" "src/debug/ のマニフェストの平文の許可は並べるだけ" \
+  's = s.replace("*/src/debug/*) mob_xml_scan", "*/src/ZZZ/*) mob_xml_scan", 1)'
 mutate "0: Clerk を下の階層で判定しない" "scripts/audit_grep.sh" "下の階層の Clerk・Firebase・Convex も判定する" \
   's = s.replace(" || [[ -n \"$(nested_pkg \x27\"@clerk/\x27)\" ]]; } && baas", "; } && baas", 1)'
 mutate "23: リアルタイムを古い Supabase の条件で判定する" "scripts/audit_grep.sh" "下の階層の Supabase でもリアルタイム通信を判定する" \

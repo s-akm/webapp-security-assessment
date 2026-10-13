@@ -1,0 +1,18 @@
+// 架空の設定。動くビルドではない
+android {
+    namespace "com.example.fixture"
+    buildTypes {
+        debug {
+            debuggable true
+        }
+        release {
+            minifyEnabled true
+            debuggable true
+        }
+    }
+}
+
+dependencies {
+    implementation 'com.example.widgets:charts:2.+'
+    implementation 'com.example.net:client:4.2.1'
+}

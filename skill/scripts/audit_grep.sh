@@ -480,8 +480,14 @@ while IFS= read -r f; do [[ -n "$f" ]] && iac="$iac コンテナ($f)"; done <<<"
 { [[ -e cdk.json ]] || [[ -n "$(nested_files cdk.json | head -1)" ]]; } && iac="$iac CDK"
 { [[ -e Pulumi.yaml ]] || [[ -n "$(nested_files Pulumi.yaml | head -1)" ]]; } && iac="$iac Pulumi"
 [[ -n "$(find . -maxdepth 3 \( -name 'Chart.yaml' -o -name 'kustomization.y*ml' \) 2>/dev/null | head -1)" ]] && iac="$iac Kubernetes"
-# 依存の下（node_modules の中の YAML）まで読まない
-[[ -n "$(grep -rlE "${EXA[@]}" '^kind:[[:space:]]*(Deployment|Service|Ingress)' --include='*.yaml' --include='*.yml' . 2>/dev/null | head -1)" ]] && iac="$iac Kubernetesマニフェスト"
+# 依存の下（node_modules の中の YAML）まで読まない。Pod だけ・DaemonSet だけ・RBAC だけの定義もある
+K8S_KINDS='Pod|Deployment|DaemonSet|StatefulSet|ReplicaSet|Job|CronJob|Service|Ingress|Secret|ClusterRole|ClusterRoleBinding|RoleBinding|NetworkPolicy'
+K8S_FILES="$(grep -rlE "${EXA[@]}" "^kind:[[:space:]]*(${K8S_KINDS})[[:space:]]*\$" --include='*.yaml' --include='*.yml' . 2>/dev/null | sed 's#^\./##' | sort | head -300)"
+[[ -n "$K8S_FILES" ]] && iac="$iac Kubernetesマニフェスト"
+# CloudFormation（SAM を含む）の定義。名前が決まっていないので中身で見る
+CFN_FILES="$(grep -rlE "${EXA[@]}" '^AWSTemplateFormatVersion|"AWSTemplateFormatVersion"|^[[:space:]]+Type:[[:space:]]*["'"'"']?AWS::|"Type"[[:space:]]*:[[:space:]]*"AWS::' \
+  --include='*.yaml' --include='*.yml' --include='*.json' --include='*.template' . 2>/dev/null | sed 's#^\./##' | sort | head -100)"
+[[ -n "$CFN_FILES" ]] && iac="$iac CloudFormation"
 for f in serverless.yml serverless.yaml template.yaml wrangler.toml; do
   [[ -e "$f" ]] && iac="$iac サーバーレス($f)"
 done
@@ -649,7 +655,9 @@ SUPA_CFGS="$(find . $(prune_expr) -o -type f -path '*supabase/config.toml' -prin
 sms_cfg="$(while IFS= read -r c; do [[ -n "$c" ]] && grep -nE '^\[auth\.sms' "$c" 2>/dev/null; done <<<"$SUPA_CFGS" | head -1)"
 if [[ -n "$sms_hit$sms_cfg" ]]; then say "SMS の送信" "有 → 02 の F-4・03 の 3 節（24 節）"; else say "SMS の送信" "無"; fi
 
-LOCKFILES=(package-lock.json yarn.lock pnpm-lock.yaml poetry.lock Gemfile.lock go.sum composer.lock Cargo.lock)
+# 表示するロックファイル（下の LOCK_PAIRS のロックファイルと、ロックが任意のエコシステムのもの）
+LOCKFILES=(package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb poetry.lock uv.lock Pipfile.lock pdm.lock
+           Gemfile.lock go.sum composer.lock Cargo.lock pubspec.lock mix.lock Podfile.lock Package.resolved gradle.lockfile packages.lock.json)
 lock=""
 for f in "${LOCKFILES[@]}"; do
   [[ -e "$f" ]] && lock="$lock $f"
@@ -660,7 +668,94 @@ if [[ -z "$lock" ]]; then
   nl="$(nested_files "${LOCKFILES[@]}" | head -5 | tr '\n' ' ')"
   [[ -n "$nl" ]] && lock=" ${nl% }（プロジェクトルートには無い）"
 fi
-say "ロックファイル" "${lock:-★ 無い。監査した版と本番の版が違いうる（10 の 2 節）}"
+# ロックファイルが必要かは、パッケージの定義とロックファイルの組で決める。定義が無いのに「★ 無い」と出すと、
+# IaC だけのリポジトリや Gradle だけの Android のリポジトリで、存在しない問題が ★ の一覧に並ぶ。
+# 書式: エコシステム|定義のファイル名|ロックファイル名|依存を宣言している行。宣言の無い定義は数えない
+# （ツールの設定だけを書いた pyproject.toml や、依存の無い package.json にロックファイルは必要ない）
+LOCK_PAIRS=(
+  'npm|package.json|package-lock.json npm-shrinkwrap.json yarn.lock pnpm-lock.yaml bun.lock bun.lockb|"(dependencies|devDependencies|optionalDependencies)"[[:space:]]*:[[:space:]]*\{[[:space:]]*("|$)'
+  'Python|pyproject.toml Pipfile setup.py setup.cfg requirements*.txt|poetry.lock uv.lock Pipfile.lock pdm.lock|^[[:space:]]*(dependencies[[:space:]]*=|install_requires|\[(tool\.poetry\.dependencies|packages|dependency-groups)\])'
+  'Ruby|Gemfile|Gemfile.lock|^[[:space:]]*gem[[:space:]]'
+  'PHP|composer.json|composer.lock|"require(-dev)?"[[:space:]]*:[[:space:]]*\{[[:space:]]*("|$)'
+  'Rust|Cargo.toml|Cargo.lock|^\[((dev-|build-)?dependencies|workspace\.dependencies)'
+  'Dart|pubspec.yaml|pubspec.lock|^dependencies:'
+  'Elixir|mix.exs|mix.lock|\{:[a-z_]+,'
+  'CocoaPods|Podfile|Podfile.lock|^[[:space:]]*pod[[:space:]]'
+  'Swift|Package.swift|Package.resolved|\.package\('
+)
+# 定義のファイル（プロジェクトルートと下の階層）。名前は find の -name の形
+lock_defs() {
+  local n f
+  # shellcheck disable=SC2086
+  for n in $1; do for f in $n; do [[ -f "$f" ]] && printf '%s\n' "$f"; done; done
+  # shellcheck disable=SC2086
+  set -f; nested_files $1; set +f
+} 2>/dev/null
+# 依存を宣言している定義のうち最初の 1 つ。requirements*.txt は、パッケージ名で始まる行があれば宣言とみなす
+lock_defs_with() {
+  lock_defs "$1" | while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "${f##*/}" in requirements*.txt) grep -qE '^[A-Za-z0-9]' "$f" 2>/dev/null && printf '%s\n' "$f" ;;
+                       *) grep -qE "$2" "$f" 2>/dev/null && printf '%s\n' "$f" ;; esac
+  done | head -1
+}
+lock_any() {
+  local n
+  # shellcheck disable=SC2086
+  for n in $1; do [[ -e "$n" ]] && { printf '%s\n' "$n"; return; }; done
+  # shellcheck disable=SC2086
+  set -f; nested_files $1 | head -1; set +f
+}
+# requirements*.txt の依存がすべて == で固定されていれば、ロックの代わりとみなす（pip-compile の出力など。10 の 1 節の表）
+req_pinned() {
+  lock_defs 'requirements*.txt' | while IFS= read -r f; do
+    [[ -n "$f" ]] && awk '{ sub(/#.*/, ""); sub(/^[ \t]+/, ""); sub(/[ \t\\]+$/, "") }
+      /^[A-Za-z0-9]/ { n++; if ($0 !~ /===?[ \t]*[0-9A-Za-z]/) bad = 1 } END { exit !(n > 0 && !bad) }' "$f" && printf '%s\n' "$f"
+  done | head -1
+}
+lock_star=""; lock_note=""; lock_defs_seen=""
+for pair in "${LOCK_PAIRS[@]}"; do
+  eco="${pair%%|*}"; rest="${pair#*|}"; defn="${rest%%|*}"; rest="${rest#*|}"; lockn="${rest%%|*}"; dre="${rest#*|}"
+  d="$(lock_defs_with "$defn" "$dre")"; [[ -n "$d" ]] || continue
+  lock_defs_seen="$lock_defs_seen $eco"
+  [[ -n "$(lock_any "$lockn")" ]] && continue
+  rp=""; [[ "$eco" == Python ]] && rp="$(req_pinned)"
+  if [[ -n "$rp" ]]; then lock_note="$lock_note Python は $rp で版を == で固定している。"; continue; fi
+  lock_star="$lock_star
+    ★ ${eco} の依存の定義（${d}）があり、ロックファイル（${lockn%% *} など）が無い。監査した版と本番の版が違いうる（10 の 2 節）"
+done
+# Go は go.mod が版を決める（MVS。ロックファイルを使わない）。Gradle・Maven・.NET はロックが任意で、版を固定して書いていれば
+# 解決は変わらない。動的な版（Gradle の 1.+・latest.release・範囲、Maven の範囲・LATEST、NuGet の 4.*）があり、ロックが無いときだけ ★ を付ける
+if [[ -n "$(lock_defs_with go.mod '^require')" ]]; then
+  lock_defs_seen="$lock_defs_seen Go"; lock_note="$lock_note Go は go.mod が版を決め、ロックファイルを使わない。"
+fi
+# 動的な版の最初の 1 か所（ファイル:行）。コメントの行は見ない。正規表現は ENVIRON で渡す（awk -v はバックスラッシュを解釈する）
+dyn_ver() {
+  lock_defs "$1" | while IFS= read -r f; do
+    [[ -n "$f" ]] && DYN_RE="$2" awk -v f="$f" '/^[ \t]*(\/\/|#|\*|<!--)/ { next } $0 ~ ENVIRON["DYN_RE"] { printf "%s:%d\n", f, FNR; exit }' "$f" 2>/dev/null
+  done | head -1
+}
+GRADLE_DYN="[\"'][^\"' ]*:(\\+|latest\\.(release|integration)|[0-9][^\"' :]*\\+|[[(][^\"' ]*,[^\"' ]*[])])[\"']|=[[:space:]]*\"[0-9.]*\\+\"|\"latest\\.(release|integration)\"|=[[:space:]]*\"[[(][^\"]*,[^\"]*[])]\""
+for spec in "Gradle|build.gradle build.gradle.kts *.versions.toml|gradle.lockfile|$GRADLE_DYN" \
+            'Maven|pom.xml||<version>[[:space:]]*([[(][^<]*,|LATEST|RELEASE)' \
+            '.NET|*.csproj *.fsproj Directory.Packages.props|packages.lock.json|Version="[^"]*\*'; do
+  eco="${spec%%|*}"; rest="${spec#*|}"; defn="${rest%%|*}"; rest="${rest#*|}"; lockn="${rest%%|*}"; dre="${rest#*|}"
+  [[ -n "$(lock_defs "$defn" | head -1)" ]] || continue
+  lock_defs_seen="$lock_defs_seen $eco"
+  [[ -n "$lockn" && -n "$(lock_any "$lockn")" ]] && continue
+  hit="$(dyn_ver "$defn" "$dre")"
+  if [[ -n "$hit" ]]; then
+    lock_star="$lock_star
+    ★ ${eco} に動的な版の指定（${hit}）があり、${lockn:-版を固定する仕組み} が無い。ビルドのたびに解決される版が変わりうる（10 の 2 節）"
+  else lock_note="$lock_note ${eco} に動的な版の指定は無く、ロックは任意。"; fi
+done
+if [[ -z "$lock" && -z "$lock_defs_seen" ]]; then
+  say "ロックファイル" "対象外（依存を宣言したパッケージの定義が無い）"
+else
+  v="${lock:-無い}"; if [[ -n "$lock_note" ]]; then v="${v}（${lock_note# }"; v="${v%。}）"; fi
+  say "ロックファイル" "$v"
+  [[ -n "$lock_star" ]] && printf '%s\n' "${lock_star#?}"
+fi
 
 echo
 if [[ -n "$need" ]]; then
@@ -2156,9 +2251,80 @@ if [[ -n "$iac" ]]; then
       if [[ -f "$d/.dockerignore" || -f "$f.dockerignore" ]]; then echo "  $d/.dockerignore: 有"
       else echo "  ★ $d/ に .dockerignore が無い（$f のビルド）。.env や .git がイメージに入る"; fi
     done <<<"$NESTED_DF"
+
+    # 秘密のファイルを COPY / ADD で入れてから、後の RUN で消す形。命令ごとに層ができ、後の層の削除は前の層の中身を消さない
+    # （OCI のイメージの仕様の whiteout。前の層を取り出せば読める）。最後の段なら配るイメージに残るので ★、前の段なら並べるだけ。
+    # 同じ RUN の中で作って消すもの（> や tee で書き出してから rm）は層に残らないので数えない。続きの行（\）はつないで読む
+    secret_layers() { LC_ALL=C awk -v f="$1" '
+      function base(p,   n, a) { gsub(/["\047\[\],]/, "", p); sub(/\/+$/, "", p); n = split(p, a, "/"); return a[n] }
+      function secretish(b) { b = tolower(b)
+        if (b ~ /\.(example|sample|template|tmpl|dist|pub)$/) return 0
+        return b ~ /^(\.env(\..+)?|\.npmrc|\.pypirc|\.netrc|\.git-credentials|\.dockercfg|credentials(\.json)?|id_(rsa|dsa|ecdsa|ed25519)|.+\.(pem|key|p12|pfx|jks|keystore)|.*(secret|service[-_]?account).*\.json)$/ }
+      { if (cont != "") line = cont " " $0; else { line = $0; at = FNR } }
+      line ~ /\\[ \t]*$/ { sub(/\\[ \t]*$/, "", line); cont = line; next }
+      { cont = "" }
+      line ~ /^[ \t]*#/ || line ~ /^[ \t]*$/ { next }
+      { n = split(line, w, /[ \t]+/); i = 1; if (w[1] == "") i = 2; ins = toupper(w[i]) }
+      ins == "FROM" { st++; delete copied; delete made; dir = 0; next }
+      ins == "COPY" || ins == "ADD" {
+        k = 0; for (j = i + 1; j <= n; j++) if (w[j] !~ /^--/ && w[j] != "") src[++k] = w[j]
+        for (j = 1; j < k; j++) {
+          b = base(src[j])
+          if (src[j] ~ /^\.\/?$/ || src[j] ~ /\/$/) dir = 1
+          if (secretish(b)) { m++; copied[b] = m; ln[m] = at; stg[m] = st; txt[m] = line; why[m] = "" }
+        }
+        next
+      }
+      ins == "RUN" {
+        # この RUN が書き出すファイル（> と tee の行き先）
+        delete here; r = line
+        while (match(r, /(>|tee[ \t]+(-a[ \t]+)?)[ \t]*[^ \t;&|>]+/)) {
+          seg = substr(r, RSTART, RLENGTH); r = substr(r, RSTART + RLENGTH)
+          c = split(seg, t, /[ \t>]+/); b = base(t[c]); if (secretish(b)) here[b] = 1
+        }
+        r = line
+        while (match(r, /(^|[;&| \t])rm[ \t]+[^;&|]*/)) {
+          seg = substr(r, RSTART, RLENGTH); r = substr(r, RSTART + RLENGTH)
+          c = split(seg, t, /[ \t]+/)
+          for (j = 1; j <= c; j++) {
+            if (t[j] == "" || t[j] ~ /^-/ || t[j] ~ /^[;&|]*rm$/) continue
+            b = base(t[j]); if (!secretish(b)) continue
+            # 同じ RUN の中で書き出したものは、この層だけで消えるので数えない
+            if (b in here) { gone[b] = 1; continue }
+            if (b in copied) { rmd[copied[b]] = 1; y = ln[copied[b]] " 行目で入れた " b }
+            else if (b in made) y = made[b] " 行目の RUN で書き出した " b
+            else if (dir) y = "ディレクトリごと入れた " b
+            else continue
+            m++; ln[m] = at; stg[m] = st; txt[m] = line; why[m] = y
+          }
+        }
+        for (b in here) if (!(b in gone)) made[b] = at
+        delete gone
+      }
+      END {
+        for (x = 1; x <= m; x++) {
+          if (rmd[x]) continue
+          if (why[x] == "") {
+            # 消していない秘密のファイル。最後の段ならイメージに入る
+            if (stg[x] == st) printf "  %s:%d:%s   ← 秘密らしいファイルをイメージに入れている\n", f, ln[x], txt[x]
+          } else if (stg[x] == st) printf "  ★ %s:%d:%s   ← %s を後の層で消している。前の層に残る\n", f, ln[x], txt[x], why[x]
+          else printf "  %s:%d:%s   ← %s を後の層で消している（前の段なので配るイメージには入らない。ビルドのキャッシュには残る）\n", f, ln[x], txt[x], why[x]
+        }
+      }' "$1" 2>/dev/null; }
+    echo "  --- コンテナ: 秘密のファイルを入れていないか（後の層で消しても前の層に残る）---"
+    {
+      for f in Dockerfile*; do [[ -f "$f" ]] && secret_layers "$f"; done
+      while IFS= read -r f; do [[ -n "$f" ]] && secret_layers "$f"; done <<<"$NESTED_DF"
+    } | lim 10 | show
+    echo "  ※ ビルドの中で秘密が必要なら RUN --mount=type=secret で渡す（層にも履歴にも残らない）"
   fi
 
-  if [[ -n "$(find . -maxdepth 3 -name '*.tf' -not -path '*/.git/*' 2>/dev/null | head -1)" ]]; then
+  HAS_TF="$(find . -maxdepth 3 -name '*.tf' -not -path '*/.git/*' 2>/dev/null | head -1)"
+  if [[ -n "$HAS_TF" || -n "$CFN_FILES" ]]; then
+    # 定義のファイル（Terraform と CloudFormation）。依存・履歴・生成物の下は読まない
+    # shellcheck disable=SC2046
+    CLOUD_FILES="$(find . $(prune_expr) -o -type f \( -name '*.tf' -o -name '*.tf.json' \) -print 2>/dev/null | sed 's#^\./##' | sort | head -300
+                   printf '%s\n' "$CFN_FILES")"
     echo "  --- クラウド資源: 公開範囲と権限 ---"
     {
       grep -rnE "${EXA[@]}" '0\.0\.0\.0/0|::/0|public-read|allUsers|allAuthenticatedUsers' \
@@ -2166,9 +2332,81 @@ if [[ -n "$iac" ]]; then
       # JSON の "Action": "*" だけでなく、Terraform の actions = ["*"]・サービス単位の "s3:*"・NotAction・iam:PassRole も見る
       grep -rniE "${EXA[@]}" '"?(not_?)?actions?"?[[:space:]]*[:=][[:space:]]*\[?[^]]*"(\*|[a-z0-9-]+:\*)"|"?resources?"?[[:space:]]*[:=][[:space:]]*\[?[[:space:]]*"\*"|NotAction|not_actions|iam:PassRole|roles/(owner|editor)' \
         --include='*.tf' --include='*.json' --include='*.y*ml' . 2>/dev/null | lim 15
+      # 複数行に分けて書いた並び（actions = [ の次の行から ] まで、YAML の Action: の次の行の - の並び）の中の * と "s3:*"。
+      # 上の 1 行の検索は、並びを 1 行に書いたときしか拾わない。コメントの行は見ない
+      while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        LC_ALL=C awk -v f="$f" '
+          function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
+          function wild(s) { return s ~ /["\047]\*["\047]/ || s ~ /^[ \t]*-[ \t]*\*[ \t]*$/ || s ~ /["\047 \t-][a-z0-9-]+:\*["\047]?[ \t,]*$/ }
+          /^[ \t]*(#|\/\/)/ { next }
+          mode == 1 { if (wild($0)) printf "  %s:%d:%s   ← 複数行の %s の並びの中\n", f, FNR, $0, key; if ($0 ~ /\]/) mode = 0; next }
+          mode == 2 { if ($0 ~ /^[ \t]*-/ && ind($0) >= kind) { if (wild($0)) printf "  %s:%d:%s   ← 複数行の %s の並びの中\n", f, FNR, $0, key; next } mode = 0 }
+          { l = tolower($0) }
+          l ~ /^[ \t]*"?(not_?)?(actions?|resources?)"?[ \t]*[:=][ \t]*\[[^\]]*$/ { mode = 1; key = $0; sub(/^[ \t]*"?/, "", key); sub(/["]?[ \t]*[:=].*/, "", key); next }
+          l ~ /^[ \t]*"?(not)?(action|resource)"?[ \t]*:[ \t]*$/ { mode = 2; kind = ind($0); key = $0; sub(/^[ \t]*"?/, "", key); sub(/["]?[ \t]*:.*/, "", key); next }
+        ' "$f" 2>/dev/null
+      done <<<"$CLOUD_FILES" | lim 15
     } | show
     echo "  ※ 意図した公開もある（静的サイトの配信）。用途を確かめてから起票する"
 
+    # DB とインスタンスの設定（13 の 3-1・3-3・3-5）。既定値は Terraform の AWS プロバイダの資料による:
+    # aws_db_instance の publicly_accessible・storage_encrypted・skip_final_snapshot・deletion_protection はどれも既定が false。
+    # aws_rds_cluster の storage_encrypted は provisioned では false（serverless では true）。
+    # インスタンスのメタデータの http_tokens は optional か required で、指定が無ければ AMI とアカウントの設定に任される。
+    # ★ は、外から届く・暗号化されない・IMDSv1 が残る・消したら戻せない、のどれかを定義に書いている（または既定のままにしている）もの
+    echo "  --- クラウド資源: DB とインスタンスの設定（公開・暗号化・メタデータ・消失への備え）---"
+    {
+      while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        LC_ALL=C awk -v f="$f" '
+          function out(star, n, s, why) { printf "  %s%s:%d:%s   ← %s\n", (star ? "★ " : ""), f, n, s, why }
+          function flush() {
+            if (rt == "") return
+            if (rt ~ /^aws_(instance|launch_template|launch_configuration)$/) {
+              if (tokopt) out(1, tokopt, tokopts, "http_tokens が optional。IMDSv1 が残る")
+              else if (!tokreq && !lt) out(1, rl, rs, "metadata_options で http_tokens を required にしていない。IMDSv1 が残りうる（既定は AMI とアカウントの設定）")
+            }
+            if (rt ~ /^aws_(db_instance|rds_cluster)$/) {
+              if (encf) out(1, encf, encfs, "保管データを暗号化しない")
+              else if (!enc && !sls && !rep) out(1, rl, rs, "storage_encrypted = true が無い。既定は暗号化しない")
+              if (!del) out(0, rl, rs, "deletion_protection の指定が無い（既定は無効。本番の DB なら有効にする）")
+              if (rt == "aws_db_instance" && !bk && !rep) out(0, rl, rs, "backup_retention_period の指定が無い（自動バックアップの保存期間を実機で確かめる）")
+            }
+            rt = ""
+          }
+          /^[ \t]*(#|\/\/)/ { next }
+          { s = $0; sub(/[ \t]+(#|\/\/).*$/, "", s) }
+          match(s, /^resource[ \t]+"[a-z0-9_]+"/) { flush(); rt = substr(s, RSTART, RLENGTH); sub(/^resource[ \t]+"/, "", rt); sub(/"$/, "", rt)
+            rl = FNR; rs = $0; d = 0; opened = 0; tokreq = tokopt = enc = encf = sls = rep = del = bk = lt = 0 }
+          rt != "" {
+            if (s ~ /http_tokens[ \t]*=[ \t]*"required"/) tokreq = 1
+            if (s ~ /http_tokens[ \t]*=[ \t]*"optional"/) { tokopt = FNR; tokopts = $0 }
+            if (s ~ /storage_encrypted[ \t]*=[ \t]*true/) enc = 1
+            if (s ~ /storage_encrypted[ \t]*=[ \t]*false/) { encf = FNR; encfs = $0 }
+            if (s ~ /engine_mode[ \t]*=[ \t]*"serverless"/) sls = 1
+            if (s ~ /^[ \t]*launch_template[ \t]*\{/) lt = 1
+            if (s ~ /(replicate_source_db|snapshot_identifier)[ \t]*=/) rep = 1
+            if (s ~ /deletion_protection[ \t]*=/) del = 1
+            if (s ~ /backup_retention_period[ \t]*=/) bk = 1
+            t = s; o = gsub(/\{/, "", t); c = gsub(/\}/, "", t); d += o - c; if (o) opened = 1
+            if (opened && d <= 0) flush()
+          }
+          # 1 行で決まるもの（Terraform と CloudFormation）
+          tolower(s) ~ /"?publicly_?accessible"?[ \t]*[:=][ \t]*["\047]?true/ { out(1, FNR, $0, "DB をインターネットから直接つなげる") }
+          s ~ /"?backup_retention_period"?[ \t]*=[ \t]*0([^0-9]|$)|"?BackupRetentionPeriod"?[ \t]*:[ \t]*["\047]?0["\047]?[ \t,]*$/ { out(1, FNR, $0, "自動バックアップを取らない") }
+          s ~ /skip_final_snapshot[ \t]*=[ \t]*true/ { out(1, FNR, $0, "削除のときに最後のスナップショットを残さない") }
+          s ~ /deletion_protection[ \t]*=[ \t]*false|"?DeletionProtection"?[ \t]*:[ \t]*["\047]?false/ { out(1, FNR, $0, "削除の保護を切っている") }
+          s ~ /"?StorageEncrypted"?[ \t]*:[ \t]*["\047]?false/ { out(1, FNR, $0, "保管データを暗号化しない") }
+          s ~ /"?HttpTokens"?[ \t]*:[ \t]*["\047]?optional/ { out(1, FNR, $0, "HttpTokens が optional。IMDSv1 が残る") }
+          END { flush() }' "$f" 2>/dev/null
+      done <<<"$CLOUD_FILES"
+    } | lim 20 | show
+    echo "  ※ 開発用の環境なら、消失への備えは軽く扱ってよい。どの環境の定義かを確かめてから起票する"
+    echo "  ※ CloudFormation は 1 行で書いた値だけを見る（資源ごとに、書いていない項目を探すのは Terraform だけ）"
+  fi
+
+  if [[ -n "$HAS_TF" ]]; then
     echo "  --- 状態ファイル（生成された秘密が平文で入る）---"
     {
       find . -name '*.tfstate*' -not -path '*/.git/*' 2>/dev/null | sed 's/^/  存在: /'
@@ -2180,12 +2418,63 @@ if [[ -n "$iac" ]]; then
     echo "  ※ 履歴に一度でも入っていれば、そこに書かれた鍵は失効が要る"
   fi
 
-  if [[ -n "$(grep -rlE "${EXA[@]}" '^kind:[[:space:]]*(Deployment|Service|Ingress|Secret)' --include='*.y*ml' . 2>/dev/null | head -1)" ]]; then
+  if [[ -n "$K8S_FILES" ]]; then
     echo "  --- Kubernetes ---"
+    # Pod Security Standards の Baseline が禁じるもの（ホストの名前空間の共有・特権・hostPath）と、RBAC の広すぎる付与を見る。
+    # ★ は、ホストやクラスタ全体へ届くもの（ホストの名前空間・特権・実行環境のソケット・cluster-admin・verbs と resources の *）。
+    # hostPath（ログ収集などの基盤の部品は使う）・NodePort・root での実行・上限の無いコンテナは並べるだけにする（上限は下の別の段）。
+    # コメントの行（# で始まる行と、行末の # 以降）は見ない
+    K8S_LR="$(while IFS= read -r f; do [[ -n "$f" ]] && grep -lE '^kind:[[:space:]]*LimitRange' "$f" 2>/dev/null; done <<<"$K8S_FILES" | head -1)"
+    k8s_scan() { LC_ALL=C awk -v f="$1" -v lr="$2" '
+      function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
+      function out(star, n, s, why) { printf "%s\t  %s%s:%d:%s   ← %s\n", (star ? "1" : "2"), (star ? "★ " : ""), f, n, s, why }
+      # コンテナの 1 つ分を閉じる。上限（limits）が無く、テンプレートで与えてもいなければ並べる
+      function endc() { if (cl) { if (!lim && !tpl) printf "3\t  %s%s:%d:%s   ← resources.limits が無い%s\n", (lr == "" ? "★ " : ""), f, cl, cs, (lr == "" ? "" : "（LimitRange で既定を与えていれば問題なし）"); cl = 0 } }
+      /^[ \t]*#/ { next }
+      { s = $0; sub(/[ \t]+#.*$/, "", s); i = ind(s) }
+      s ~ /^---/ { endc(); incs = 0; rr = 0; rk = ""; next }
+      s ~ /^kind:/ { k = s; sub(/^kind:[ \t]*/, "", k) }
+      # コンテナの並び（containers・initContainers）。項目の - の位置で 1 つずつ分ける
+      incs && s !~ /^[ \t]*$/ {
+        if (s ~ /^[ \t]*- / && i == ii) { endc(); cl = FNR; cs = $0; lim = tpl = 0 }
+        else if (i <= ci && !(s ~ /^[ \t]*- / && i >= ci)) { endc(); incs = 0 }
+        else if (s ~ /^[ \t]*limits:/) lim = 1
+        else if (s ~ /^[ \t]*resources:/ && s ~ /\{\{/) tpl = 1
+        else if (s ~ /\{\{.*(resources|toYaml)/) tpl = 1
+      }
+      incs && ii < 0 && s ~ /^[ \t]*- / { ii = i; cl = FNR; cs = $0; lim = tpl = 0 }
+      s ~ /^[ \t]*(containers|initContainers|ephemeralContainers):[ \t]*$/ { endc(); incs = 1; ci = i; ii = -1; next }
+      s ~ /^[ \t]*(hostPID|hostIPC|hostNetwork):[ \t]*true/ { out(1, FNR, $0, "ホストの名前空間を共有する（ホストのプロセス・共有メモリ・ネットワークに届く）") }
+      s ~ /^[ \t]*privileged:[ \t]*true/ { out(1, FNR, $0, "特権コンテナ。ホストの資源にほぼ制限なく届く") }
+      s ~ /^[ \t]*allowPrivilegeEscalation:[ \t]*true/ { out(0, FNR, $0, "権限の昇格を許している") }
+      s ~ /^[ \t]*runAsUser:[ \t]*0[ \t]*$/ { out(0, FNR, $0, "root で動く") }
+      s ~ /^[ \t]*hostPath:/ { hp = i + 1; hpl = FNR; hps = $0; if (s ~ /path:/) { p = s; sub(/.*path:[ \t]*/, "", p); hpath(p) } ; next }
+      hp && i >= hp && s ~ /^[ \t]*path:/ { p = s; sub(/.*path:[ \t]*/, "", p); hpath(p); hp = 0; next }
+      hp && i < hp { hp = 0 }
+      s ~ /^[ \t]*roleRef:/ { rr = i + 1; next }
+      rr && i >= rr && s ~ /^[ \t]*name:[ \t]*["\047]?cluster-admin["\047]?[ \t]*$/ { out(1, FNR, $0, "cluster-admin を付与している（クラスタのすべてを操作できる）"); rr = 0 }
+      rr && i < rr { rr = 0 }
+      # RBAC の * （1 行の並びと、次の行からの - の並び）
+      s ~ /^[ \t]*-?[ \t]*(verbs|resources):[ \t]*\[[^]]*["\047]\*["\047]/ { out(1, FNR, $0, "RBAC で * を許している（今後増える資源の種類にも届く）") }
+      s ~ /^[ \t]*-?[ \t]*(verbs|resources):[ \t]*$/ { rk = i; next }
+      rk != "" && s ~ /^[ \t]*-[ \t]*["\047]\*["\047][ \t]*$/ { out(1, FNR, $0, "RBAC で * を許している（今後増える資源の種類にも届く）"); next }
+      rk != "" && !(s ~ /^[ \t]*-/) { rk = "" }
+      s ~ /^[ \t]*type:[ \t]*["\047]?NodePort["\047]?[ \t]*$/ { out(0, FNR, $0, "NodePort。すべてのノードの IP の固定のポートで受ける") }
+      s ~ /^kind:[ \t]*Secret[ \t]*$/ { out(0, FNR, $0, "Secret は base64 で、暗号化ではない") }
+      function hpath(p) { gsub(/["\047]/, "", p)
+        if (p ~ /(docker|containerd|crio|cri-dockerd)\.sock/) out(1, FNR, $0, "コンテナの実行環境のソケットをポッドに渡している（ホストを操作できる）")
+        else if (p == "/" || p ~ /^\/(etc|proc|sys|root|var\/run|run)\/?$/) out(1, hpl, hps " " p, "ホストの重要な場所を hostPath で渡している")
+        else out(0, hpl, hps " " p, "hostPath でホストのファイルを渡している（ログ収集などの基盤の部品以外なら理由を確かめる）") }
+      END { endc() }' "$1" 2>/dev/null; }
     {
-      grep -rnE "${EXA[@]}" '^kind:[[:space:]]*Secret|privileged:[[:space:]]*true|hostNetwork:[[:space:]]*true|runAsUser:[[:space:]]*0' \
-        --include='*.y*ml' . 2>/dev/null | lim 10
+      while IFS= read -r f; do [[ -n "$f" ]] && k8s_scan "$f" "$K8S_LR"; done <<<"$K8S_FILES" > "$HF_LIST.k8s"
+      # ★ を先に出す（件数の切り捨てで ★ が消えないように）。上限の無いコンテナは別に数える
+      grep $'^1\t' "$HF_LIST.k8s" | cut -f2- | lim 15
+      grep $'^2\t' "$HF_LIST.k8s" | cut -f2- | lim 10
     } | show
+    echo "  --- Kubernetes: 資源の上限（resources.limits）の無いコンテナ ---"
+    grep $'^3\t' "$HF_LIST.k8s" | cut -f2- | lim 10 | show
+    [[ -n "$K8S_LR" ]] && echo "  LimitRange: 有（${K8S_LR}）。名前空間の既定の上限が、書いていないコンテナに入る"
     if grep -rlE '^kind:[[:space:]]*NetworkPolicy' --include='*.y*ml' . >/dev/null 2>&1; then
       echo "  NetworkPolicy: 有"
     else
@@ -2198,35 +2487,134 @@ fi
 if [[ -n "$mob" ]]; then
   hr "18. モバイルアプリ（references/14-mobile.md）"
 
+  # 写しの行（パス:行:中身）のうち、中身がコメントのものを落とす（// ・ * ・ /* ・ # ・ <!-- ・ JSX の {/* で始まる行）
+  nocomment() { LC_ALL=C awk '{ if (match($0, /:[0-9]+:/)) { c = substr($0, RSTART + RLENGTH); if (c ~ /^[ \t]*(\/\/|\/\*|\*|#|<!--|\{\/\*)/) next } print }'; }
+  MOB_CODE=(--include='*.kt' --include='*.java' --include='*.swift' --include='*.m' --include='*.mm' --include='*.dart'
+            --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx')
+  # 鍵の名前に資格情報の語を含む文字列（'authToken'・"refresh_token"・"password" など）
+  SENS_KEY="[\"'][A-Za-z0-9_.-]*([Tt]oken|TOKEN|[Pp]assword|PASSWORD|[Pp]asswd|[Ss]ecret|SECRET|[Jj]wt|JWT|[Ss]ession|SESSION|[Cc]redential|CREDENTIAL)[A-Za-z0-9_.-]*[\"']"
+
   echo "  --- 端末に何を保存しているか ---"
   {
-    grep -rnE "${EXA[@]}" 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults' . 2>/dev/null | lim 12
+    # 平文の置き場に、資格情報の名前で書き込んでいる行（AsyncStorage・SharedPreferences・Flutter の shared_preferences・UserDefaults）
+    st18="$(grep -rnE "${EXA[@]}" 'AsyncStorage\.(setItem|multiSet|mergeItem)\(|(edit\(\)|[Ee]ditor|[Pp]refs?|[Pp]references)\.put(String|StringSet)\(|([Pp]refs?|[Pp]references)\.setString\(|UserDefaults[^;]*\.set(Value)?\(' \
+      "${MOB_CODE[@]}" . 2>/dev/null | nocomment | grep -E "$SENS_KEY")"
+    [[ -n "$st18" ]] && printf '%s\n' "$st18" | sed 's/^/★ /; s/$/   ← 平文の置き場に、資格情報の名前で値を書いている/' | lim 8
+    grep -rnE "${EXA[@]}" 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults' . 2>/dev/null | grep -vxF -e "$st18" | lim 12
   } | show
-  echo "  ※ 上は平文で残る置き場。認証トークンやパスワードを置いていれば指摘"
+  echo "  ※ 上は平文で残る置き場。認証トークンやパスワードを置いていれば指摘（★ は名前で判定したもの。中身を読んで確かめる）"
   {
     grep -rnE "${EXA[@]}" 'Keychain|SecureStore|EncryptedSharedPreferences|FlutterSecureStorage' . 2>/dev/null | lim 8
   } | show
   echo "  ※ 上は資格情報の置き場として意図されたもの。使われていれば問題なし"
 
+  # Android のマニフェストとネットワークセキュリティ構成、iOS の Info.plist を、XML のコメントを除いて読む。
+  # ネットワークセキュリティ構成の <debug-overrides> は android:debuggable が true のビルドにしか作用しない（Android の公式の資料）ので数えない。
+  # src/debug/ の下のマニフェストとリソースもデバッグのビルドにしか入らないので、★ を付けずに並べる
+  # shellcheck disable=SC2046
+  MOB_XML="$(find . $(prune_expr) -o -type f \( -name 'AndroidManifest.xml' -o -name '*.xml' -path '*/res/xml/*' -o -name 'Info.plist' \) -print 2>/dev/null \
+    | sed 's#^\./##' | sort | head -100)"
+  mob_xml_scan() { LC_ALL=C awk -v f="$1" -v dbg="$2" '
+    # g は出す段（n は通信、d は配布物に残るもの）
+    function out(g, star, n, t, why) { printf "%s%s\t%s%s:%d:%s   ← %s\n", g, (star ? "1" : "2"), (star ? "★ " : ""), f, n, t, why }
+    {
+      # コメント（<!-- -->。複数行にまたがるものも）を除いた中身を s に置く
+      r = $0; s = ""
+      while (r != "") {
+        if (inc) { e = index(r, "-->"); if (!e) { r = ""; break }; r = substr(r, e + 3); inc = 0 }
+        else { b = index(r, "<!--"); if (!b) { s = s r; r = "" } else { s = s substr(r, 1, b - 1); r = substr(r, b + 4); inc = 1 } }
+      }
+    }
+    s ~ /<debug-overrides/ { dov = 1 }
+    s ~ /<base-config/ { bc = 1 }
+    s ~ /<domain-config/ { dc++ }
+    s ~ /<certificates[^>]*src="user"/ && !dov {
+      if (dbg) out("n", 0, FNR, $0, "デバッグのビルドだけで、利用者が入れた CA を信頼する")
+      else out("n", 1, FNR, $0, "利用者が入れた CA を信頼する（" (dc ? "domain-config" : "base-config") "）。端末に入れた証明書で通信を中継して読める")
+    }
+    s ~ /cleartextTrafficPermitted="true"/ && !dov {
+      if (dbg) out("n", 0, FNR, $0, "デバッグのビルドだけで平文を許す")
+      else if (s ~ /<base-config/) out("n", 1, FNR, $0, "すべての通信で平文を許す")
+      else out("n", 0, FNR, $0, "一部のドメインで平文を許す。範囲を確かめる")
+    }
+    s ~ /android:usesCleartextTraffic="true"/ { if (dbg) out("n", 0, FNR, $0, "デバッグのビルドだけで平文を許す"); else out("n", 1, FNR, $0, "平文の通信を許す") }
+    s ~ /android:debuggable="true"/ { if (dbg) out("d", 0, FNR, $0, "デバッグのビルドのマニフェスト"); else out("d", 1, FNR, $0, "マニフェストで debuggable を true に固定している。配るビルドもデバッグできる") }
+    s ~ /android:allowBackup="true"/ { out("d", 0, FNR, $0, "端末のバックアップに入る（Android 12 以降は dataExtractionRules も見る）") }
+    # Info.plist。キーの値は同じ行か次の行の <true/>
+    pk != "" && s ~ /<(true|false)\/>/ { if (s ~ /<true\/>/) out("n", pk == "NSAllowsArbitraryLoads", pkl, pks, (pk == "NSAllowsArbitraryLoads" ? "ATS を外し、すべての通信で平文を許す" : pk " が true。範囲を確かめる")); pk = "" }
+    match(s, /<key>(NSAllowsArbitraryLoads|NSAllowsArbitraryLoadsInWebContent|NSExceptionAllowsInsecureHTTPLoads)<\/key>/) {
+      k = substr(s, RSTART + 5, RLENGTH - 11); rest = substr(s, RSTART + RLENGTH)
+      if (rest ~ /^[ \t]*<true\/>/) out("n", k == "NSAllowsArbitraryLoads", FNR, $0, (k == "NSAllowsArbitraryLoads" ? "ATS を外し、すべての通信で平文を許す" : k " が true。範囲を確かめる"))
+      else if (rest !~ /^[ \t]*<false\/>/) { pk = k; pks = $0; pkl = FNR }
+    }
+    s ~ /<\/debug-overrides>/ { dov = 0 }
+    s ~ /<\/base-config>|<base-config[^>]*\/>/ { bc = 0 }
+    s ~ /<\/domain-config>/ { dc-- }
+  ' "$1" 2>/dev/null; }
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "/$f" in */src/debug/*) mob_xml_scan "$f" 1 ;; *) mob_xml_scan "$f" "" ;; esac
+  done <<<"$MOB_XML" > "$HF_LIST.mob"
+
   echo "  --- 通信 ---"
   {
-    grep -rnE "${EXA[@]}" 'usesCleartextTraffic|cleartextTrafficPermitted|NSAllowsArbitraryLoads|NSExceptionAllowsInsecureHTTPLoads' \
-      . 2>/dev/null | lim 10
+    grep $'^n1\t' "$HF_LIST.mob" | cut -f2- | lim 10
+    grep $'^n2\t' "$HF_LIST.mob" | cut -f2- | lim 10
     grep -rnE "${EXA[@]}" 'allowInvalidCertificates|trustAllCerts|X509TrustManager|setHostnameVerifier|badCertificateCallback' \
-      . 2>/dev/null | lim 10
+      . 2>/dev/null | nocomment | lim 10
   } | show
 
   echo "  --- 端末との境界（外から入ってくる経路）---"
   {
     grep -rnE "${EXA[@]}" 'android:scheme|CFBundleURLSchemes|intent-filter|associatedDomains' . 2>/dev/null | lim 10
-    grep -rnE "${EXA[@]}" 'addJavascriptInterface|WKWebView|javaScriptEnabled|allowFileAccess|exported="true"' . 2>/dev/null | lim 10
+    grep -rnE "${EXA[@]}" 'addJavascriptInterface|WKWebView|javaScriptEnabled|allowFileAccess([^A-Za-z]|$)|setAllowFileAccess\(|exported="true"' . 2>/dev/null | nocomment | lim 10
   } | show
   echo "  ※ ディープリンクで受けた値を検証しているか。WebView に任意の URL を読ませていないか"
+  # WebView の緩い設定。file:// のページから他のファイルや任意のオリジンへ届く設定（API 16 以降の既定は false）と、
+  # HTTPS のページに HTTP を混ぜる設定に ★ を付ける。Java の setter・Kotlin のプロパティ・React Native の WebView の属性の 3 通りで書かれる。
+  # 名前の大文字小文字が書き方で違う（setAllowUniversalAccessFromFileURLs と allowUniversalAccessFromFileURLs）ので両方を書く
+  echo "  --- WebView の緩い設定 ---"
+  {
+    grep -rnE "${EXA[@]}" 'set(AllowFileAccessFromFileURLs|AllowUniversalAccessFromFileURLs)\([[:space:]]*true|(allowFileAccessFromFileURLs|allowUniversalAccessFromFileURLs)[[:space:]]*=[[:space:]]*\{?[[:space:]]*true' \
+      "${MOB_CODE[@]}" . 2>/dev/null | nocomment | sed 's/^/★ /; s/$/   ← file:\/\/ のページから、端末内の他のファイルや任意のオリジンへ届く/' | lim 10
+    grep -rnE "${EXA[@]}" 'MIXED_CONTENT_ALWAYS_ALLOW|mixedContentMode[[:space:]]*=[[:space:]]*\{?[[:space:]]*["'"'"']always' \
+      "${MOB_CODE[@]}" . 2>/dev/null | nocomment | grep -vE ':[0-9]+:[[:space:]]*import[[:space:]]' | sed 's/^/★ /; s/$/   ← HTTPS のページに HTTP の読み込みを混ぜる/' | lim 5
+  } | show
+
+  echo "  --- 外部のコードの読み込みとログへの出力 ---"
+  {
+    # 実行時にコードを読み込む（読み込む元が外部の保存領域や通信で取ったファイルなら、差し替えられて任意のコードが動く）
+    grep -rnE "${EXA[@]}" 'DexClassLoader|PathClassLoader|InMemoryDexClassLoader|DexFile\.loadDex|CONTEXT_INCLUDE_CODE' \
+      --include='*.java' --include='*.kt' . 2>/dev/null | nocomment | grep -vE ':[0-9]+:[[:space:]]*import[[:space:]]' | sed 's/$/   ← 実行時のコードの読み込み。読み込む元と、読み込む前に改ざんを検査しているかを確かめる/' | lim 5
+    # ログへの出力のうち、資格情報や個人情報の語を含む行（並べるだけ。値そのものを出しているかは読んで確かめる）
+    grep -rnE "${EXA[@]}" '(^|[^A-Za-z0-9_.])(Log\.(v|d|i|w|e|wtf)|Timber\.(v|d|i|w|e)|NSLog|os_log|debugPrint|print|console\.(log|debug|info|warn))\(' \
+      "${MOB_CODE[@]}" . 2>/dev/null | nocomment | grep -iE 'token|passw|secret|session|cookie|credential|email|phone|otp|card|jwt' | lim 10
+  } | show
+  echo "  ※ ログは配るビルドで消しているか（R8 の -assumenosideeffects など）。消していなければ、端末のログから読める"
 
   echo "  --- 権限と配布物に残るもの ---"
+  # Gradle の buildTypes で debuggable を true にしているもの。debug のビルドの種類は既定で debuggable なので数えず、
+  # それ以外（release・staging など）に ★ を付ける。ブロックの名前は { の前の語か getByName("…")・create("…") の引数
+  gradle_dbg() { LC_ALL=C awk -v f="$1" '
+    /^[ \t]*(\/\*|\*)/ { next }
+    { s = $0; sub(/[ \t]*\/\/.*$/, "", s); pre = s; sub(/\{.*/, "", pre); nm = ""
+      if (match(pre, /(getByName|named|create|maybeCreate|register)[ \t]*\([ \t]*"[A-Za-z0-9_]+"/)) { nm = substr(pre, RSTART, RLENGTH); gsub(/^[^"]*"|"$/, "", nm) }
+      else if (match(pre, /[A-Za-z0-9_]+[ \t]*$/)) { nm = substr(pre, RSTART, RLENGTH); gsub(/[ \t]/, "", nm) }
+      t = s; o = gsub(/\{/, "", t); c = gsub(/\}/, "", t)
+      for (j = 1; j <= o; j++) { d++; name[d] = (j == 1 ? nm : "") }
+    }
+    s ~ /(isDebuggable|debuggable)[ \t]*=?[ \t]*true/ {
+      indbg = 0; cur = ""; for (j = d; j >= 1; j--) { if (name[j] == "debug") indbg = 1; if (cur == "" && name[j] != "") cur = name[j] }
+      if (!indbg) printf "  ★ %s:%d:%s   ← ビルドの種類 %s を debuggable にしている。配るビルドもデバッグできる\n", f, FNR, $0, (cur == "" ? "（不明）" : cur)
+    }
+    { for (j = 1; j <= c; j++) if (d > 0) d-- }' "$1" 2>/dev/null; }
   {
+    grep $'^d1\t' "$HF_LIST.mob" | cut -f2- | lim 5
+    # shellcheck disable=SC2046
+    find . $(prune_expr) -o -type f \( -name 'build.gradle' -o -name 'build.gradle.kts' \) -print 2>/dev/null | sed 's#^\./##' | sort | head -50 \
+      | while IFS= read -r f; do gradle_dbg "$f"; done | lim 5
     grep -rhoE "${EXA[@]}" 'android\.permission\.[A-Z_]+' . 2>/dev/null | sort -u | lim 20 | sed 's/^/  /'
-    grep -rnE "${EXA[@]}" 'android:debuggable[[:space:]]*=[[:space:]]*"true"|android:allowBackup[[:space:]]*=[[:space:]]*"true"' . 2>/dev/null | lim 5
+    grep $'^d2\t' "$HF_LIST.mob" | cut -f2- | lim 5
   } | show
   echo "  ※ 機能に対して過剰な権限が無いか。debuggable が本番に残っていないか"
   echo "  ※ 難読化・改竄検知の不在は、単独で挙げない。時間稼ぎであって防御ではない"
