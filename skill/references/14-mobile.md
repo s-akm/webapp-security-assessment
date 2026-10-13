@@ -108,8 +108,18 @@ grep -rnE -e 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|localSt
   （`androidx.security:security-crypto`）全体が 2025 年に非推奨になった**ので、`references/08-privacy-compliance.md` の
   6 節と同じく「気づいたこと」として渡す（指摘には数えない）
 - **`UserDefaults` / `SharedPreferences` / `AsyncStorage`** — 平文で残る。
-  **認証トークンやパスワードを置いていれば指摘**。端末のバックアップにも入る
-- **ログへの出力**。デバッグ用の出力が残っていて、個人情報や token を書いていないか
+  **認証トークンやパスワードを置いていれば指摘**。端末のバックアップにも入る。`scripts/audit_grep.sh` の 18 節は、
+  書き込む鍵の名前に token・password・secret・session などを含む行に ★ を付ける（名前での判定なので、中身を読んで確かめる）
+- **ログへの出力**。デバッグ用の出力が残っていて、個人情報や token を書いていないか。Android の `Log.*` は端末の共通のログ（logcat）に入り、
+  ログを読む権限を持つアプリが入った端末もある。Android の公式の資料は、配るビルドでは機微な値をログに出さず、R8 で
+  `Log.v`・`Log.d`・`Log.i` を消すよう勧めている。React Native の `console.log` や iOS の `print`・`NSLog` も同じ
+
+```bash
+# ログへの出力のうち、資格情報や個人情報の語を含む行
+grep -rnE --exclude-dir=node_modules '(Log\.[vdiwe]|Timber\.[vdiwe]|NSLog|os_log|debugPrint|print|console\.(log|debug|info))\(' \
+  --include='*.kt' --include='*.java' --include='*.swift' --include='*.dart' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null \
+  | grep -iE 'token|passw|secret|session|cookie|email|phone|otp|card' | head -20
+```
 - **バックアップの対象から外しているか**（Android の `allowBackup`、iOS の除外指定）。
   **Android 12 以降は `android:dataExtractionRules` で、クラウドへのバックアップと端末間の転送を別々に指定する。**
   `allowBackup` だけを見ると判定を誤る
@@ -130,7 +140,11 @@ grep -rnE -e 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509Trus
 - **証明書の検証を切っていないか。** Web の O 節と同じだが、モバイルでは
   **開発中に入れた回避策がそのまま出荷される**ことが多い
 - **Android の `network_security_config` で `<certificates src="user" />` を信頼していないか。** 利用者（や端末に入り込んだ
-  第三者）が入れた証明書で、通信を中継して読める。`<debug-overrides>` の中だけなら、配布するビルドには作用しない
+  第三者）が入れた証明書で、通信を中継して読める。API 24 以降を対象にしたアプリは、書かなければ利用者が入れた証明書を信頼しない。
+  `<debug-overrides>` の中だけなら、`android:debuggable` が true のビルドにしか作用しない（Android の公式の資料）。
+  `src/debug/` の下のマニフェストとリソースも、デバッグのビルドにしか入らない
+- **平文の通信は、`<base-config cleartextTrafficPermitted="true">`（すべての通信）か `<domain-config>`（一部のドメイン）かで重さが違う。**
+  API 28 以降を対象にしたアプリは、書かなければ平文を許さない
 - **証明書のピン留めをしているか。** 無いこと自体は直ちに指摘ではない。
   扱う情報の重さで決める。**入れる場合は更新の手順まで決まっているか**を見る
   （鍵の更新でアプリが一斉に通信できなくなる事故が起きる）
@@ -177,8 +191,11 @@ grep -rniE --exclude-dir=node_modules \
   Web 側に渡していないか。WebView に外部のページを表示するなら、その組み合わせは危険。受け取る側でメッセージの送り元
   （表示中のページのオリジン）を確かめているかも見る
 - **WebView の緩い設定。** `setAllowUniversalAccessFromFileURLs(true)`・`setAllowFileAccessFromFileURLs(true)` は、
-  端末内のファイルとして開いたページから他のファイルや任意のオリジンへ届く。`MIXED_CONTENT_ALWAYS_ALLOW` は
-  HTTPS のページに HTTP の読み込みを混ぜる
+  端末内のファイルとして開いたページから他のファイルや任意のオリジンへ届く（API 16 以降の既定は false で、API 30 で非推奨。
+  Android の公式の資料は `WebViewAssetLoader` に替えるよう求めている）。`MIXED_CONTENT_ALWAYS_ALLOW` は
+  HTTPS のページに HTTP の読み込みを混ぜる。**書き方が 3 通りあり、名前の大文字小文字が違う**: Java の `setAllow…(true)`、
+  Kotlin の `allow… = true`、React Native の WebView の属性 `allowUniversalAccessFromFileURLs={true}`・`mixedContentMode="always"`。
+  `setAllowFileAccess(true)` は API 29 以下で既定が true で、ファイルを読ませないなら明示的に切る
 - **他アプリへ公開している入口**（Android の `exported="true"`）が意図したものか
 - **個人情報を表示する画面で、画面の記録を止めているか。** Android は `FLAG_SECURE` でスクリーンショットと
   最近使ったアプリの一覧のサムネイルを止められる。iOS はアプリが背景に回るときのサムネイルに画面が写るので、覆う処理があるかを見る
@@ -202,7 +219,18 @@ grep -rnE 'uses-permission|NS[A-Za-z]+UsageDescription' \
 
 ### 7. 配布物に残るもの（MASVS-CODE / RESILIENCE）
 
-- デバッグ用の設定が残っていないか（`android:debuggable`、テスト用のサーバー URL）
+- デバッグ用の設定が残っていないか（`android:debuggable`、テスト用のサーバー URL）。**Gradle の `buildTypes` で、`debug` 以外
+  （`release`・`staging` など）に `debuggable true`（Kotlin の DSL では `isDebuggable = true`）を書いていないか。** `debug` のビルドの種類は
+  既定でデバッグできるので、そこに書いてあるのは問題ない。マニフェストに `android:debuggable="true"` を直に書くと、ビルドの種類を問わず作用する
+- **実行時に外からコードを読み込んでいないか**（`DexClassLoader`・`InMemoryDexClassLoader`・`PathClassLoader`）。読み込む元が
+  外部の保存領域や通信で取ったファイルなら、差し替えられて任意のコードが動く。Android の公式の資料は、業務上の必要が無ければ避け、
+  使うなら内部の保存領域に置き、読み込む前に改ざんを検査するよう求めている。Google Play の方針に反することもある
+
+```bash
+grep -rnE '(isDebuggable|debuggable)[[:space:]]*=?[[:space:]]*true|android:debuggable="true"' \
+  --include='*.gradle' --include='*.kts' --include='AndroidManifest.xml' . 2>/dev/null | grep -v node_modules
+grep -rnE 'DexClassLoader|PathClassLoader|InMemoryDexClassLoader|DexFile\.loadDex' --include='*.java' --include='*.kt' . 2>/dev/null
+```
 - **iOS のプライバシーマニフェスト**（`PrivacyInfo.xcprivacy`）。2024-05 から必須。収集するデータの申告が、
   `references/08-privacy-compliance.md` のプライバシー文書と食い違っていないか
 - **Android の対象 API 水準。** Google Play は 2026-08-31 から新規と更新に API 36 を求めている。

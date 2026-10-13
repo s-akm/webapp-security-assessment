@@ -50,6 +50,23 @@ absent() {
   else ok "$label"; fi
 }
 
+# 写しの行（needle を含む行）に ★ が付いているか。starred は付いていること、unstarred は並んでいて付いていないことを確かめる。
+# 並ぶ場所（★ の行か、並べるだけの行か）を取り違えると、★ の一覧に入らないか、入るべきでないものが入る
+starred() {
+  local label="$1" needle="$2" hay="$3" hits
+  hits="$(grep -F -- "$needle" <<<"$hay" | sed 's/^[[:space:]]*//')"
+  if [[ -z "$hits" ]]; then ng "$label" "「${needle}」が出力に無い"
+  elif grep '^★' <<<"$hits" >/dev/null; then ok "$label"
+  else ng "$label" "「${needle}」の行に ★ が付いていない"; fi
+}
+unstarred() {
+  local label="$1" needle="$2" hay="$3" hits
+  hits="$(grep -F -- "$needle" <<<"$hay" | sed 's/^[[:space:]]*//')"
+  if [[ -z "$hits" ]]; then ng "$label" "「${needle}」が出力に無い（並べるだけの行として出るはず）"
+  elif grep '^★' <<<"$hits" >/dev/null; then ng "$label" "「${needle}」の行に ★ を付けている"
+  else ok "$label"; fi
+}
+
 # ==========================================================================
 head_ "1. 構造 — SKILL.md と実態が合っているか"
 
@@ -929,7 +946,43 @@ for fw in iac mobile; do
         grep -F -- "$v" <<<"$C" >/dev/null && leaked="$leaked $v"
       done
       if [[ -z "$leaked" ]]; then ok "audit_grep[iac]: ビルド引数の値を伏字にする"
-      else ng "audit_grep[iac]: ビルド引数の値を伏字にする" "出力に含まれた:$leaked"; fi ;;
+      else ng "audit_grep[iac]: ビルド引数の値を伏字にする" "出力に含まれた:$leaked"; fi
+      # 資料 13 の観点のうち、事前の洗い出しが拾っていなかったもの（基盤の教材を評価の題材に足す作業で分かった）。
+      # 穴のある側（main.tf・node-agent.yaml・Dockerfile・cfn の ReportsDb）と、正しく作った側（hardened.tf・api-hardened.yaml・
+      # services/worker/Dockerfile・cfn の ArchiveDb）を並べ、正しい側に ★ が付かないことも見る
+      I17="$(printf '%s\n' "$C" | LC_ALL=C awk 'index($0, "=== 17.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+      contains "audit_grep[依存]: パッケージの定義が無ければロックファイルは対象外と言う" "対象外（依存を宣言したパッケージの定義が無い）" "$C"
+      absent   "audit_grep[依存]: パッケージの定義が無ければロックファイルに ★ を付けない" "ロックファイル（" "$C"
+      contains "audit_grep[iac]: CloudFormation の定義を判定する"                 " CloudFormation" "$(grep -F 'インフラの定義  ' <<<"$C")"
+      unstarred "audit_grep[17]: 複数行の Action の並びの中の s3:* を並べる"     "infra/main.tf:24:" "$I17"
+      unstarred "audit_grep[17]: 複数行の Resource の並びの中の * を並べる"      "infra/main.tf:28:" "$I17"
+      unstarred "audit_grep[17]: YAML の Action の並びの中のサービス単位の * を並べる" "cfn/database.yaml:28:" "$I17"
+      starred  "audit_grep[17]: 外から届く DB に ★"                               "infra/main.tf:38:" "$I17"
+      starred  "audit_grep[17]: 自動バックアップを取らない DB に ★"               "infra/main.tf:39:" "$I17"
+      starred  "audit_grep[17]: 最後のスナップショットを残さない DB に ★"         "infra/main.tf:40:" "$I17"
+      contains "audit_grep[17]: 暗号化を書いていない DB に ★（コメントアウトした指定は数えない）" "★ infra/main.tf:35:resource \"aws_db_instance\" \"main\" {   ← storage_encrypted" "$I17"
+      starred  "audit_grep[17]: メタデータの方式を書いていないインスタンスに ★"   "infra/main.tf:45:" "$I17"
+      starred  "audit_grep[17]: IMDSv1 を許すテンプレートに ★"                    "infra/main.tf:54:" "$I17"
+      starred  "audit_grep[17]: CloudFormation の外から届く DB に ★"              "cfn/database.yaml:8:" "$I17"
+      starred  "audit_grep[17]: CloudFormation の暗号化しない DB に ★"            "cfn/database.yaml:9:" "$I17"
+      absent   "audit_grep[17]: 正しく作った Terraform の定義を並べない（暗号化・IMDSv2・起動テンプレート・削除の保護・狭い権限・コメント）" "hardened.tf" "$I17"
+      absent   "audit_grep[17]: 正しく作った CloudFormation の DB を並べない"     "cfn/database.yaml:1" "$(grep -vF 'cfn/database.yaml:10:' <<<"$I17")"
+      starred  "audit_grep[17]: hostPID に ★"                                     "k8s/node-agent.yaml:6:" "$I17"
+      starred  "audit_grep[17]: hostIPC に ★"                                     "k8s/node-agent.yaml:7:" "$I17"
+      absent   "audit_grep[17]: コメントアウトした hostNetwork を拾わない"         "k8s/node-agent.yaml:8:" "$I17"
+      absent   "audit_grep[17]: マニフェストの行末のコメントの中の語を拾わない"   "k8s/node-agent.yaml:23:" "$I17"
+      starred  "audit_grep[17]: hostPath で docker.sock を渡すポッドに ★"         "k8s/node-agent.yaml:20:" "$I17"
+      unstarred "audit_grep[17]: ほかの hostPath は並べるだけ"                    "k8s/node-agent.yaml:22:" "$I17"
+      unstarred "audit_grep[17]: NodePort を並べる"                               "k8s/node-agent.yaml:30:" "$I17"
+      starred  "audit_grep[17]: cluster-admin の付与に ★"                         "k8s/node-agent.yaml:41:" "$I17"
+      starred  "audit_grep[17]: RBAC の resources の * に ★"                      "k8s/node-agent.yaml:53:" "$I17"
+      starred  "audit_grep[17]: RBAC の verbs の * の並びに ★"                    "k8s/node-agent.yaml:55:" "$I17"
+      starred  "audit_grep[17]: 上限の無いコンテナに ★"                           "k8s/node-agent.yaml:10:" "$I17"
+      absent   "audit_grep[17]: 正しく作ったマニフェストを並べない（上限のあるコンテナ・false の指定・コメントの cluster-admin）" "api-hardened.yaml" "$I17"
+      contains "audit_grep[17]: 秘密のファイルを後の層で消す形に ★"             "★ Dockerfile:8:" "$I17"
+      unstarred "audit_grep[17]: 前の段で消したものは並べるだけ"                  "services/worker/Dockerfile:5:" "$I17"
+      absent   "audit_grep[17]: 同じ RUN で書き出して消したものを拾わない"         "services/worker/Dockerfile:14:" "$I17"
+      absent   "audit_grep[17]: Dockerfile のコメントの行を拾わない"               "services/worker/Dockerfile:15:" "$I17" ;;
     mobile)
       contains "audit_grep[mobile]: 平文の保存領域"       "AsyncStorage"          "$C"
       contains "audit_grep[mobile]: 平文通信の許可"       "usesCleartextTraffic"  "$C"
@@ -937,9 +990,63 @@ for fw in iac mobile; do
       contains "audit_grep[mobile]: ディープリンク"       "android:scheme"        "$C"
       contains "audit_grep[mobile]: 他アプリへの公開"     'exported="true"'       "$C"
       contains "audit_grep[mobile]: 要求している権限"     "ACCESS_FINE_LOCATION"  "$C"
-      contains "audit_grep[mobile]: 配布物に残る設定"     "debuggable"            "$C" ;;
+      contains "audit_grep[mobile]: 配布物に残る設定"     "debuggable"            "$C"
+      # 資料 14 の観点のうち、事前の洗い出しが拾っていなかったもの（モバイルの教材を評価の題材に足す作業で分かった）。
+      # 正しく作った側は、下の android-gradle の題材で見る
+      M18="$(printf '%s\n' "$C" | LC_ALL=C awk 'index($0, "=== 18.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+      starred  "audit_grep[依存]: npm の定義があってロックファイルが無ければ ★"     "★ npm の依存の定義（package.json）" "$C"
+      starred  "audit_grep[依存]: Gradle の動的な版にロックが無ければ ★"            "★ Gradle に動的な版の指定（android/app/build.gradle:16）" "$C"
+      starred  "audit_grep[18]: 利用者が入れた CA を信頼する設定に ★"           "network_security_config.xml:6:" "$M18"
+      absent   "audit_grep[18]: XML のコメントの中の設定を拾わない"             "network_security_config.xml:12:" "$M18"
+      absent   "audit_grep[18]: debug-overrides の中の設定を拾わない"           "network_security_config.xml:15:" "$M18"
+      unstarred "audit_grep[18]: 一部のドメインの平文の許可は並べるだけ"        "network_security_config.xml:9:" "$M18"
+      starred  "audit_grep[18]: マニフェストの平文の許可に ★"                   "AndroidManifest.xml:5:" "$M18"
+      starred  "audit_grep[18]: release のビルドの debuggable に ★"             "android/app/build.gradle:10:" "$M18"
+      absent   "audit_grep[18]: debug のビルドの debuggable を拾わない"         "android/app/build.gradle:6:" "$M18"
+      starred  "audit_grep[18]: setAllowFileAccessFromFileURLs の true に ★"   "HelpActivity.java:14:" "$M18"
+      starred  "audit_grep[18]: setAllowUniversalAccessFromFileURLs の true に ★" "HelpActivity.java:15:" "$M18"
+      starred  "audit_grep[18]: MIXED_CONTENT_ALWAYS_ALLOW に ★"                "HelpActivity.java:16:" "$M18"
+      absent   "audit_grep[18]: コメントアウトした WebView の設定を拾わない"     "HelpActivity.java:17:" "$M18"
+      starred  "audit_grep[18]: React Native の WebView の属性に ★"             "HelpScreen.tsx:9:" "$M18"
+      starred  "audit_grep[18]: 資格情報の名前で平文の置き場に書く行に ★"      "auth.ts:4:" "$M18"
+      unstarred "audit_grep[18]: 資格情報でない値の書き込みは並べるだけ"         "auth.ts:7:" "$M18"
+      contains "audit_grep[18]: 資格情報を含むログへの出力を並べる"            "HelpActivity.java:18:" "$M18"
+      contains "audit_grep[18]: React Native のログへの出力も並べる"           "auth.ts:12:" "$M18"
+      absent   "audit_grep[18]: 資格情報の語の無いログは並べない"              "HelpActivity.java:19:" "$M18"
+      contains "audit_grep[18]: 実行時のコードの読み込みを並べる"              "HelpActivity.java:20:" "$M18"
+      absent   "audit_grep[18]: import の行は並べない"                         "HelpActivity.java:6:" "$M18"
+      starred  "audit_grep[18]: ATS を外す設定に ★"                             "ios/Runner/Info.plist:5:" "$M18"
+      absent   "audit_grep[18]: ATS の例外を false にした設定を拾わない"         "RunnerTests/Info.plist" "$M18" ;;
   esac
 done
+
+# 正しく作った Android のアプリ（Gradle だけ。npm などの定義は無い）。★ が 1 件も付かないこと。
+# 版を固定した Gradle の依存にロックファイルを求めない・debug のビルドの種類と src/debug/ の設定と debug-overrides は数えない
+AG="$TMP/android-gradle"; fixture_cp "$ROOT/tests/fixtures/android-gradle" "$AG"
+AGO="$(bash "$SKILL/scripts/audit_grep.sh" "$AG" 2>&1)"
+contains "audit_grep[18]: Gradle だけの Android のアプリもモバイルと判定する"   "=== 18." "$AGO"
+contains "audit_grep[依存]: Gradle の版を固定して書いていればロックは任意と言う"   "Gradle に動的な版の指定は無く、ロックは任意" "$AGO"
+unstarred "audit_grep[18]: src/debug/ のマニフェストの平文の許可は並べるだけ"   "app/src/debug/AndroidManifest.xml:3:" "$AGO"
+# 題材はこのリポジトリの中に写すので、7 節（git の履歴）にはこのリポジトリの履歴が出る。0 節と 18 節だけを見る
+AG018="$(printf '%s\n' "$AGO" | LC_ALL=C awk '/^=== (0|18)\./ { f = 1; print; next } f && /^=== / { f = 0 } f')"
+absent   "audit_grep[18]: 正しく作った Android のアプリに ★ を付けない"         "★" "$(grep -vF '※' <<<"$AG018")"
+
+# ロックファイルの要否を、パッケージの定義とロックファイルの組で決める（0 節）。その場で小さな構成を作って当てる
+LP="$TMP/lock-pairs"; mkdir -p "$LP/pinned" "$LP/ranged" "$LP/toolonly" "$LP/gomod"
+printf 'django==4.2.11 \\\n    --hash=sha256:0000\nrequests===2.31.0\n# 注記\n-r base.txt\n' > "$LP/pinned/requirements.txt"
+printf 'django>=4.2\n' > "$LP/ranged/requirements.txt"
+printf '[tool.black]\nline-length = 100\n' > "$LP/toolonly/pyproject.toml"
+printf 'module example.test/app\n\ngo 1.22\n\nrequire example.test/lib v1.0.0\n' > "$LP/gomod/go.mod"
+LPP="$(bash "$SKILL/scripts/audit_grep.sh" "$LP/pinned" 2>&1 | grep -F -A1 'ロックファイル  ')"
+LPR="$(bash "$SKILL/scripts/audit_grep.sh" "$LP/ranged" 2>&1 | grep -F -A1 'ロックファイル  ')"
+LPT="$(bash "$SKILL/scripts/audit_grep.sh" "$LP/toolonly" 2>&1 | grep -F -A1 'ロックファイル  ')"
+LPG="$(bash "$SKILL/scripts/audit_grep.sh" "$LP/gomod" 2>&1 | grep -F -A1 'ロックファイル  ')"
+contains "audit_grep[依存]: requirements.txt をすべて == で固定していればロックの代わりと言う" "requirements.txt で版を == で固定している" "$LPP"
+absent   "audit_grep[依存]: すべて固定した requirements.txt に ★ を付けない"       "★" "$LPP"
+starred  "audit_grep[依存]: 範囲で書いた requirements.txt にロックが無ければ ★"   "★ Python の依存の定義（requirements.txt）" "$LPR"
+contains "audit_grep[依存]: ツールの設定だけの pyproject.toml は定義に数えない"    "対象外（依存を宣言したパッケージの定義が無い）" "$LPT"
+contains "audit_grep[依存]: Go は go.mod が版を決めると言う"                      "Go は go.mod が版を決め" "$LPG"
+absent   "audit_grep[依存]: Go にロックファイルを求めない"                         "★" "$LPG"
 
 # Angular のようなフロント専用の枠組みには、そもそもハンドラが無い。
 # 見るのは「クライアントに出る値」と「HTML を直接書き込む箇所」になる。

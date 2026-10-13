@@ -1,0 +1,34 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: 架空の定義。値はすべて架空
+Resources:
+  ReportsDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      PubliclyAccessible: true
+      StorageEncrypted: false
+      BackupRetentionPeriod: 0
+  ArchiveDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      BackupRetentionPeriod: 7
+      DeletionProtection: true
+  ExportRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Policies:
+        - PolicyName: export
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "dynamodb:*"
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - "s3:GetObject"
+                Resource:
+                  - "arn:aws:s3:::example-exports/*"

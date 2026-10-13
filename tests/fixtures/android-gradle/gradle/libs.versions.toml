@@ -1,0 +1,8 @@
+[versions]
+uikit = "1.13.1"
+netclient = "4.12.0"
+
+[libraries]
+uikit = { module = "com.example.ui:uikit", version.ref = "uikit" }
+netclient = { module = "com.example.net:netclient", version.ref = "netclient" }
+# netclient-latest = { module = "com.example.net:netclient", version = "4.+" }

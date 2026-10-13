@@ -68,6 +68,56 @@ Linux と macOS の両方で失敗した。2.29.0 で観点の一覧の検査の
   （LibreOffice が手元に無い。数式の文字列と参照する列は検査で確かめた）。実際のエージェントが再評価で行き先の列を埋めるか
   （実地の評価の再評価の回は台帳を JSON で出すので、この列は測れない）
 
+**事前の洗い出し（`audit_grep.sh`）が、資料 13（基盤）と 14（モバイル）に書いてある観点の一部を拾っていなかった。** 基盤（IaC・コンテナ）と
+モバイルの教材を評価の題材に足す作業で、教材に当てて分かった。IaC だけのリポジトリや Gradle だけの Android のリポジトリで「ロックファイル ★ 無い」と出し、
+複数行に分けて書いた IAM の `"s3:*"`、Kubernetes の `hostPID`・`cluster-admin`、Android の `<certificates src="user"/>`・release の `debuggable true`・
+`setAllowUniversalAccessFromFileURLs(true)` などを拾わず、React Native だけの構成では ★ の一覧が 0 件だった。教材の書き方には合わせず、資料の観点と、
+各技術の仕様（Terraform の AWS プロバイダの属性と既定値、Kubernetes の Pod Security Standards と RBAC、Android のネットワークセキュリティ構成と WebView と
+ビルドの種類、Gradle・NuGet・Go の依存の解決）の側から判定を作った。
+
+- **0 節: ロックファイルの要否を、パッケージの定義とロックファイルの組で決める。** 依存を宣言した定義（`package.json` の `dependencies`・`pyproject.toml`・
+  `requirements.txt`・`Gemfile`・`composer.json`・`Cargo.toml`・`pubspec.yaml`・`Podfile` など）が無ければ「対象外」と出し、★ を付けない。
+  エコシステムごとに、定義があってロックファイルが無いものに ★ を付ける（以前は、どれか 1 つのロックファイルがあれば何も言わなかった）。
+  Go は `go.mod` が版を決める（最小版選択。Go の公式の資料）ので求めない。`requirements.txt` をすべて `==` で固定していればロックの代わりとみなす。
+  Gradle と .NET はロックが任意なので、**動的な版**（`1.+`・`latest.release`・範囲・NuGet の `4.*`）を書いていてロックが無いときだけ ★ を付ける
+  （Gradle の公式の資料は、ロックが働くのは動的な版のときとしている。バージョンカタログはロックではない）。Maven は範囲と `LATEST`・`RELEASE` を見る。
+  CloudFormation の定義も「インフラの定義」に数える。Kubernetes の判定に Pod・DaemonSet・RBAC などの種類を足した
+- **17 節（IaC）:** `Action`・`Resource` の並びを複数行に分けて書いたもの（Terraform・JSON・YAML）の中の `*` とサービス単位の `*` を並べる。
+  DB とインスタンスの設定を足した。★ は、`publicly_accessible`（`PubliclyAccessible`）が true、`storage_encrypted` を書いていないか false（Terraform の
+  `aws_db_instance` の既定は false）、`backup_retention_period = 0`、`skip_final_snapshot = true`、`deletion_protection = false`、インスタンスと起動テンプレートで
+  `http_tokens` を `required` にしていない（起動テンプレートから作るインスタンスは除く）もの。`deletion_protection` と `backup_retention_period` を書いていない DB は
+  並べるだけにした（後者は、Terraform の AWS プロバイダの資料が既定を 0、RDS の API の資料が 1 と書いていて食い違うので、実機で確かめる）。コメントの行は読まない
+- **17 節（Kubernetes）:** ★ は `hostPID`・`hostIPC`・`hostNetwork`・`privileged` が true、`hostPath` でコンテナの実行環境のソケットやホストの重要な場所を渡すもの、
+  `cluster-admin` の付与、RBAC の `verbs`・`resources` の `*`（1 行の並びと、次の行からの `- "*"`）。ほかの `hostPath`・`NodePort`・`runAsUser: 0`・
+  `allowPrivilegeEscalation: true`・`Secret` は並べるだけ。`resources.limits` の無いコンテナは、`LimitRange` が無ければ ★、あれば並べるだけ（Helm のテンプレートで
+  差し込むものは数えない）。行頭と行末のコメントは読まない
+- **17 節（Dockerfile）:** 秘密らしいファイル（`.env`・`.npmrc`・鍵）を `COPY`・`ADD` や別の `RUN` で入れてから、後の `RUN` で消す形に ★ を付ける（後の層の削除は
+  OCI のイメージの仕様の whiteout で隠すだけで、入れた層に残る）。同じ `RUN` の中で書き出して消すものは数えず、多段ビルドの前の段のものは並べるだけ。
+  消していない秘密らしいファイルの `COPY` も並べる
+- **18 節（モバイル）:** ★ は、ネットワークセキュリティ構成の `<certificates src="user"/>`・`base-config` の平文の許可・マニフェストの `usesCleartextTraffic="true"` と
+  `debuggable="true"`（`<debug-overrides>`・`src/debug/` の下・XML のコメントは数えない。Android の公式の資料で、`debug-overrides` はデバッグできるビルドにしか作用しない）、
+  Gradle の `debug` 以外のビルドの種類の `debuggable true`・`isDebuggable = true`、WebView の `setAllowFileAccessFromFileURLs(true)`・`setAllowUniversalAccessFromFileURLs(true)`・
+  `MIXED_CONTENT_ALWAYS_ALLOW` と、Kotlin のプロパティ・React Native の WebView の属性の同じ設定（大文字小文字の違う 3 通りの書き方を拾う）、iOS の
+  `NSAllowsArbitraryLoads` が true、平文の置き場（AsyncStorage・SharedPreferences・UserDefaults）に資格情報の名前で書き込む行。
+  並べるだけにしたのは、一部のドメインの平文の許可、`DexClassLoader` などの実行時のコードの読み込み、資格情報や個人情報の語を含むログへの出力（`Log.d`・`console.log`・`print` など）
+- 資料: 13 の 2-2（後の層で消しても残る）・3-1（CloudFormation の `PubliclyAccessible` の既定）・3-2（複数行の並び）・3-3（`storage_encrypted` の既定）・3-5（バックアップの既定の食い違い）・
+  4（`hostIPC`・ソケット・`NodePort`・RBAC の `*`・`LimitRange`）、14 の 2（平文の置き場の ★・ログ）・3（`debug-overrides` と平文の許可の範囲）・5（WebView の 3 通りの書き方と既定）・
+  7（Gradle の `debuggable`・実行時のコードの読み込み）、10 の 2（ロックファイルの要否をエコシステムごとに）を書き足した。事前の洗い出しにだけあって資料に無い観点は残していない
+- 検査: 題材 `tests/fixtures/repo-iac`・`repo-mobile` に穴のある側と正しく作った側を足し、正しく作った Android のアプリ（`tests/fixtures/android-gradle`。Gradle だけ）と、
+  ロックファイルの組を見る小さな構成（検査がその場で作る）を足した
+
+確かめたこと: `tests/run.sh` の全体（検査を 65 件足して 1259 件。失敗 0）、足した変異 39 件（`tests/mutations.sh --only` で 0 ロック・17 IaC・17 K8s・17 Docker・18 モバイル）が
+すべて生きていること、`tests/self-audit.sh`。最初に書いたコメントの変異 2 件は生きていなかった。コメントの除き方が 2 重（行の読み飛ばしと行末の切り取り）で、片方だけを外しても結果が変わらなかった。
+変異を両方を外す形に直した。Kubernetes の判定は語を行頭に置いているので、行頭のコメントは両方を外しても一致しない。行末のコメントの中の語
+（`path: /var/log/app  # …docker.sock…`）を題材に足し、それを拾わないことを確かめる検査にした。
+公式の資料で確かめたのは、Terraform の AWS プロバイダの `aws_db_instance`・`aws_rds_cluster`・`aws_instance` の属性と既定、RDS の API の既定、Kubernetes の Pod Security Standards・
+RBAC の勧め・Service の `NodePort`・`LimitRange`、OCI のイメージの仕様の whiteout と Docker のビルドの秘密、Android のネットワークセキュリティ構成・WebView の危険な設定・
+動的なコードの読み込み・ログの扱い・ビルドの種類、Gradle の依存のロック、NuGet のロックファイル、Go の最小版選択。
+
+確かめていないこと: 足した判定を教材と実案件に当てて、評価のエージェントが ★ を台帳に残し正しく判定するか（実地の評価はしていない）。CloudFormation で
+書いていない項目（暗号化・メタデータの方式）、Azure・Google Cloud の定義、Helm の `values.yaml` との突き合わせ、iOS のキーチェーンの属性、React Native の
+`EXPO_PUBLIC_` の鍵らしい名前（4b 節が並べる）への ★ は扱っていない。
+
 ## [2.29.0] — 2026-10-11
 
 **実案件の再評価の材料から、スキルの穴と客観的に足りない観点を洗い直した回。** その再評価では、手元に残っていた 3 版前の写しが使われ、
