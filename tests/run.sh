@@ -2802,7 +2802,7 @@ absent   "eval[採点]: 切り替えの無い回には切り替えを書かな�
 # 汎用の題材の前処理（prep_anchors.py）。題材ごとの表（アンカー・消すもの・手掛かりの語）は手元に置くので、
 # ここでは架空の題材と表で、答えの行を決められるか・手掛かりのコメントだけを行を保って消せるかを見る
 PA="$TMP/eval-anchors"
-cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PA"
+fixture_cp "$ROOT/tests/fixtures/eval-anchors/target" "$PA"
 if PAO="$(python3 -B "$ROOT/tests/eval/prep_anchors.py" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$PA" "$TMP/eval-pa.json" 2>&1)"; then
   ok "eval[前処理]: アンカーの表で前処理が通る"
 else ng "eval[前処理]: アンカーの表で前処理が通る" "$PAO"; fi
@@ -2839,7 +2839,7 @@ if [[ "$(wc -l < "$PA/app/service.ts" | tr -d ' ')" == "$(wc -l < "$ROOT/tests/f
   ok "eval[前処理]: 正規表現で見つけて置き換える（行は保つ）"
 else ng "eval[前処理]: 正規表現で見つけて置き換える（行は保つ）" "置き換わっていないか、行がずれた"; fi
 # 消し残しがあれば止まる（表の residual_regex に、残っている語を入れて確かめる）
-PB="$TMP/eval-anchors-residual"; cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PB"
+PB="$TMP/eval-anchors-residual"; fixture_cp "$ROOT/tests/fixtures/eval-anchors/target" "$PB"
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d['residual_regex']='取得先'; json.dump(d,open(sys.argv[2],'w'),ensure_ascii=False)" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$TMP/eval-pb-spec.json"
 if python3 -B "$ROOT/tests/eval/prep_anchors.py" "$TMP/eval-pb-spec.json" "$PB" "$TMP/eval-pb.json" >/dev/null 2>&1; then
   ng "eval[前処理]: 手掛かりの消し残しがあれば止まる" "止まらなかった"
@@ -2912,7 +2912,7 @@ if grep -F 'vulnerabilities' "$PA/package-lock.json" >/dev/null 2>&1 && [[ -s "$
 else ng "eval[前処理]: ロックファイルの依存の注記は、消し残しに数えない" "前処理が止まったか、題材の写しが変わった"; fi
 # 架空の題材の写しに 1 つファイルを足して前処理する。<名前> <足すファイル> <中身（printf の %b）>
 pa_case() {
-  local d="$TMP/eval-anchors-$1"; rm -rf "$d"; cp -R "$PAF" "$d"; mkdir -p "$(dirname "$d/$2")"; printf '%b' "$3" > "$d/$2"
+  local d="$TMP/eval-anchors-$1"; rm -rf "$d"; fixture_cp "$PAF" "$d"; mkdir -p "$(dirname "$d/$2")"; printf '%b' "$3" > "$d/$2"
   python3 -B "$ROOT/tests/eval/prep_anchors.py" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$d" "$TMP/eval-anchors-$1.json" 2>&1
 }
 PCN="$(pa_case name app/injection_helpers/util.js 'export const a = 1\n')"; PCN_RC=$?
@@ -2990,7 +2990,7 @@ else ng "eval: run-eval.sh を実行の前に最後まで読み切る" "全体�
 # 作業場所の名前と、当てるディレクトリ（targets.tsv の 7 列目）。架空の題材を手元の git に置き、--prep-only で
 # 前処理まで実行する（取得元は file:// なので、ネットワークには出ない）
 ER="$TMP/eval-run-repo"; EL="$TMP/eval-run-local"; ED="$TMP/eval-run-work"; rm -rf "$ER" "$EL" "$ED"; mkdir -p "$EL" "$ED"
-cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$ER"
+fixture_cp "$ROOT/tests/fixtures/eval-anchors/target" "$ER"
 ( cd "$ER" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init -q . \
   && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git add -A -f \
   && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -c user.name=t -c user.email=t@example.invalid \

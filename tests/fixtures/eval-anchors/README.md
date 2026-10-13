@@ -24,4 +24,5 @@
 - `training-build-7` は、ファイルを指定しない正規表現の置き換え（replace_regex_everywhere）で、ロックファイルも含めて置き換わるべきもの
 - `target/mobile/vulnerable_cache/` と `target/mobile/SqlInjectionScreen.kt` は、名前に手掛かりがある例（rename）。答えの場所は新しいパスに移り、
   `import` とマニフェストの登録も新しい名前になるべきもの
-- `target/package-lock.json` の依存の非推奨の注記は、消し残しの語を含むが、ロックファイルの中身なので止めない例
+- `target/package-lock.json.fixture` の依存の非推奨の注記は、消し残しの語を含むが、ロックファイルの中身なので止めない例。
+  依存関係グラフに拾わせないよう `.fixture` を付けて置き、検査が `fixture_cp` で写すときに外す
