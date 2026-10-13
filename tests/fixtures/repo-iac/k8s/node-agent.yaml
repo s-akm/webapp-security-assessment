@@ -20,7 +20,7 @@ spec:
         path: /var/run/docker.sock
     - name: app-logs
       hostPath:
-        path: /var/log/app
+        path: /var/log/app  # 以前は /var/run/docker.sock も渡していた
 ---
 apiVersion: v1
 kind: Service

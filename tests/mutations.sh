@@ -514,15 +514,15 @@ mutate "17 IaC: 外から届く DB を見ない" "scripts/audit_grep.sh" "外か
 mutate "17 IaC: 暗号化を書いていない DB を見ない" "scripts/audit_grep.sh" "暗号化を書いていない DB に ★" \
   's = s.replace("else if (!enc && !sls && !rep) out(1", "else if (0) out(1", 1)'
 mutate "17 IaC: Terraform のコメントの行を読む" "scripts/audit_grep.sh" "正しく作った Terraform の定義を並べない" \
-  's = s.replace("(#|\\/\\/)/ { next }\n          { s = $0;", "(#|\\/\\/)/ { }\n          { s = $0;", 1)'
+  's = s.replace("(#|\\/\\/)/ { next }\n          { s = $0; sub(/[ \\t]+(#|\\/\\/).*$/, \"\", s) }", "(#|\\/\\/)/ { }\n          { s = $0 }", 1)'
 mutate "17 IaC: 起動テンプレートを使うインスタンスにも IMDS を求める" "scripts/audit_grep.sh" "正しく作った Terraform の定義を並べない" \
   's = s.replace("else if (!tokreq && !lt)", "else if (!tokreq)", 1)'
 mutate "17 IaC: IMDS の指定の無いインスタンスを見ない" "scripts/audit_grep.sh" "メタデータの方式を書いていないインスタンスに ★" \
   's = s.replace("else if (!tokreq && !lt)", "else if (0)", 1)'
 mutate "17 K8s: hostPID を見ない" "scripts/audit_grep.sh" "hostPID に ★" \
   's = s.replace("(hostPID|hostIPC|hostNetwork):", "(hostNetwork):", 1)'
-mutate "17 K8s: コメントの行を読む" "scripts/audit_grep.sh" "コメントアウトした hostNetwork を拾わない" \
-  's = s.replace("/^[ \\t]*#/ { next }\n      { s = $0; sub(", "/^[ \\t]*#/ { }\n      { s = $0; sub(", 1)'
+mutate "17 K8s: コメントを読む" "scripts/audit_grep.sh" "マニフェストの行末のコメントの中の語を拾わない" \
+  's = s.replace("/^[ \\t]*#/ { next }\n      { s = $0; sub(/[ \\t]+#.*$/, \"\", s); i = ind(s) }", "/^[ \\t]*#/ { }\n      { s = $0; i = ind(s) }", 1)'
 mutate "17 K8s: cluster-admin を見ない" "scripts/audit_grep.sh" "cluster-admin の付与に ★" \
   's = s.replace("{ rr = i + 1; next }", "{ rr = 0; next }", 1)'
 mutate "17 K8s: RBAC の * の並びを見ない" "scripts/audit_grep.sh" "RBAC の verbs の \\* の並びに ★" \

@@ -970,6 +970,7 @@ for fw in iac mobile; do
       starred  "audit_grep[17]: hostPID に ★"                                     "k8s/node-agent.yaml:6:" "$I17"
       starred  "audit_grep[17]: hostIPC に ★"                                     "k8s/node-agent.yaml:7:" "$I17"
       absent   "audit_grep[17]: コメントアウトした hostNetwork を拾わない"         "k8s/node-agent.yaml:8:" "$I17"
+      absent   "audit_grep[17]: マニフェストの行末のコメントの中の語を拾わない"   "k8s/node-agent.yaml:23:" "$I17"
       starred  "audit_grep[17]: hostPath で docker.sock を渡すポッドに ★"         "k8s/node-agent.yaml:20:" "$I17"
       unstarred "audit_grep[17]: ほかの hostPath は並べるだけ"                    "k8s/node-agent.yaml:22:" "$I17"
       unstarred "audit_grep[17]: NodePort を並べる"                               "k8s/node-agent.yaml:30:" "$I17"

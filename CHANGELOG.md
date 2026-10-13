@@ -76,7 +76,10 @@ Linux と macOS の両方で失敗した。2.29.0 で観点の一覧の検査の
 - 検査: 題材 `tests/fixtures/repo-iac`・`repo-mobile` に穴のある側と正しく作った側を足し、正しく作った Android のアプリ（`tests/fixtures/android-gradle`。Gradle だけ）と、
   ロックファイルの組を見る小さな構成（検査がその場で作る）を足した
 
-確かめたこと: `tests/run.sh` の全体、足した変異（`tests/mutations.sh --only` で 0 ロック・17 IaC・17 K8s・17 Docker・18 モバイル）がすべて生きていること、`tests/self-audit.sh`。
+確かめたこと: `tests/run.sh` の全体（検査を 65 件足して 1259 件。失敗 0）、足した変異 39 件（`tests/mutations.sh --only` で 0 ロック・17 IaC・17 K8s・17 Docker・18 モバイル）が
+すべて生きていること、`tests/self-audit.sh`。最初に書いたコメントの変異 2 件は生きていなかった。コメントの除き方が 2 重（行の読み飛ばしと行末の切り取り）で、片方だけを外しても結果が変わらなかった。
+変異を両方を外す形に直した。Kubernetes の判定は語を行頭に置いているので、行頭のコメントは両方を外しても一致しない。行末のコメントの中の語
+（`path: /var/log/app  # …docker.sock…`）を題材に足し、それを拾わないことを確かめる検査にした。
 公式の資料で確かめたのは、Terraform の AWS プロバイダの `aws_db_instance`・`aws_rds_cluster`・`aws_instance` の属性と既定、RDS の API の既定、Kubernetes の Pod Security Standards・
 RBAC の勧め・Service の `NodePort`・`LimitRange`、OCI のイメージの仕様の whiteout と Docker のビルドの秘密、Android のネットワークセキュリティ構成・WebView の危険な設定・
 動的なコードの読み込み・ログの扱い・ビルドの種類、Gradle の依存のロック、NuGet のロックファイル、Go の最小版選択。
