@@ -873,6 +873,49 @@ mutate "eval: 複数行のコメントを消さない" "../tests/eval/prep_ancho
   's = s.replace("        text = pat.sub(blank, text)\n", "        pass\n")'
 mutate "eval: 手掛かりのコメントを消さない" "../tests/eval/prep_anchors.py" "手掛かりのコメントを消す" \
   's = s.replace("                line = line[:m.start()] + line[m.end():]\n", "                pass\n")'
+# 基盤とモバイル・Web の題材を足す作業で見つかった穴（記法の表・名前の手掛かり・全ファイルの確かめ）
+mutate "eval: .tf などの記法を表から外す" "../tests/eval/prep_anchors.py" "基盤とモバイルの定義・設定の手掛かりのコメントを消す" \
+  's = s.replace("    **dict.fromkeys((\x27.tf\x27, \x27.hcl\x27, \x27.tfvars\x27), (HASH + SLASH, [C_BLOCK])),\n", "", 1)'
+mutate "eval: YAML をコメントの無い形式として扱う" "../tests/eval/prep_anchors.py" "基盤とモバイルの定義・設定の手掛かりのコメントを消す" \
+  's = s.replace("\x27.yml\x27, \x27.yaml\x27, ", "", 1).replace("**dict.fromkeys((\x27.json\x27, ", "**dict.fromkeys((\x27.yml\x27, \x27.yaml\x27, \x27.json\x27, ", 1)'
+mutate "eval: ファイルの名前で記法を引かない" "../tests/eval/prep_anchors.py" "拡張子の無いファイルは名前で記法を引く" \
+  's = s.replace("    if n in NAME_SYNTAX:\n        return NAME_SYNTAX[n]\n", "    if False:\n        return NAME_SYNTAX[n]\n", 1)'
+mutate "eval: 1 行目の #! を見ない" "../tests/eval/prep_anchors.py" "1 行目の #! で記法を決める" \
+  's = s.replace("    if first_line.startswith(\x27#!\x27):", "    if False:", 1)'
+mutate "eval: 写しの拡張子の内側を見ない" "../tests/eval/prep_anchors.py" "写しの拡張子" \
+  's = s.replace("WRAPPERS = (\x27.example\x27,", "WRAPPERS = () and (\x27.example\x27,", 1)'
+mutate "eval: .ejs の記法を表から外す" "../tests/eval/prep_anchors.py" "テンプレート" \
+  's = s.replace("\x27.erb\x27, \x27.ejs\x27, \x27.vue\x27", "\x27.erb\x27, \x27.vue\x27", 1)'
+mutate "eval: コメントを段落ごと消さない" "../tests/eval/prep_anchors.py" "続いた行のまとまり" \
+  's = s.replace("                blank_hint_paragraphs(lines, syn, para)\n", "                pass\n", 1)'
+mutate "eval: 正規表現の置き換えを全ファイルに当てない" "../tests/eval/prep_anchors.py" "ファイルを指定せず全ファイルに当てる" \
+  's = s.replace("    for pattern, new in spec.get(\x27replace_regex_everywhere\x27, []):", "    for pattern, new in []:", 1)'
+mutate "eval: 全体の置き換えからロックファイルを外す" "../tests/eval/prep_anchors.py" "ロックファイルも含む" \
+  's = s.replace("        for p in text_files(root, locks=True):\n            before", "        for p in text_files(root):\n            before", 1)'
+mutate "eval: 名前を変えても答えの場所を移さない" "../tests/eval/prep_anchors.py" "答えの場所のパスも新しいパスに移す" \
+  's = s.replace("                loc[\x27file\x27] = moved(loc[\x27file\x27], old.strip(\x27/\x27), new.strip(\x27/\x27))\n", "                pass\n", 1)'
+mutate "eval: 名前を変えても参照を置き換えない" "../tests/eval/prep_anchors.py" "ほかのファイルからの参照も置き換える" \
+  's = s.replace("        t2 = rx.sub(lambda m: new_tok, t)\n", "        t2 = t\n", 1)'
+mutate "eval: 名前の消し残しを確かめない" "../tests/eval/prep_anchors.py" "名前に手掛かりの語が残っていれば止まる" \
+  's = s.replace("            if residual.search(p.name):", "            if False:", 1)'
+mutate "eval: 決まった拡張子の中身だけを確かめる" "../tests/eval/prep_anchors.py" "拡張子に依らず、文字のファイルすべての中身で消し残しを確かめる" \
+  's = s.replace("        b = p.read_bytes()\n", "        b = p.read_bytes() if p.suffix in (\".js\", \".ts\", \".kt\", \".json\", \".md\") else bytes(1)\n", 1)'
+mutate "eval: 記法の表に無い種類を黙って通す" "../tests/eval/prep_anchors.py" "コメントの記法の表に無い種類のファイルに手掛かりの語があれば止まる" \
+  's = s.replace("        sys.exit(\x27コメントの記法の表に無い種類のファイルに", "        print(\x27コメントの記法の表に無い種類のファイルに", 1)'
+mutate "eval: バイナリも中身を確かめる" "../tests/eval/prep_anchors.py" "バイナリのファイルは中身を確かめずに飛ばす" \
+  's = s.replace("    if b\x27\\0\x27 in b:\n        return None\n", "", 1)'
+mutate "eval: ロックファイルも消し残しを確かめる" "../tests/eval/prep_anchors.py" "ロックファイルの依存の注記は、消し残しに数えない" \
+  's = s.replace("(locks or p.name.lower() not in LOCKFILES)", "True", 1)'
+mutate "eval: 作業場所の名前に題材の名前を入れる" "../tests/eval/run-eval.sh" "作業場所のパスに、題材の名前を入れない" \
+  's = s.replace("WORK=\"$BASE/$(date", "WORK=\"$BASE/$TARGET-$(date", 1)'
+mutate "eval: 題材の名前を出力の置き場に控えない" "../tests/eval/run-eval.sh" "出力の置き場に控える" \
+  's = s.replace("printf \x27%s\\n\x27 \"$TARGET\" > \"$OUT/target\"; ", "", 1)'
+mutate "eval: 当てるディレクトリからの相対パスに直さない" "../tests/eval/run-eval.sh" "答えの場所をそこからの相対パスに直す" \
+  's = s.replace("  if [[ -n \"$SUBDIR\" ]]; then\n    python3 - \"$OUT/answers.json\"", "  if false; then\n    python3 - \"$OUT/answers.json\"", 1)'
+mutate "eval: 当てるディレクトリの外の答えでも止めない" "../tests/eval/run-eval.sh" "当てるディレクトリの外にあれば止まる" \
+  's = s.replace("if outside:\n    sys.exit(", "if False:\n    sys.exit(", 1)'
+mutate "eval: 古い出力の作業場所の名前から題材を読まない" "../tests/eval/run-eval.sh" "作業場所の名前から題材を読む" \
+  's = s.replace("  if [[ \"$w\" =~ ^(.+)-[0-9]{8}-[0-9]{6}$ ]]; then", "  if false; then", 1)'
 mutate "eval: ファイル全体の場所も一致に使う" "../tests/eval/score.py" "広い場所は一致に使わない" \
   's = s.replace("    if hi - lo > WIDE:\n        return False\n", "")'
 mutate "eval: 埋め込まれた値の転記を咎めない" "../tests/eval/score.py" "題材に埋め込まれた値の転記を咎める" \

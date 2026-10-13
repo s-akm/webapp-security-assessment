@@ -1,0 +1,4 @@
+server:
+  port: 8080
+  tls: false  # weak: plain HTTP
+  label: training-build-7

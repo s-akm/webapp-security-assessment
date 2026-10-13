@@ -43,7 +43,46 @@
         ]
       ],
       "until": "^\\s*@(Get|Post|Put|Delete|Patch|All)\\("
+    },
+    {
+      "id": "mobile-search",
+      "basis": "例",
+      "category": "Injection",
+      "anchors": [
+        [
+          "mobile/SqlInjectionScreen.kt",
+          "db.rawQuery("
+        ]
+      ]
+    },
+    {
+      "id": "mobile-store",
+      "basis": "例",
+      "category": "Sensitive Data Exposure",
+      "anchors": [
+        [
+          "mobile/vulnerable_cache/Store.kt",
+          "prefs.putString("
+        ]
+      ]
     }
+  ],
+  "paragraph_hint_regex": "VULN:",
+  "replace_regex_everywhere": [
+    [
+      "training-build-\\d+",
+      "build"
+    ]
+  ],
+  "rename": [
+    [
+      "mobile/vulnerable_cache",
+      "mobile/local_cache"
+    ],
+    [
+      "mobile/SqlInjectionScreen.kt",
+      "mobile/SearchScreen.kt"
+    ]
   ],
   "remove": [
     "docs",

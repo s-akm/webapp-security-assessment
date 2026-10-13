@@ -101,9 +101,18 @@ PY
   echo "  $LOCAL/history.tsv と items.tsv に記録した"
 }
 
+# 出力の置き場から題材の名前を読む。題材の名前は、評価するエージェントから見えない出力の置き場（out/target）にだけ控える。
+# 控えの無い古い出力は、作業場所の名前（2.29.0 までは「<題材>-<日時>」）から読む
+target_of() {
+  local out="$1" w
+  if [[ -f "$out/target" ]]; then head -1 "$out/target"; return; fi
+  w="$(basename "$(cd "$out/.." && pwd)")"
+  if [[ "$w" =~ ^(.+)-[0-9]{8}-[0-9]{6}$ ]]; then printf '%s\n' "${BASH_REMATCH[1]}"; else echo '?'; fi
+}
+
 if [[ -n "$SCORE_ONLY" ]]; then
   [[ -f "$SCORE_ONLY/answers.json" && -f "$SCORE_ONLY/result.json" ]] || { echo "answers.json と result.json が $SCORE_ONLY に無い" >&2; exit 2; }
-  score_and_record "$SCORE_ONLY" "$(cat "$SCORE_ONLY/target" 2>/dev/null || echo '?')" "$(cat "$SCORE_ONLY/target_commit" 2>/dev/null || echo '?')"
+  score_and_record "$SCORE_ONLY" "$(target_of "$SCORE_ONLY")" "$(cat "$SCORE_ONLY/target_commit" 2>/dev/null || echo '?')"
   exit 0
 fi
 
@@ -128,7 +137,9 @@ NO_ANSWERS=0; [[ "$PREP" == "-" ]] && NO_ANSWERS=1
 
 # 作業場所はリポジトリの外。題材には本物の形をした鍵や穴のあるコードがあるので、リポジトリに混ぜない
 BASE="${WSA_EVAL_DIR:-${TMPDIR:-/tmp}/wsa-eval}"
-WORK="$BASE/$TARGET-$(date +%Y%m%d-%H%M%S)"
+# 作業場所の名前は日時と乱数だけにする。評価するエージェントは作業ディレクトリのパスを見るので、題材（教材）の名前を入れると
+# 答えを思い出す手掛かりになる。題材の名前は out/target に控え、採点と記録はそこから読む（target_of）
+WORK="$BASE/$(date +%Y%m%d-%H%M%S)-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
 SRC="$WORK/target"; OUT="$WORK/out"
 mkdir -p "$SRC" "$OUT"
 printf '%s\n' "$TARGET" > "$OUT/target"; printf '%s\n' "$COMMIT" > "$OUT/target_commit"
@@ -160,6 +171,27 @@ else
   echo "答えの一覧を取り出し、手掛かりを消す"
   # shellcheck disable=SC2086  # 引数は targets.tsv に書いた語。分けて渡す
   ( cd "$LOCAL" && python3 -B "$PREP_PATH" $PREP_ARGS "$SRC" "$OUT/answers.json" )
+  # 当てるディレクトリ（7 列目）があれば、答えの場所をそこからの相対パスに直す。前処理は写しのプロジェクトルートからの
+  # パスで答えを書くが、エージェントは当てるディレクトリからの相対パスで指摘を書くので、そのままでは採点で一致しない。
+  # 範囲内の答えや対照が当てるディレクトリの外にあれば止める（エージェントから見えない場所を答えにしない）
+  if [[ -n "$SUBDIR" ]]; then
+    python3 - "$OUT/answers.json" "$SUBDIR" <<'PY' || exit 2
+import json, sys
+path, sub = sys.argv[1], sys.argv[2].strip('/')
+d = json.load(open(path, encoding='utf-8'))
+outside = []
+for it in d.get('items') or []:
+    for loc in (it.get('locations') or []) + (it.get('ranges') or []):
+        f = loc['file'][2:] if loc['file'].startswith('./') else loc['file']
+        if f.startswith(sub + '/'):
+            loc['file'] = f[len(sub) + 1:]
+        elif it.get('scope', 'in') == 'in':
+            outside.append(f'{it["id"]}: {f}')
+if outside:
+    sys.exit('答えの場所が当てるディレクトリ（' + sub + '）の外にある: ' + '・'.join(outside[:5]))
+json.dump(d, open(path, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+PY
+  fi
   # 観点の網羅表（coverage.py）が読む置き場へ、答えの一覧を写す（題材ごとに最新の 1 つ）
   mkdir -p "$LOCAL/answers" && cp "$OUT/answers.json" "$LOCAL/answers/$TARGET.json"
 fi

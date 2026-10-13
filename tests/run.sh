@@ -3017,7 +3017,7 @@ absent   "eval[採点]: 切り替えの無い回には切り替えを書かな�
 # 汎用の題材の前処理（prep_anchors.py）。題材ごとの表（アンカー・消すもの・手掛かりの語）は手元に置くので、
 # ここでは架空の題材と表で、答えの行を決められるか・手掛かりのコメントだけを行を保って消せるかを見る
 PA="$TMP/eval-anchors"
-cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PA"
+fixture_cp "$ROOT/tests/fixtures/eval-anchors/target" "$PA"
 if PAO="$(python3 -B "$ROOT/tests/eval/prep_anchors.py" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$PA" "$TMP/eval-pa.json" 2>&1)"; then
   ok "eval[前処理]: アンカーの表で前処理が通る"
 else ng "eval[前処理]: アンカーの表で前処理が通る" "$PAO"; fi
@@ -3054,7 +3054,7 @@ if [[ "$(wc -l < "$PA/app/service.ts" | tr -d ' ')" == "$(wc -l < "$ROOT/tests/f
   ok "eval[前処理]: 正規表現で見つけて置き換える（行は保つ）"
 else ng "eval[前処理]: 正規表現で見つけて置き換える（行は保つ）" "置き換わっていないか、行がずれた"; fi
 # 消し残しがあれば止まる（表の residual_regex に、残っている語を入れて確かめる）
-PB="$TMP/eval-anchors-residual"; cp -R "$ROOT/tests/fixtures/eval-anchors/target" "$PB"
+PB="$TMP/eval-anchors-residual"; fixture_cp "$ROOT/tests/fixtures/eval-anchors/target" "$PB"
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); d['residual_regex']='取得先'; json.dump(d,open(sys.argv[2],'w'),ensure_ascii=False)" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$TMP/eval-pb-spec.json"
 if python3 -B "$ROOT/tests/eval/prep_anchors.py" "$TMP/eval-pb-spec.json" "$PB" "$TMP/eval-pb.json" >/dev/null 2>&1; then
   ng "eval[前処理]: 手掛かりの消し残しがあれば止まる" "止まらなかった"
@@ -3081,6 +3081,70 @@ PY
 )"
 if [[ "$ZH" == "ALL OK" ]]; then ok "eval[前処理]: 手掛かりのコメントだけを消す（7 例）"
 else ng "eval[前処理]: 手掛かりのコメントだけを消す（7 例）" "$ZH"; fi
+# 基盤とモバイルの題材を足す作業で見つかった穴。コメントの記法は種類ごとの表（拡張子・ファイルの名前）で引き、
+# 消し残しは拡張子に依らず、ファイルとディレクトリの名前も含めて確かめる。上の前処理の結果（$PA）で見る
+PAF="$ROOT/tests/fixtures/eval-anchors/target"
+pa_lines_same() { [[ -f "$PA/$1" && "$(wc -l < "$PA/$1" | tr -d ' ')" == "$(wc -l < "$PAF/$1" | tr -d ' ')" ]]; }
+if [[ "$(sed -n 3p "$PA/infra/main.tf" 2>/dev/null)" == '  acl    = "public-read"' && -z "$(sed -n 6p "$PA/infra/main.tf" 2>/dev/null)" ]] \
+   && ! grep -qi 'vulnerab' "$PA/mobile/AndroidManifest.xml" 2>/dev/null && [[ -z "$(sed -n 2p "$PA/mobile/build.gradle" 2>/dev/null)" ]] \
+   && [[ "$(sed -n 3p "$PA/config/app.yaml" 2>/dev/null)" == '  tls: false' ]] \
+   && pa_lines_same infra/main.tf && pa_lines_same mobile/AndroidManifest.xml && pa_lines_same mobile/build.gradle && pa_lines_same config/app.yaml; then
+  ok "eval[前処理]: 基盤とモバイルの定義・設定の手掛かりのコメントを消す（.tf・.xml・.gradle・YAML の行末。行は保つ）"
+else ng "eval[前処理]: 基盤とモバイルの定義・設定の手掛かりのコメントを消す（.tf・.xml・.gradle・YAML の行末。行は保つ）" "消えていないか、コードまで消えたか、行がずれた"; fi
+if [[ -z "$(sed -n 2p "$PA/Dockerfile" 2>/dev/null)" ]] && pa_lines_same Dockerfile; then
+  ok "eval[前処理]: 拡張子の無いファイルは名前で記法を引く（Dockerfile）"
+else ng "eval[前処理]: 拡張子の無いファイルは名前で記法を引く（Dockerfile）" "手掛かりのコメントが残っているか、行がずれた"; fi
+if [[ -z "$(sed -n 2p "$PA/bin/start" 2>/dev/null)" && "$(sed -n 1p "$PA/bin/start" 2>/dev/null)" == '#!/bin/sh' ]] && pa_lines_same bin/start; then
+  ok "eval[前処理]: 名前で引けないファイルは 1 行目の #! で記法を決める"
+else ng "eval[前処理]: 名前で引けないファイルは 1 行目の #! で記法を決める" "手掛かりのコメントが残っているか、#! の行まで消えた"; fi
+if [[ -z "$(sed -n 1p "$PA/config/settings.yml.example" 2>/dev/null)" && -z "$(sed -n 1p "$PA/app/notes.js.backup" 2>/dev/null)" ]] \
+   && pa_lines_same config/settings.yml.example && pa_lines_same app/notes.js.backup; then
+  ok "eval[前処理]: 写しの拡張子（.example・.backup）は内側の拡張子で記法を引く"
+else ng "eval[前処理]: 写しの拡張子（.example・.backup）は内側の拡張子で記法を引く" "手掛かりのコメントが残っている"; fi
+if [[ -z "$(sed -n 2p "$PA/app/views/list.ejs" 2>/dev/null)" ]] && grep -F '<%- item.name %>' "$PA/app/views/list.ejs" >/dev/null 2>&1; then
+  ok "eval[前処理]: テンプレート（.ejs）の手掛かりのコメントを消す"
+else ng "eval[前処理]: テンプレート（.ejs）の手掛かりのコメントを消す" "コメントが残っているか、出力の行まで消えた"; fi
+if [[ -z "$(sed -n 2p "$PA/app/report.ts" 2>/dev/null)" && -z "$(sed -n 3p "$PA/app/report.ts" 2>/dev/null)" ]] \
+   && grep -F 'return `<h1>' <<<"$(sed -n 4p "$PA/app/report.ts" 2>/dev/null)" >/dev/null; then
+  ok "eval[前処理]: 手掛かりの語を含むコメントを、続いた行のまとまり（段落）ごと消す"
+else ng "eval[前処理]: 手掛かりの語を含むコメントを、続いた行のまとまり（段落）ごと消す" "2 行目以降の説明が残っているか、コードまで消えた"; fi
+if ! grep -rF 'training-build' "$PA" >/dev/null 2>&1 && grep -F 'Name = "build"' "$PA/infra/main.tf" >/dev/null 2>&1 \
+   && grep -F '"name": "build"' "$PA/package-lock.json" >/dev/null 2>&1; then
+  ok "eval[前処理]: 正規表現の置き換えを、ファイルを指定せず全ファイルに当てる（ロックファイルも含む）"
+else ng "eval[前処理]: 正規表現の置き換えを、ファイルを指定せず全ファイルに当てる（ロックファイルも含む）" "置き換わっていないファイルがある"; fi
+# 名前の置き換え。答えの場所のパスを新しいパスに移し（行は変えない）、ほかのファイルからの参照も同じ規則で置き換える
+if python3 -c "import json,sys; d={x['id']:x['locations'] for x in json.load(open(sys.argv[1]))['items']}; sys.exit(0 if d['mobile-search']==[{'file':'mobile/SearchScreen.kt','line':6}] and d['mobile-store']==[{'file':'mobile/local_cache/Store.kt','line':4}] else 1)" "$TMP/eval-pa.json" 2>/dev/null \
+   && [[ -f "$PA/mobile/SearchScreen.kt" && ! -e "$PA/mobile/SqlInjectionScreen.kt" && -f "$PA/mobile/local_cache/Store.kt" && ! -e "$PA/mobile/vulnerable_cache" ]]; then
+  ok "eval[前処理]: 名前を変えたら、答えの場所のパスも新しいパスに移す（行は変えない）"
+else ng "eval[前処理]: 名前を変えたら、答えの場所のパスも新しいパスに移す（行は変えない）" "名前が変わっていないか、答えが古いパスを指している"; fi
+if grep -F 'android:name=".SearchScreen"' "$PA/mobile/AndroidManifest.xml" >/dev/null 2>&1 \
+   && grep -F 'import com.example.notes.local_cache.Store' "$PA/mobile/SearchScreen.kt" >/dev/null 2>&1 \
+   && ! grep -rE 'SqlInjectionScreen|vulnerable_cache' "$PA" >/dev/null 2>&1 && [[ "$(wc -l < "$PA/mobile/SearchScreen.kt" 2>/dev/null | tr -d ' ')" == "$(wc -l < "$PAF/mobile/SqlInjectionScreen.kt" | tr -d ' ')" ]]; then
+  ok "eval[前処理]: 名前を変えたら、ほかのファイルからの参照も置き換える（import・マニフェストの登録）"
+else ng "eval[前処理]: 名前を変えたら、ほかのファイルからの参照も置き換える（import・マニフェストの登録）" "古い名前の参照が残っている"; fi
+if grep -F 'vulnerabilities' "$PA/package-lock.json" >/dev/null 2>&1 && [[ -s "$TMP/eval-pa.json" ]]; then
+  ok "eval[前処理]: ロックファイルの依存の注記は、消し残しに数えない"
+else ng "eval[前処理]: ロックファイルの依存の注記は、消し残しに数えない" "前処理が止まったか、題材の写しが変わった"; fi
+# 架空の題材の写しに 1 つファイルを足して前処理する。<名前> <足すファイル> <中身（printf の %b）>
+pa_case() {
+  local d="$TMP/eval-anchors-$1"; rm -rf "$d"; fixture_cp "$PAF" "$d"; mkdir -p "$(dirname "$d/$2")"; printf '%b' "$3" > "$d/$2"
+  python3 -B "$ROOT/tests/eval/prep_anchors.py" "$ROOT/tests/fixtures/eval-anchors/spec.json" "$d" "$TMP/eval-anchors-$1.json" 2>&1
+}
+PCN="$(pa_case name app/injection_helpers/util.js 'export const a = 1\n')"; PCN_RC=$?
+if [[ $PCN_RC -ne 0 ]] && grep -F 'app/injection_helpers（名前）' <<<"$PCN" >/dev/null; then
+  ok "eval[前処理]: ファイルとディレクトリの名前に手掛かりの語が残っていれば止まる"
+else ng "eval[前処理]: ファイルとディレクトリの名前に手掛かりの語が残っていれば止まる" "終了コード $PCN_RC: $(tr '\n' ' ' <<<"$PCN" | cut -c1-160)"; fi
+PCP="$(pa_case plist mobile/Info.plist '<plist><string>vulnerable</string></plist>\n')"; PCP_RC=$?
+if [[ $PCP_RC -ne 0 ]] && grep -F 'mobile/Info.plist:1' <<<"$PCP" >/dev/null; then
+  ok "eval[前処理]: 拡張子に依らず、文字のファイルすべての中身で消し残しを確かめる（.plist）"
+else ng "eval[前処理]: 拡張子に依らず、文字のファイルすべての中身で消し残しを確かめる（.plist）" "終了コード $PCP_RC: $(tr '\n' ' ' <<<"$PCP" | cut -c1-160)"; fi
+PCU="$(pa_case unknown app/notes.weird 'see the weak point\n')"; PCU_RC=$?
+if [[ $PCU_RC -ne 0 ]] && grep -F 'コメントの記法の表に無い種類のファイル' <<<"$PCU" >/dev/null && grep -F 'app/notes.weird:1' <<<"$PCU" >/dev/null; then
+  ok "eval[前処理]: コメントの記法の表に無い種類のファイルに手掛かりの語があれば止まる"
+else ng "eval[前処理]: コメントの記法の表に無い種類のファイルに手掛かりの語があれば止まる" "終了コード $PCU_RC: $(tr '\n' ' ' <<<"$PCU" | cut -c1-160)"; fi
+PCB="$(pa_case binary assets/blob.bin '\0vulnerable injection\0')"; PCB_RC=$?
+if [[ $PCB_RC -eq 0 ]]; then ok "eval[前処理]: バイナリのファイルは中身を確かめずに飛ばす"
+else ng "eval[前処理]: バイナリのファイルは中身を確かめずに飛ばす" "$(tr '\n' ' ' <<<"$PCB" | cut -c1-160)"; fi
 
 # 観点の網羅表（coverage.py）。答えの分類と検査の名前の区分を、スキルの観点に振り分けて数える。題材の名前は出さない
 CV="$TMP/coverage"; mkdir -p "$CV/answers"
@@ -3138,6 +3202,50 @@ else ng "eval: audit_grep をスキルを置く前に実行する" "スキルを
 if awk 'NF { last2 = last1; last1 = $0 } /^set -euo pipefail$/ { s = NR } /^\{$/ && s && !b { b = NR } END { exit !(b && last2 == "exit" && last1 == "}") }' "$ROOT/tests/eval/run-eval.sh"; then
   ok "eval: run-eval.sh を実行の前に最後まで読み切る"
 else ng "eval: run-eval.sh を実行の前に最後まで読み切る" "全体を { … exit; } に入れていない。実行中にファイルを直すと、ずれた位置から読む"; fi
+# 作業場所の名前と、当てるディレクトリ（targets.tsv の 7 列目）。架空の題材を手元の git に置き、--prep-only で
+# 前処理まで実行する（取得元は file:// なので、ネットワークには出ない）
+ER="$TMP/eval-run-repo"; EL="$TMP/eval-run-local"; ED="$TMP/eval-run-work"; rm -rf "$ER" "$EL" "$ED"; mkdir -p "$EL" "$ED"
+fixture_cp "$ROOT/tests/fixtures/eval-anchors/target" "$ER"
+( cd "$ER" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git init -q . \
+  && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git add -A -f \
+  && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -c user.name=t -c user.email=t@example.invalid \
+       -c commit.gpgsign=false -c core.hooksPath=/dev/null commit -q -m fixture ) >/dev/null 2>&1
+ESHA="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C "$ER" rev-parse HEAD 2>/dev/null)"
+# 表は 2 つ。app/ の中の答えだけのもの（当てるディレクトリを app にして通る）と、app/ の外にも答えがあるもの（止まる）
+python3 - "$ROOT/tests/fixtures/eval-anchors/spec.json" "$EL" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding='utf-8'))
+json.dump(d, open(sys.argv[2] + '/all.json', 'w', encoding='utf-8'), ensure_ascii=False)
+d['items'] = [x for x in d['items'] if all(a[0].startswith('app/') for a in x['anchors'])]
+json.dump(d, open(sys.argv[2] + '/app.json', 'w', encoding='utf-8'), ensure_ascii=False)
+PY
+printf 'canary-eval-subject\tfile://%s\t%s\tMIT\tprep_anchors.py app.json\t\tapp\ncanary-eval-outside\tfile://%s\t%s\tMIT\tprep_anchors.py all.json\t\tapp\n' \
+  "$ER" "$ESHA" "$ER" "$ESHA" > "$EL/targets.tsv"
+ERO="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE WSA_EVAL_LOCAL="$EL" WSA_EVAL_DIR="$ED" bash "$ROOT/tests/eval/run-eval.sh" canary-eval-subject --prep-only 2>&1)"; ERC=$?
+EW="$(ls "$ED" 2>/dev/null | head -1)"
+if [[ $ERC -eq 0 && "$(ls "$ED" | wc -l | tr -d ' ')" == 1 && "$EW" =~ ^[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$ ]]; then
+  ok "eval: 評価するエージェントから見える作業場所のパスに、題材の名前を入れない"
+else ng "eval: 評価するエージェントから見える作業場所のパスに、題材の名前を入れない" "終了コード ${ERC}、作業場所 ${EW:-無し}: $(tr '\n' ' ' <<<"$ERO" | tail -c 240)"; fi
+if [[ "$(cat "$ED/$EW/out/target" 2>/dev/null)" == canary-eval-subject ]]; then
+  ok "eval: 題材の名前は、エージェントから見えない出力の置き場に控える"
+else ng "eval: 題材の名前は、エージェントから見えない出力の置き場に控える" "out/target が無いか、中身が違う"; fi
+if python3 -c "import json,sys; d={x['id']:x for x in json.load(open(sys.argv[1]))['items']}; sys.exit(0 if d['sqli-search']['locations']==[{'file':'server.js','line':5}] and sorted(r['file'] for r in d['run-handler']['ranges'])==['routes.ts','service.ts'] else 1)" "$ED/$EW/out/answers.json" 2>/dev/null; then
+  ok "eval: 当てるディレクトリを指定したら、答えの場所をそこからの相対パスに直す"
+else ng "eval: 当てるディレクトリを指定したら、答えの場所をそこからの相対パスに直す" "答えがプロジェクトルートからのパスのまま"; fi
+ERO2="$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE WSA_EVAL_LOCAL="$EL" WSA_EVAL_DIR="$ED" bash "$ROOT/tests/eval/run-eval.sh" canary-eval-outside --prep-only 2>&1)"; ERC2=$?
+if [[ $ERC2 -ne 0 ]] && grep -F '答えの場所が当てるディレクトリ（app）の外にある' <<<"$ERO2" >/dev/null; then
+  ok "eval: 範囲内の答えが当てるディレクトリの外にあれば止まる"
+else ng "eval: 範囲内の答えが当てるディレクトリの外にあれば止まる" "終了コード ${ERC2}: $(tr '\n' ' ' <<<"$ERO2" | tail -c 200)"; fi
+# 2.29.0 までの作業場所は「<題材>-<日時>」の名前。題材の名前の控え（out/target）の無い古い出力も、採点し直して記録できる
+OLDR="$TMP/eval-old-run"; OLDL="$TMP/eval-old-local"; rm -rf "$OLDR" "$OLDL"; mkdir -p "$OLDR/canary-old-subject-20260101-120000/out" "$OLDL"
+printf '{"items": [{"id": "A", "scope": "in", "category": "x", "locations": [{"file": "a.js", "line": 1}], "ranges": []}], "secrets": []}\n' \
+  > "$OLDR/canary-old-subject-20260101-120000/out/answers.json"
+printf '{"structured_output": {"findings": [{"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y", "locations": [{"file": "a.js", "line": 1}]}], "unconfirmed": [{"id": "U-1", "text": "a", "blocks": []}], "maintain": []}}\n' \
+  > "$OLDR/canary-old-subject-20260101-120000/out/result.json"
+WSA_EVAL_LOCAL="$OLDL" bash "$ROOT/tests/eval/run-eval.sh" --score-only "$OLDR/canary-old-subject-20260101-120000/out" --record >/dev/null 2>&1
+if [[ "$(awk -F'\t' 'NR == 2 { print $4 }' "$OLDL/history.tsv" 2>/dev/null)" == canary-old-subject ]]; then
+  ok "eval: --score-only で、題材の名前の控えが無い古い出力は、作業場所の名前から題材を読む"
+else ng "eval: --score-only で、題材の名前の控えが無い古い出力は、作業場所の名前から題材を読む" "history.tsv の題材が $(awk -F'\t' 'NR == 2 { print $4 }' "$OLDL/history.tsv" 2>/dev/null || echo 無し)"; fi
 
 # 版の比較（compare.py）。版を上げてよいかの判定に使うので、劣後を見逃さないか・足りない回数で「劣後なし」と言わないかを確かめる。
 # 架空の題材 t1 で、旧 9.9.0 と新 9.9.1 を比べる。コミットは git で解けない語にして、版の名前でまとめさせる
