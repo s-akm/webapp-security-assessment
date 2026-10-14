@@ -908,12 +908,16 @@ mutate "eval: ロックファイルも消し残しを確かめる" "../tests/eva
   's = s.replace("(locks or p.name.lower() not in LOCKFILES)", "True", 1)'
 mutate "eval: 答えの一覧をエージェントの置き場の中に置く" "../tests/eval/run-eval.sh" "エージェントに見せる置き場（ws）の外に置く" \
   's = s.replace("SRC=\"$WS/target\"; OUT=\"$WORK/out\"", "SRC=\"$WS/target\"; OUT=\"$WS/out\"", 1)'
-mutate "eval: 読む道具をパスの指定なしで許す" "../tests/eval/run-eval.sh" "読む道具をパスの指定なしで許さない" \
-  's = s.replace("  --allowedTools Skill ", "  --allowedTools Read Grep Glob Skill ", 1)'
-mutate "eval: Bash の cat を許す" "../tests/eval/run-eval.sh" "読む道具をパスの指定なしで許さない" \
-  's = s.replace("  --allowedTools Skill \"Bash(bash *audit_grep.sh*)\"", "  --allowedTools Skill \"Bash(bash *audit_grep.sh*)\" \"Bash(cat *)\"", 1)'
-mutate "eval: 出力の置き場を読む道具を拒否しない" "../tests/eval/run-eval.sh" "出力の置き場を読む道具を拒否する" \
-  's = s.replace("\"Read(/$OUT/**)\" \"Read(/$OUT_REAL/**)\" ", "", 1)'
+mutate "eval: 読む道具をパスの指定なしで許す" "../tests/eval/permissions.sh" "読む道具をパスの指定なしで許さない" \
+  's = s.replace("--allowedTools Skill ", "--allowedTools Read Grep Glob Skill ", 1)'
+mutate "eval: Bash の cat を許す" "../tests/eval/permissions.sh" "読む道具をパスの指定なしで許さない" \
+  's = s.replace("--allowedTools Skill \"Bash(bash *audit_grep.sh*)\"", "--allowedTools Skill \"Bash(bash *audit_grep.sh*)\" \"Bash(cat *)\"", 1)'
+mutate "eval: 出力の置き場を読む道具を拒否しない" "../tests/eval/permissions.sh" "出力の置き場を読む道具を拒否する" \
+  's = s.replace("\"Read(/$out/**)\" \"Read(/$out_real/**)\"", "", 1)'
+mutate "eval: 評価の実行が許可のファイルを使わない" "../tests/eval/run-eval.sh" "同じ許可（permissions.sh）を使う" \
+  's = s.replace("  \"${PERM_ARGS[@]}\")", "  --permission-mode dontAsk --allowedTools Read Skill)", 1)'
+mutate "eval: Grep にパス付きの拒否の規則を書く" "../tests/eval/permissions.sh" "Grep・Glob にパス付きの拒否の規則を書かない" \
+  's = s.replace("\"Read(/$out/**)\" \"Read(/$out_real/**)\"", "\"Read(/$out/**)\" \"Read(/$out_real/**)\" \"Grep(/$out/**)\"", 1)'
 mutate "eval: 答えの置き場に触れた回も採点する" "../tests/eval/run-eval.sh" "当て直しの前の記録でも、採点も記録もしない" \
   's = s.replace("[[ -f \"${trs[0]}\" ]] && ! python3", "[[ -f \"${trs[0]}\" ]] && false && ! python3", 1)'
 mutate "eval: 当て直しの前の記録を答えの確かめから外す" "../tests/eval/run-eval.sh" "当て直しの前の記録でも、採点も記録もしない" \

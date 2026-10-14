@@ -3252,11 +3252,18 @@ else ng "eval: --score-only で、題材の名前の控えが無い古い出力�
 if [[ -f "$ED/$EW/ws/target/app/server.js" && -f "$ED/$EW/out/answers.json" && ! -e "$ED/$EW/ws/out" ]]; then
   ok "eval: 答えの一覧は、エージェントに見せる置き場（ws）の外に置く"
 else ng "eval: 答えの一覧は、エージェントに見せる置き場（ws）の外に置く" "$(cd "$ED/$EW" 2>/dev/null && find . -maxdepth 2 | tr '\n' ' ')"; fi
-RE_ALLOW="$(awk '/--allowedTools/ { print; exit }' "$ROOT/tests/eval/run-eval.sh")"
+RE_ALLOW="$(awk '/--allowedTools/ { print; exit }' "$ROOT/tests/eval/permissions.sh")"
 if [[ -n "$RE_ALLOW" ]] && ! grep -E '(^|[[:space:]])(Read|Grep|Glob)([[:space:]]|$)|Bash\((cat|head|tail|sed|ls|grep|wc|find)[ *]' <<<"$RE_ALLOW" >/dev/null; then
   ok "eval: 読む道具をパスの指定なしで許さない（作業場所の外の答えの一覧まで読める）"
 else ng "eval: 読む道具をパスの指定なしで許さない（作業場所の外の答えの一覧まで読める）" "$RE_ALLOW"; fi
-contains "eval: 出力の置き場を読む道具を拒否する" '"Read(/$OUT/**)" "Read(/$OUT_REAL/**)"' "$(cat "$ROOT/tests/eval/run-eval.sh")"
+contains "eval: 出力の置き場を読む道具を拒否する" '"Read(/$out/**)" "Read(/$out_real/**)"' "$(cat "$ROOT/tests/eval/permissions.sh")"
+if grep -F 'source "$EVAL/permissions.sh"' "$ROOT/tests/eval/run-eval.sh" >/dev/null && grep -F '"${PERM_ARGS[@]}")' "$ROOT/tests/eval/run-eval.sh" >/dev/null \
+   && grep -F 'source "$EVAL/permissions.sh"' "$ROOT/tests/eval/probe-permissions.sh" >/dev/null && grep -F '"${PERM_ARGS[@]}"' "$ROOT/tests/eval/probe-permissions.sh" >/dev/null; then
+  ok "eval: 評価の実行と許可の確かめが、同じ許可（permissions.sh）を使う"
+else ng "eval: 評価の実行と許可の確かめが、同じ許可（permissions.sh）を使う" "run-eval.sh か probe-permissions.sh が permissions.sh の PERM_ARGS を使っていない"; fi
+if ! grep -E '"(Grep|Glob)\(' "$ROOT/tests/eval/permissions.sh" >/dev/null; then
+  ok "eval: Grep・Glob にパス付きの拒否の規則を書かない（道具ごと使えなくなる版がある）"
+else ng "eval: Grep・Glob にパス付きの拒否の規則を書かない（道具ごと使えなくなる版がある）" "permissions.sh に Grep(…) か Glob(…) がある"; fi
 LK="$TMP/eval-leak"; rm -rf "$LK"; mkdir -p "$LK/run/out" "$LK/local"
 printf '{"items": [{"id": "A", "scope": "in", "category": "x", "locations": [{"file": "a.js", "line": 1}], "ranges": []}], "secrets": []}\n' > "$LK/run/out/answers.json"
 printf '{"structured_output": {"findings": [{"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y", "locations": [{"file": "a.js", "line": 1}]}], "unconfirmed": [{"id": "U-1", "text": "a", "blocks": []}], "maintain": []}}\n' > "$LK/run/out/result.json"

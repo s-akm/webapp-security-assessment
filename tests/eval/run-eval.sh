@@ -269,20 +269,15 @@ if sys.argv[5]:
           "- 新しく見つけたものは、前回の続きの番号から振る\n")
 print(t, end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt" "$NO_ANSWERS" "${PREVIOUS:+$EVID/previous-register.json}")"
 printf '%s\n' "$prompt" > "$OUT/prompt.txt"
-# 拒否の規則のパスは、/var と /private/var のように書き方が分かれるので、実体のパスでも並べる
-OUT_REAL="$(cd "$OUT" && pwd -P)"
+# 許可は permissions.sh にまとめる（probe-permissions.sh も同じものを使い、CLI を更新したら実際に働くかを確かめる）
+# shellcheck source=permissions.sh
+source "$EVAL/permissions.sh"
+eval_permission_args "$EVID" "$OUT"
 args=(-p "$prompt"
   --output-format stream-json --verbose --json-schema "$(cat "$EVAL/schema.json")"
-  --add-dir "$EVID"
   --setting-sources project --strict-mcp-config --no-session-persistence
   --max-budget-usd "$BUDGET"
-  --permission-mode dontAsk
-  # 読めるのは、作業ディレクトリ（題材。スキルもこの中に置く）と --add-dir の事前の洗い出しの出力だけにする。
-  # Read・Grep・Glob をパスの指定なしで許すと、作業場所の外の答えの一覧（out/answers.json）まで読める。
-  # Bash の cat・head・sed などはパスで絞れないので許さない（読むことは Read で足りる）。許すのはスキルと事前の洗い出しのスクリプトだけ
-  --allowedTools Skill "Bash(bash *audit_grep.sh*)"
-  --disallowedTools WebFetch WebSearch Write Edit NotebookEdit Agent
-    "Read(/$OUT/**)" "Read(/$OUT_REAL/**)" "Grep(/$OUT/**)" "Grep(/$OUT_REAL/**)" "Glob(/$OUT/**)" "Glob(/$OUT_REAL/**)")
+  "${PERM_ARGS[@]}")
 args+=(--model "$MODEL")
 # 実行の記録（stream-json）を残し、最後の result の行を採点に使う。記録からスキルの使われ方も数える
 # 指摘が 0 件で終わった回（モデル側の安全上の判定で台帳の書き出しが途中から止められた回）は、同じモデルで当て直す（--retries。既定 1 回）。
