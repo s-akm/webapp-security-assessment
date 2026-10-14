@@ -908,6 +908,12 @@ mutate "eval: ロックファイルも消し残しを確かめる" "../tests/eva
   's = s.replace("(locks or p.name.lower() not in LOCKFILES)", "True", 1)'
 mutate "eval: 答えの一覧をエージェントの置き場の中に置く" "../tests/eval/run-eval.sh" "エージェントに見せる置き場（ws）の外に置く" \
   's = s.replace("SRC=\"$WS/target\"; OUT=\"$WORK/out\"", "SRC=\"$WS/target\"; OUT=\"$WS/out\"", 1)'
+mutate "資料: 仮定した運用で問題ありにする決まりを消す" "references/04-findings-register.md" "確かめていない運用を仮定して問題ありにせず" \
+  's = s.replace("**確かめていない運用を仮定して 問題あり にしない。**", "**運用も考える。**", 1)'
+mutate "eval: 題材のファイルの一覧を作らない" "../tests/eval/run-eval.sh" "題材のファイルの一覧を、スキルを置く前に作って" \
+  's = s.replace("-type f -print | sed \x27s|^\\./||\x27 | LC_ALL=C sort ) > \"$EVID/files.txt\"", "-type f -print | sed \x27s|^\\./||\x27 | LC_ALL=C sort ) > /dev/null", 1)'
+mutate "eval: 一覧の置き場を指示に書かない" "../tests/eval/prompt.md" "題材のファイルの一覧の置き場を示す" \
+  's = s.replace("- 題材のファイルの一覧は {{files}} にある", "- 題材のファイルの一覧は別にある", 1)'
 mutate "eval: 読む道具をパスの指定なしで許す" "../tests/eval/permissions.sh" "読む道具をパスの指定なしで許さない" \
   's = s.replace("--allowedTools Skill ", "--allowedTools Read Grep Glob Skill ", 1)'
 mutate "eval: Bash の cat を許す" "../tests/eval/permissions.sh" "読む道具をパスの指定なしで許さない" \

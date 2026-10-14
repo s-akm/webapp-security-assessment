@@ -219,6 +219,10 @@ if [[ -n "$SKILL_REF" ]]; then
   SKILL_SRC="$WORK/skill-ref/skill"; SKILL_VERSION_FILE="$WORK/skill-ref/VERSION"
 fi
 ( cd "$APP" && bash "$SKILL_SRC/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
+# 題材のファイルの一覧。エージェントは最初に一覧を取ろうとするが、cd・;・パイプを組み合わせた命令は許可の判定で止められることがあり
+# （2026-10-14 の実測で 10 回中 2 回）、止められると一覧を取れないまま、事前の洗い出しに名前の出たファイルだけを読む（5 ファイルを開かず 12 件を見落とした）。
+# スキルを置く前に作り、指示で置き場を示す。node_modules と .git は並べない
+( cd "$APP" && find . \( -name node_modules -o -name .git \) -prune -o -type f -print | sed 's|^\./||' | LC_ALL=C sort ) > "$EVID/files.txt"
 # 再評価の回。前回の回の台帳（structured_output の指摘と未確認事項）を、評価の置き場に「前回の台帳」として置く
 if [[ -n "$PREVIOUS" ]]; then
   prev_json="$PREVIOUS"; [[ -d "$prev_json" ]] && prev_json="$prev_json/result.json"
@@ -257,6 +261,7 @@ premise_file="$LOCAL/$PREMISE"
 [[ -f "$premise_file" ]] || { echo "前提のファイルが無い: $premise_file" >&2; exit 2; }
 prompt="$(python3 -c 'import sys
 t = open(sys.argv[1], encoding="utf-8").read().replace("{{premise}}\n", open(sys.argv[2], encoding="utf-8").read()).replace("{{audit_grep}}", sys.argv[3])
+t = t.replace("{{files}}", sys.argv[3].rsplit("/", 1)[0] + "/files.txt")
 if sys.argv[4] == "1":
     # 答えの無い題材は教材ではない。冒頭の 1 行だけを差し替える
     t = "このディレクトリは、オープンソースで公開されているソフトウェアのリポジトリを、評価のために手元へ写したものです。\n" + t.split("\n", 1)[1]

@@ -135,6 +135,10 @@ else ng "成果物に攻撃の手順と動く攻撃の文字列を書かない�
 
 # 複数のハンドラにまたがる指摘の場所は、ハンドラごとに分けて並べる（実地の評価で、コントローラー全体を 1 つの範囲で示し、
 # どのハンドラを直せばよいかが読めない指摘があった）
+if grep -F '確かめていない運用を仮定して 問題あり にしない' "$SKILL/references/04-findings-register.md" >/dev/null \
+   && grep -F '確かめていない運用を仮定して「問題あり」にしない' "$SKILL/SKILL.md" >/dev/null; then
+  ok "資料: 確かめていない運用を仮定して問題ありにせず、判断保留と未確認事項にする（04・SKILL.md）"
+else ng "資料: 確かめていない運用を仮定して問題ありにせず、判断保留と未確認事項にする（04・SKILL.md）" "04 か SKILL.md から決まりが消えた"; fi
 if grep -qF '複数のハンドラにまたがる指摘は、1 つの範囲にまとめず、ハンドラごとに場所を分けて並べる' "$SKILL/references/04-findings-register.md"; then
   ok "複数のハンドラにまたがる指摘の場所を、ハンドラごとに分けると決めている"
 else ng "複数のハンドラにまたがる指摘の場所を、ハンドラごとに分けると決めている" "04 の「台帳の列」の該当箇所から決まりが消えている"; fi
@@ -3252,6 +3256,13 @@ else ng "eval: --score-only で、題材の名前の控えが無い古い出力�
 if [[ -f "$ED/$EW/ws/target/app/server.js" && -f "$ED/$EW/out/answers.json" && ! -e "$ED/$EW/ws/out" ]]; then
   ok "eval: 答えの一覧は、エージェントに見せる置き場（ws）の外に置く"
 else ng "eval: 答えの一覧は、エージェントに見せる置き場（ws）の外に置く" "$(cd "$ED/$EW" 2>/dev/null && find . -maxdepth 2 | tr '\n' ' ')"; fi
+EFL="$ED/$EW/ws/evidence/files.txt"
+if grep -Fx 'server.js' "$EFL" >/dev/null 2>&1 && ! grep -F '.claude/' "$EFL" >/dev/null 2>&1 && [[ -f "$ED/$EW/ws/target/app/.claude/skills/webapp-security-assessment/SKILL.md" ]]; then
+  ok "eval: 題材のファイルの一覧を、スキルを置く前に作って洗い出しの置き場に置く"
+else ng "eval: 題材のファイルの一覧を、スキルを置く前に作って洗い出しの置き場に置く" "$(head -c 200 "$EFL" 2>/dev/null | tr '\n' ' ' || echo 一覧が無い)"; fi
+if grep -F '{{files}}' "$ROOT/tests/eval/prompt.md" >/dev/null && grep -F 't.replace("{{files}}"' "$ROOT/tests/eval/run-eval.sh" >/dev/null; then
+  ok "eval: 評価の指示で、題材のファイルの一覧の置き場を示す"
+else ng "eval: 評価の指示で、題材のファイルの一覧の置き場を示す" "prompt.md に {{files}} が無いか、run-eval.sh が差し込んでいない"; fi
 RE_ALLOW="$(awk '/--allowedTools/ { print; exit }' "$ROOT/tests/eval/permissions.sh")"
 if [[ -n "$RE_ALLOW" ]] && ! grep -E '(^|[[:space:]])(Read|Grep|Glob)([[:space:]]|$)|Bash\((cat|head|tail|sed|ls|grep|wc|find)[ *]' <<<"$RE_ALLOW" >/dev/null; then
   ok "eval: 読む道具をパスの指定なしで許さない（作業場所の外の答えの一覧まで読める）"
