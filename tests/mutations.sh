@@ -908,6 +908,8 @@ mutate "eval: ロックファイルも消し残しを確かめる" "../tests/eva
   's = s.replace("(locks or p.name.lower() not in LOCKFILES)", "True", 1)'
 mutate "eval: 答えの一覧をエージェントの置き場の中に置く" "../tests/eval/run-eval.sh" "エージェントに見せる置き場（ws）の外に置く" \
   's = s.replace("SRC=\"$WS/target\"; OUT=\"$WORK/out\"", "SRC=\"$WS/target\"; OUT=\"$WS/out\"", 1)'
+mutate "資料: 危ない書き方を運用次第で判断保留にする" "references/04-findings-register.md" "危ない書き方は運用を問わず問題ありにする" \
+  's = s.replace("**危ない書き方そのものは、今の運用で悪用できなくても 問題あり にする。**", "**危ない書き方も、運用が分からなければ判断保留にする。**", 1)'
 mutate "資料: 仮定した運用で問題ありにする決まりを消す" "references/04-findings-register.md" "確かめていない運用を仮定して問題ありにせず" \
   's = s.replace("**確かめていない運用を仮定して 問題あり にしない。**", "**運用も考える。**", 1)'
 mutate "eval: 題材のファイルの一覧を作らない" "../tests/eval/run-eval.sh" "題材のファイルの一覧を、スキルを置く前に作って" \
