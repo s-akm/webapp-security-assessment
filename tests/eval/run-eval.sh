@@ -272,7 +272,7 @@ printf '%s\n' "$prompt" > "$OUT/prompt.txt"
 # 許可は permissions.sh にまとめる（probe-permissions.sh も同じものを使い、CLI を更新したら実際に働くかを確かめる）
 # shellcheck source=permissions.sh
 source "$EVAL/permissions.sh"
-eval_permission_args "$EVID" "$OUT"
+eval_permission_args "$WS" "$OUT"
 args=(-p "$prompt"
   --output-format stream-json --verbose --json-schema "$(cat "$EVAL/schema.json")"
   --setting-sources project --strict-mcp-config --no-session-persistence

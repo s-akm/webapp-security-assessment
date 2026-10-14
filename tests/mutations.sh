@@ -916,6 +916,8 @@ mutate "eval: 出力の置き場を読む道具を拒否しない" "../tests/eva
   's = s.replace("\"Read(/$out/**)\" \"Read(/$out_real/**)\"", "", 1)'
 mutate "eval: 評価の実行が許可のファイルを使わない" "../tests/eval/run-eval.sh" "同じ許可（permissions.sh）を使う" \
   's = s.replace("  \"${PERM_ARGS[@]}\")", "  --permission-mode dontAsk --allowedTools Read Skill)", 1)'
+mutate "eval: 事前の洗い出しの置き場だけを読める範囲にする" "../tests/eval/run-eval.sh" "ws）全体を読める範囲にする" \
+  's = s.replace("eval_permission_args \"$WS\" \"$OUT\"", "eval_permission_args \"$EVID\" \"$OUT\"", 1)'
 mutate "eval: Grep にパス付きの拒否の規則を書く" "../tests/eval/permissions.sh" "Grep・Glob にパス付きの拒否の規則を書かない" \
   's = s.replace("\"Read(/$out/**)\" \"Read(/$out_real/**)\"", "\"Read(/$out/**)\" \"Read(/$out_real/**)\" \"Grep(/$out/**)\"", 1)'
 mutate "eval: 答えの置き場に触れた回も採点する" "../tests/eval/run-eval.sh" "当て直しの前の記録でも、採点も記録もしない" \

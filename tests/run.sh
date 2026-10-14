@@ -3261,6 +3261,9 @@ if grep -F 'source "$EVAL/permissions.sh"' "$ROOT/tests/eval/run-eval.sh" >/dev/
    && grep -F 'source "$EVAL/permissions.sh"' "$ROOT/tests/eval/probe-permissions.sh" >/dev/null && grep -F '"${PERM_ARGS[@]}"' "$ROOT/tests/eval/probe-permissions.sh" >/dev/null; then
   ok "eval: 評価の実行と許可の確かめが、同じ許可（permissions.sh）を使う"
 else ng "eval: 評価の実行と許可の確かめが、同じ許可（permissions.sh）を使う" "run-eval.sh か probe-permissions.sh が permissions.sh の PERM_ARGS を使っていない"; fi
+if grep -F 'eval_permission_args "$WS" "$OUT"' "$ROOT/tests/eval/run-eval.sh" >/dev/null && grep -F -- '--add-dir "$ws"' "$ROOT/tests/eval/permissions.sh" >/dev/null; then
+  ok "eval: エージェントに見せる置き場（ws）全体を読める範囲にする（題材と洗い出しの共通の親で一覧を取れる）"
+else ng "eval: エージェントに見せる置き場（ws）全体を読める範囲にする（題材と洗い出しの共通の親で一覧を取れる）" "--add-dir が ws/ でない"; fi
 if ! grep -E '"(Grep|Glob)\(' "$ROOT/tests/eval/permissions.sh" >/dev/null; then
   ok "eval: Grep・Glob にパス付きの拒否の規則を書かない（道具ごと使えなくなる版がある）"
 else ng "eval: Grep・Glob にパス付きの拒否の規則を書かない（道具ごと使えなくなる版がある）" "permissions.sh に Grep(…) か Glob(…) がある"; fi
