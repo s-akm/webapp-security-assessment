@@ -15,6 +15,9 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="$ROOT/skill"
+# git worktree の作業ツリーを .git ごと写した写しでは止まる。写しは索引・HEAD を元の作業ツリーと共有し、
+# 下の git ls-files などが写しでなく元の作業ツリーの索引を読む（tests/check-worktree.sh）
+bash "$ROOT/tests/check-worktree.sh" "$ROOT" || exit 2
 TMP="$ROOT/tests/tmp"
 rm -rf "$TMP"; mkdir -p "$TMP"
 
@@ -146,9 +149,15 @@ if grep -qF '複数のハンドラにまたがる指摘は、1 つの範囲に�
 else ng "複数のハンドラにまたがる指摘の場所を、ハンドラごとに分けると決めている" "04 の「台帳の列」の該当箇所から決まりが消えている"; fi
 
 # 題材の依存の定義ファイルは .fixture を付けて置く（fixture_cp の説明を参照）
-raw="$(git -C "$ROOT" ls-files tests/fixtures 2>/dev/null | grep -E '(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Gemfile|Gemfile\.lock|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|pom\.xml|Package\.swift)$' || true)"
-if [[ -z "$raw" ]]; then ok "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）"
-else ng "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）" "$(printf '%s' "$raw" | tr '\n' ' ')"; fi
+# git の管理下でない（.git を除いた写し、コンテナに作業ツリーだけを渡した、など）ときは数えられないので、省略と数える。
+# 以前は git の失敗を「一覧が空」と読み、何も確かめずに通していた
+if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+  raw="$(git -C "$ROOT" ls-files tests/fixtures 2>/dev/null | grep -E '(^|/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Gemfile|Gemfile\.lock|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|composer\.json|composer\.lock|pom\.xml|Package\.swift)$' || true)"
+  if [[ -z "$raw" ]]; then ok "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）"
+  else ng "題材の依存の定義ファイルに .fixture が付いている（依存関係グラフに拾わせない）" "$(printf '%s' "$raw" | tr '\n' ' ')"; fi
+else
+  skip "題材の依存の定義ファイルの .fixture: git の管理下でないので、追跡しているファイルを数えられない"
+fi
 
 # スクリプトの実行権限。拡張子で列挙すると新しい種類を足したときに漏れるため、
 # scripts/ 配下のファイルをすべて対象にする（ここには実行するものしか置かない）。
@@ -256,6 +265,8 @@ if git -C "$ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   else
     skip "題材を特定できる語: 手元の語の一覧（ngwords.local・tests/eval/local/）が無い"
   fi
+else
+  skip "題材を特定できる語: git の管理下でないので、公開するファイル（git が追跡しているもの）を数えられない"
 fi
 
 # 例示以外のドメインが書かれていないか。example.com / example.invalid だけを許す。
@@ -301,6 +312,12 @@ check_reviewed "実地の評価で使うモデルに確認日が書いてある"
 kiku="$(grep -rnE --exclude-dir=local '(^|[^有無])効(く|い|か|き|け|こ)' "$SKILL" "$ROOT/README.md" "$ROOT/tests/eval" "$ROOT/tests/fixtures" 2>/dev/null | head -3 || true)"
 if [[ -z "$kiku" ]]; then ok "「効」を動詞に使う言い回しが無い"
 else ng "「効」を動詞に使う言い回しが無い" "$(printf '%s' "$kiku" | cut -c1-120 | tr '\n' ' ')"; fi
+
+# 最上位のディレクトリは「プロジェクトルート」と書く。「リポジトリの根」「根から」は読み手に通じにくい（2.28.0 で外し、
+# 評価の指示と出力の形式に残っていた）。根拠・根本などの熟語は対象外。CHANGELOG の過去の節は記録なので見ない
+ne="$(grep -rnE --exclude-dir=local '(^|[^屋垣大尾性羽心])根([^拠本付強回差ざ底気元幹絶]|$)' "$SKILL" "$ROOT/README.md" "$ROOT/tests/eval" "$ROOT/build" 2>/dev/null | head -3 || true)"
+if [[ -z "$ne" ]]; then ok "最上位のディレクトリを「根」と呼ばない（プロジェクトルートと書く）"
+else ng "最上位のディレクトリを「根」と呼ばない（プロジェクトルートと書く）" "$(printf '%s' "$ne" | cut -c1-120 | tr '\n' ' ')"; fi
 
 # 日本語の資料に、想定外の文字体系が混ざっていないか。
 # 生成の過程でキリル文字やハングルが 1 語だけ紛れ込むことが実際に起きる。
@@ -391,6 +408,40 @@ printf '評価の題材は Canary Target App だった\n' > "$HK/eval-note.md"; 
 if hkpush main refs/heads/main; then ng "pre-push: 評価の題材の名前が追加行にあれば止める" "通ってしまった"
 else ok "pre-push: 評価の題材の名前が追加行にあれば止める"; fi
 hkgit reset -q --hard HEAD~1 >/dev/null 2>&1
+
+# 作業ツリーを .git ごと写した「複製した写し」では、検査と検査の検査を始めずに止める（tests/check-worktree.sh）。
+# git worktree の作業ツリーの .git は管理ディレクトリを指すファイルで、写しは索引・HEAD を元の作業ツリーと共有する。
+# 一時的なリポジトリに worktree を作って写し、止めるべきものを止め、通すべきものを通すかを見る
+WG="$TMP/worktree-guard"; rm -rf "$WG"; mkdir -p "$WG/main"
+wggit() { local d="$1"; shift; ( cd "$d" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -c commit.gpgsign=false -c core.hooksPath=/dev/null \
+                                   -c user.name=t -c user.email=t@example.invalid "$@" ) >/dev/null 2>&1; }
+printf 'x\n' > "$WG/main/a.txt"
+wggit "$WG/main" init -q .; wggit "$WG/main" add a.txt; wggit "$WG/main" commit -q -m init
+wggit "$WG/main" worktree add -q --detach ../wt HEAD
+# 相対パスで登録する worktree（git 2.48 から。古い git では絶対パスで登録され、同じことを確かめる）
+wggit "$WG/main" -c worktree.useRelativePaths=true worktree add -q --detach ../wtrel HEAD
+for d in wt wtrel; do mkdir -p "$WG/$d/tests"; cp "$ROOT/tests/check-worktree.sh" "$ROOT/tests/mutations.sh" "$WG/$d/tests/"; done
+cp -Rp "$WG/wt" "$WG/copy"; cp -Rp "$WG/wtrel" "$WG/copyrel"
+mkdir -p "$WG/plain"
+wgrc() { bash "$ROOT/tests/check-worktree.sh" "$1" >/dev/null 2>&1; echo $?; }
+if [[ -f "$WG/wt/.git" && -f "$WG/copy/.git" && "$(wgrc "$WG/wt"):$(wgrc "$WG/wtrel"):$(wgrc "$WG/main"):$(wgrc "$WG/plain")" == 0:0:0:0 ]]; then
+  ok "check-worktree: 登録した作業ツリー・本体・git の管理下でない場所は止めない"
+else ng "check-worktree: 登録した作業ツリー・本体・git の管理下でない場所は止めない" "worktree $(wgrc "$WG/wt")・相対パスの worktree $(wgrc "$WG/wtrel")・本体 $(wgrc "$WG/main")・管理下でない $(wgrc "$WG/plain")（0 で通す）"; fi
+WGO="$(bash "$ROOT/tests/check-worktree.sh" "$WG/copy" 2>&1)"; wgc=$?
+if [[ $wgc -eq 2 ]] && grep -F '複製した写し' <<<"$WGO" >/dev/null && grep -F "$(cd "$WG/wt" && pwd -P)" <<<"$WGO" >/dev/null \
+   && [[ "$(wgrc "$WG/copyrel")" == 2 ]]; then
+  ok "check-worktree: .git ごと写した作業ツリーで止め、管理情報の持ち主を示す（相対パスの登録も）"
+else ng "check-worktree: .git ごと写した作業ツリーで止め、管理情報の持ち主を示す（相対パスの登録も）" "終了コード ${wgc}、相対パス $(wgrc "$WG/copyrel"): $(tr '\n' ' ' <<<"$WGO" | cut -c1-160)"; fi
+# mutations.sh は写しで変異を入れない。写しには run.sh を置かないので、止まらなければ土台の確かめが空振りし、
+# --only に当たる変異が無いまま 0 で終わる
+WMO="$(bash "$WG/copy/tests/mutations.sh" --only 該当する変異の無い名前 2>&1)"; wmc=$?
+if [[ $wmc -eq 2 ]] && grep -F '複製した写し' <<<"$WMO" >/dev/null && [[ ! -e "$WG/copy/tests/.mutating" ]]; then
+  ok "mutations.sh: 複製した写しでは、ロックも変異も入れずに止まる"
+else ng "mutations.sh: 複製した写しでは、ロックも変異も入れずに止まる" "終了コード ${wmc}: $(tr '\n' ' ' <<<"$WMO" | cut -c1-160)"; fi
+# run.sh 自身は、一時領域を消す前に確かめる（写しで実行すると、この検査を入れ子で繰り返すので、実際には実行しない）
+if awk '/tests\/check-worktree\.sh" "\$ROOT" \|\| exit 2/ { g = NR } /^rm -rf "\$TMP"; mkdir -p "\$TMP"$/ { t = NR } END { exit !(g && t && g < t) }' "$ROOT/tests/run.sh"; then
+  ok "run.sh: 一時領域を作る前に、複製した写しでないかを確かめる"
+else ng "run.sh: 一時領域を作る前に、複製した写しでないかを確かめる" "check-worktree.sh の呼び出しが無いか、rm -rf \"\$TMP\" の後にある"; fi
 
 # ==========================================================================
 head_ "3. 動作 — スクリプトが期待どおり検出するか"

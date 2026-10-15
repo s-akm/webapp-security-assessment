@@ -30,6 +30,11 @@ done
 PASS=0; FAIL=0; SKIP=0; MIDX=0; OUTSHARD=0
 BACKUPS=()
 
+# git worktree の作業ツリーを .git ごと写した写しでは、ロックも変異も入れずに止まる。写しは索引・HEAD を元の作業ツリーと共有する
+# （2.30.0 の後、--shard で並べるために worktree を .git ごと 7 つに写して実行したところ、4 つの写しで中身が消えた。原因は特定できていない）。
+# 並べて実行するときは、分担ごとに git worktree add で作業ツリーを作る（README の「検査の検査」）
+bash "$ROOT/tests/check-worktree.sh" "$ROOT" || exit 2
+
 # 実行中は skill/ に欠陥が入っている。その間に build や配布の同期を走らせると、
 # 欠陥入りの状態が配布物に入る（実際に起きた）。ロックを置いて、他の処理に知らせる。
 LOCK="$ROOT/tests/.mutating"
@@ -134,6 +139,8 @@ mutate "実在しうるドメインを書く" "references/01-scoping.md" "実在
   's = s + "\n参考: https://client-site.example.test/\n"'
 mutate "「効」を動詞に使う" "references/05-remediation-plan.md" "「効」を動詞に使う言い回しが無い" \
   's = s + "\nこの対策は効かない。\n"'
+mutate "最上位のディレクトリを根と呼ぶ" "references/02-code-audit.md" "最上位のディレクトリを「根」と呼ばない" \
+  's = s + "\n場所はリポジトリの根からの相対パスで書く。\n"'
 mutate "想定外の文字体系を混入させる" "references/02-code-audit.md" "想定外の文字体系" \
   's = s + "\nテスト用の混入 материал\n"'
 mutate "基準の最終確認日を消す" "references/06-frameworks.md" "基準の版に最終確認日" \
@@ -491,6 +498,12 @@ mutate "pre-push: main 以外のブランチも通す" "../build/hooks/pre-push"
   's = s.replace("refs/heads/main|refs/tags/v[0-9]*) ;;", "refs/heads/*|refs/tags/v[0-9]*) ;;")'
 mutate "pre-push: 手元に無いリモートの先端でも検査を飛ばして通す" "../build/hooks/pre-push" "リモートの先端が手元に無ければ止める" \
   's = s.replace("elif git cat-file -e \"${rsha}^{commit}\" 2>/dev/null; then", "elif true; then").replace("if ! git rev-list $range >/dev/null 2>&1; then", "if false; then")'
+# 複製した写しの判定。mutations.sh 自身の呼び出しは、実行中のファイルを書き換えることになるので変異にしない
+# （run.sh の「mutations.sh: 複製した写しでは」の検査が、写しで実際に実行して確かめる）
+mutate "check-worktree: 管理情報の持ち主の場所と比べない" "../tests/check-worktree.sh" ".git ごと写した作業ツリーで止め" \
+  's = s.replace("if [[ \"$regdir\" != \"$ROOT\" ]]; then", "if false; then")'
+mutate "check-worktree: run.sh から呼ばない" "../tests/run.sh" "run.sh: 一時領域を作る前に、複製した写しでないかを確かめる" \
+  's = s.replace("bash \"$ROOT/tests/check-worktree.sh\" \"$ROOT\" || exit 2\n", "")'
 mutate "audit_grep: ファイルの前に -- を置かない" "scripts/audit_grep.sh" "で始まるファイル名があっても" \
   's = s.replace("xargs -0 grep \"$@\" -- /dev/null", "xargs -0 grep \"$@\" /dev/null")'
 mutate "audit_grep: 0 節だけ古いタグの一覧に戻す" "scripts/audit_grep.sh" "0 節も 9 節と同じ一覧でタグを判定する" \
