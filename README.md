@@ -295,8 +295,9 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
   CI・変更した部分の変異・変更した部品の実物での確認（台帳なら Excel・Numbers で開く、など）で判定する。確かめたこと・確かめていないことを CHANGELOG に書く
 - **全題材の実地の評価は、四半期ごと・メジャー版・使うモデルを変えたときのすべてで行う**
 
-それ以外の変更（資料や事前の洗い出しの出力を変えるもの）は、評価軸が決まるまで、次の手順で確かめる。**題材は教材 9 つで、答えがインジェクションとアクセス制御に偏っている。**
-RLS は 2 題材で測れるようになったが、Server Actions・CI・LLM・基盤・モバイルなどの観点には答えがほとんど無く、「劣後なし」はその観点については何も言えない。CHANGELOG でも、測った範囲を超えて劣後なしと書かない。
+それ以外の変更（資料や事前の洗い出しの出力を変えるもの）は、評価軸が決まるまで、次の手順で確かめる。**題材は教材 22 で、どれも穴の場所が公開されている教材。**
+観点の網羅表（[tests/eval/COVERAGE.md](tests/eval/COVERAGE.md)）で「未測定」「一部」の観点（キャッシュ・Webhook・競合・リアルタイム通信など）には答えがほとんど無く、
+「劣後なし」はその観点については何も言えない。Server Actions とミドルウェアの対象範囲も答えを持つ題材が無い。CHANGELOG でも、測った範囲を超えて劣後なしと書かない。
 
 1. 題材ごとに 1 回、今の HEAD を当てる（`./tests/eval/run-eval.sh <題材> --record`。[tests/eval/README.md](tests/eval/README.md)）
 2. `./tests/eval/compare.py` が「劣後なし」で終わること（終了コード 0）。前の版のタグと、skill/ の中身で比べる。
@@ -365,7 +366,7 @@ grep -rnE 'の 2[a-z] 節|の 2[a-z]（|=== 2[a-z]' skill/ tests/   # 例: 2 系
   資源ごとに「書いていない項目」を探すのは Terraform の AWS の DB とインスタンス、Kubernetes のコンテナの上限だけで、
   CloudFormation と他のクラウドは 1 行で書いた値しか見ない。19 節（Supabase の RLS・定義者権限の関数・利用者が書き換えられる値での認可）、
   22 節、24 節は、Next.js と Supabase の実案件で使い、19 節の ★ がそのまま重い指摘につながった
-- **実地の評価で測れている枠組みは、Express・NestJS・Rails・Django・FastAPI と、Next.js（App Router）＋ Supabase の 6 つ（題材は 9 つ）。**
+- **実地の評価で測れている枠組みは、Express・NestJS・Rails・Django・FastAPI・Next.js（App Router）＋ Supabase・サーバーレス（SAM）と、GitHub Actions・Terraform・Kubernetes・Android・React Native（題材は 22）。**
   Supabase の RLS はマイグレーションだけの題材 2 つとアプリ全体の題材 1 つで測れるようになった。Server Actions とミドルウェアの対象範囲の穴は、
   答えを持つ題材が無く、まだ測れていない。どの題材も教材なので、実際のサービスの規模（数千〜数万ファイルのモノレポ）では測れていない
 - **戻るボタンで認可後の画面が見えるか（09 の 6 節）は、ブラウザと版と経過時間で結果が変わる。**
