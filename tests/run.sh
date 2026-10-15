@@ -2883,6 +2883,17 @@ if [[ $CS_RC -eq 2 ]] && grep -F '消えた: 1 件 S-02' <<<"$CSO" >/dev/null &&
   ok "eval[再評価]: 前回の ID が消えたものと、同じ番号を別の意味に使ったものを数える"
 else ng "eval[再評価]: 前回の ID が消えたものと、同じ番号を別の意味に使ったものを数える" "終了コード $CS_RC: $(tr '\n' ' ' <<<"$CSO" | cut -c1-200)"; fi
 contains "eval[再評価]: 書き直しただけの ID は引き継いだと数える" "引き継いだ: 1 件" "$CSO"
+contains "eval[再評価]: 引き継いだのに行き先の無い ID を数える" "引き継いだのに行き先が無い: 1 件 U-1" "$CSO"
+# 行き先を書いた今回の台帳。指摘は【未着手】・解消、未確認事項は「行き先: 未確認のまま。根拠: …」
+cat > "$TMP/cs-cur2.json" <<'EOF'
+{"structured_output": {"findings": [{"id": "S-01", "title": "注文の詳細を返すハンドラが持ち主を照らし合わせない", "fact": "【未着手】前回から変わらず、注文の ID だけで取り出して返す"},
+                                    {"id": "S-02", "title": "応答の CSP が frame-ancestors だけ", "fact": "解消。script-src を足した"}],
+ "unconfirmed": [{"id": "U-1", "text": "外部に預けているデータの契約と保存の地域。行き先: 未確認のまま。根拠: 今回も担当者に届かなかった", "blocks": []}]}}
+EOF
+CSO2="$(python3 "$ROOT/tests/eval/carry_score.py" "$TMP/cs-prev.json" "$TMP/cs-cur2.json" 2>&1)"; CS_RC2=$?
+if [[ $CS_RC2 -eq 0 ]] && grep -F '引き継いだのに行き先が無い: 0 件' <<<"$CSO2" >/dev/null; then
+  ok "eval[再評価]: 行き先と根拠を書いた ID は、行き先の書き漏れに数えない"
+else ng "eval[再評価]: 行き先と根拠を書いた ID は、行き先の書き漏れに数えない" "終了コード $CS_RC2: $(tr '\n' ' ' <<<"$CSO2" | cut -c1-200)"; fi
 contains "eval[再評価]: run-eval.sh が前回の台帳を置き、11 に従う指示を足す" 'references/11-reassessment.md に従う' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # 採点。答え A（10 行目）・B（50 行目）・C（90 行目）・E（30 行目）が範囲内、D が範囲外。許容は前後 3 行
 cat > "$TMP/eval-sa.json" <<'EOF'
