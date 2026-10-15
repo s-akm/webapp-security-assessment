@@ -544,6 +544,10 @@ mutate "網羅表: 失敗した検査も数える" "../tests/eval/coverage.py" "
   's = s.replace("r\"\\s*✓ (audit_grep", "r\"\\s*[✓✗] (audit_grep", 1)'
 mutate "採点: 対照を答えとして数える" "../tests/eval/score.py" "対照は見つけた数の分母に入れない" \
   's = s.replace("        if it.get(\x27control\x27):\n", "        if False:\n", 1)'
+mutate "採点: 広い範囲の指摘も対照に数える" "../tests/eval/score.py" "広い範囲で指した別の指摘は対照の誤検出に数えない" \
+  's = s.replace("    return [l for l in matching_locs(item, finding, tol) if span(l)[1] - span(l)[0] <= PRECISE]\n", "    return matching_locs(item, finding, tol)\n", 1)'
+mutate "採点: 対照は 1 行で指したものだけを数える" "../tests/eval/score.py" "狭い範囲で対照を指した問題ありは誤検出に数える" \
+  's = s.replace("    return [l for l in matching_locs(item, finding, tol) if span(l)[1] - span(l)[0] <= PRECISE]\n", "    return [l for l in matching_locs(item, finding, tol) if span(l)[1] == span(l)[0]]\n", 1)'
 mutate "比較: 対照への誤検出の増加を見ない" "../tests/eval/compare.py" "対照への誤検出が旧より増えれば" \
   's = s.replace("            if ofp and nfp and mean(nfp) > mean(ofp):", "            if False:", 1)'
 mutate "19: プロジェクトルートの supabase/ しか見ない" "scripts/audit_grep.sh" "プロジェクトルートに無い Supabase の置き場も判定する" \
