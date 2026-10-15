@@ -634,7 +634,7 @@ mutate "18 モバイル: ログを語で絞らない" "scripts/audit_grep.sh" "�
 mutate "18 モバイル: コードの読み込みを並べない" "scripts/audit_grep.sh" "実行時のコードの読み込みを並べる" \
   's = s.replace("\x27DexClassLoader|PathClassLoader|", "\x27ZZZNOMATCH|", 1)'
 mutate "18 モバイル: false の ATS も数える" "scripts/audit_grep.sh" "ATS の例外を false にした設定を拾わない" \
-  's = s.replace("{ if (s ~ /<true\\/>/) out(\"n\", pk ==", "{ if (1) out(\"n\", pk ==", 1)'
+  's = s.replace("{ if (v == \"true\") { aal = n; aals = t } }", "{ aal = n; aals = t }", 1)'
 mutate "18 モバイル: src/debug/ を区別しない" "scripts/audit_grep.sh" "src/debug/ のマニフェストの平文の許可は並べるだけ" \
   's = s.replace("*/src/debug/*) mob_xml_scan", "*/src/ZZZ/*) mob_xml_scan", 1)'
 mutate "17 CFN: 書いていない暗号化を見ない" "scripts/audit_grep.sh" "CloudFormation の YAML で暗号化を書いていない DB に ★" \

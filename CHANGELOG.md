@@ -45,7 +45,10 @@ Microsoft の Azure SQL と Azure Storage の資料、Google Cloud の既定の�
 （評価の仕組みの側は、2.30.0 で一覧を事前に作って渡すようにした。こちらは利用者の環境でも同じことが起きうるので、手順として書いた）。
 命令を分けて実行し直し、一覧を取れたことと全ファイルを読む範囲に入れたことを確かめてから先へ進む。検査と変異を足した
 
-確かめたこと: `tests/run.sh` の全件、足した変異（`tests/mutations.sh --only` で 34 件）、`tests/self-audit.sh`。
+ATS の読み方を書き直したので、既存の変異「18 モバイル: false の ATS も数える」の置き換えの対象を新しい書き方に合わせた（自己監査が空振りとして見つけた）。
+
+確かめたこと: `tests/run.sh` の全件（成功 1384 / 失敗 0 / 省略 1。省略は以前からの 1 件）、足した変異 34 件と置き換えの対象を直した既存の変異 1 件
+（`tests/mutations.sh --only` で、すべて失敗を捕まえた）、`tests/self-audit.sh`（worktree の pre-push フックの項目だけが赤）。
 確かめていないこと: 実在の CloudFormation・Azure・Google Cloud・Helm・iOS の定義には当てていない（題材はすべて架空）。1 行に詰めた JSON の
 CloudFormation は資源を区切れない。Helm の values.yaml の並び（`- ` の行）の中の値と、`-f`・`--set`・helmfile で上書きした値は読まない。
 Bicep・ARM テンプレート・CDK・Pulumi は扱っていない。実地の評価（題材の点数）はまだ当てていない
