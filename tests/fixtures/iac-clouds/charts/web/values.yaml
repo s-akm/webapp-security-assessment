@@ -1,0 +1,16 @@
+# 架空のチャート。値はすべて架空
+replicaCount: 1
+image:
+  repository: example.test/web
+  tag: "1.0.0"
+podSecurityContext:
+  runAsUser: 0
+securityContext:
+  privileged: true  # 既定で特権
+  allowPrivilegeEscalation: true
+hostNetwork: true
+debug:
+  privileged: true
+resources:
+  limits:
+    cpu: 500m

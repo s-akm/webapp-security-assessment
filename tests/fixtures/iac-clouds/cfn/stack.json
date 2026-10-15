@@ -1,0 +1,25 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "ReportsDb": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "Engine": "mysql",
+        "DBSubnetGroupName": { "Ref": "PrivateSubnets" },
+        "DeletionProtection": true
+      }
+    },
+    "ApiHost": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": "ami-00000000000000000",
+        "UserData": { "Fn::Base64": { "Fn::Sub": "echo ${AWS::Region} }}" } },
+        "MetadataOptions": { "HttpTokens": "required" }
+      }
+    },
+    "Vault": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": { "Engine": "postgres", "StorageEncrypted": true, "PubliclyAccessible": false, "DeletionProtection": true }
+    }
+  }
+}

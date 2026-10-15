@@ -651,9 +651,77 @@ mutate "18 モバイル: ログを語で絞らない" "scripts/audit_grep.sh" "�
 mutate "18 モバイル: コードの読み込みを並べない" "scripts/audit_grep.sh" "実行時のコードの読み込みを並べる" \
   's = s.replace("\x27DexClassLoader|PathClassLoader|", "\x27ZZZNOMATCH|", 1)'
 mutate "18 モバイル: false の ATS も数える" "scripts/audit_grep.sh" "ATS の例外を false にした設定を拾わない" \
-  's = s.replace("{ if (s ~ /<true\\/>/) out(\"n\", pk ==", "{ if (1) out(\"n\", pk ==", 1)'
+  's = s.replace("{ if (v == \"true\") { aal = n; aals = t } }", "{ aal = n; aals = t }", 1)'
 mutate "18 モバイル: src/debug/ を区別しない" "scripts/audit_grep.sh" "src/debug/ のマニフェストの平文の許可は並べるだけ" \
   's = s.replace("*/src/debug/*) mob_xml_scan", "*/src/ZZZ/*) mob_xml_scan", 1)'
+mutate "17 CFN: 書いていない暗号化を見ない" "scripts/audit_grep.sh" "CloudFormation の YAML で暗号化を書いていない DB に ★" \
+  's = s.replace("if (!aur && !inh && !(\"StorageEncrypted\" in seen)) out(1", "if (0) out(1", 1)'
+mutate "17 CFN: YAML のコメントを外さない" "scripts/audit_grep.sh" "コメントの指定は数えない" \
+  's = s.replace("{ s = $0; if (!json) sub(/[ \\t]+#.*$/, \"\", s) }", "{ s = $0 }", 1)'
+mutate "17 CFN: 公開の既定を見ない" "scripts/audit_grep.sh" "CloudFormation で公開の指定もサブネットグループも無い DB に ★" \
+  's = s.replace("(!(\"DBSubnetGroupName\" in seen) || sng == \"default\")", "0", 1)'
+mutate "17 CFN: レプリカにも公開の既定の ★ を付ける" "scripts/audit_grep.sh" "読み取りレプリカの公開の既定は並べるだけ" \
+  's = s.replace("if (inh) out(0, rl, rs, \"PubliclyAccessible", "if (0) out(0, rl, rs, \"PubliclyAccessible", 1)'
+mutate "17 CFN: Aurora を区別しない" "scripts/audit_grep.sh" "CloudFormation の Aurora の DB インスタンスを数えない" \
+  's = s.replace("aur = (\"DBClusterIdentifier\" in seen) || tolower(eng) ~ /^aurora/", "aur = 0", 1)'
+mutate "17 CFN: インスタンスの IMDS を見ない" "scripts/audit_grep.sh" "CloudFormation でメタデータの方式を書いていないインスタンスに ★" \
+  's = s.replace("&& !(\"HttpTokens\" in seen) &&", "&& 0 &&", 1)'
+mutate "17 CFN: 起動テンプレートを使うインスタンスにも IMDS を求める" "scripts/audit_grep.sh" "CloudFormation で起動テンプレートを使うインスタンスに IMDS を求めない" \
+  's = s.replace(" && !(ty == \"AWS::EC2::Instance\" && (\"LaunchTemplate\" in seen))", "", 1)'
+mutate "17 CFN: JSON の文字列の中の括弧も数える" "scripts/audit_grep.sh" "CloudFormation の JSON の文字列の中の括弧で資源の範囲を誤らない" \
+  's = s.replace("t = nostr(s)", "t = s", 1)'
+mutate "17 Azure: すべての IP の防火壁の規則を見ない" "scripts/audit_grep.sh" "Azure ですべての IP から DB へ届く防火壁の規則に ★" \
+  's = s.replace("if (fws == \"0.0.0.0\" && fwe == \"255.255.255.255\") out(1", "if (0) out(1", 1)'
+mutate "17 Azure: サービスすべての規則にも ★ を付ける" "scripts/audit_grep.sh" "Azure のサービスすべてを許す防火壁の規則は並べるだけ" \
+  's = s.replace("else if (fws == \"0.0.0.0\" && fwe == \"0.0.0.0\") out(0", "else if (fws == \"0.0.0.0\" && fwe == \"0.0.0.0\") out(1", 1)'
+mutate "17 Azure: ストレージアカウントの公開の可否を見ない" "scripts/audit_grep.sh" "Azure で公開の可否を書いていないストレージアカウントを並べる" \
+  's = s.replace("if (rt == \"azurerm_storage_account\" && !anp)", "if (0 && !anp)", 1)'
+mutate "17 Azure: 公開を許さない指定を読まない" "scripts/audit_grep.sh" "Azure で公開を許さないと書いたストレージアカウントを並べない" \
+  's = s.replace("allow_blob_public_access)[ \\t]*=/) anp = 1", "allow_blob_public_access)[ \\t]*=/ && 0) anp = 1", 1)'
+mutate "17 GCP: SQL の全開放を見ない" "scripts/audit_grep.sh" "Google Cloud の SQL の authorized_networks の 0.0.0.0/0 に ★" \
+  's = s.replace("if (rt == \"google_sql_database_instance\" && s ~", "if (0 && s ~", 1)'
+mutate "17 GCP: バケットの公開の防止を見ない" "scripts/audit_grep.sh" "Google Cloud で公開の防止を書いていないバケットを並べる" \
+  's = s.replace("if (rt == \"google_storage_bucket\" && !pap)", "if (0 && !pap)", 1)'
+mutate "17 公開: ストレージを公開にする書き方を見ない" "scripts/audit_grep.sh" "Azure のコンテナの匿名の読み取りを並べる" \
+  's = s.replace("|container_access_type[[:space:]]*=", "|ZZZNOMATCH[[:space:]]*=", 1)'
+mutate "17 Helm: values.yaml を突き合わせない" "scripts/audit_grep.sh" "Helm の values.yaml の既定の特権に ★" \
+  's = s.replace("[[ -n \"$c\" ]] && helm_scan \"$(dirname \"$c\")\"", "true", 1)'
+mutate "17 Helm: 上の階層の参照を辿らない" "scripts/audit_grep.sh" "Helm の values.yaml の既定の特権に ★" \
+  's = s.replace("if (!sub(/\\.[^.]*$/, \"\", q)) q = \"\"", "q = \"\"", 1)'
+mutate "17 Helm: 参照されない値も並べる" "scripts/audit_grep.sh" "Helm でテンプレートが参照しない値を並べない" \
+  's = s.replace("if (r == \"\") next", "if (0) next", 1)'
+mutate "17 Helm: root を並べない" "scripts/audit_grep.sh" "Helm の values.yaml の既定の root は並べるだけ" \
+  's = s.replace("else if (leaf == \"runAsUser\" && v == \"0\")", "else if (0)", 1)'
+mutate "18 iOS: キーチェーンの属性を見ない" "scripts/audit_grep.sh" "kSecAttrAccessibleAlways に ★" \
+  's = s.replace("\x27kSecAttrAccessibleAlways|ACCESSIBLE", "\x27ZZZNOMATCH|ACCESSIBLE", 1)'
+mutate "18 iOS: Expo の SecureStore.ALWAYS を見ない" "scripts/audit_grep.sh" "Expo の SecureStore.ALWAYS に ★" \
+  's = s.replace("|SecureStore\\.ALWAYS|", "|ZZZNOMATCH|", 1)'
+mutate "18 iOS: キーチェーンの同期を並べない" "scripts/audit_grep.sh" "iCloud キーチェーンへの同期を並べる" \
+  's = s.replace("\x27kSecAttrSynchronizable[", "\x27ZZZNOMATCH[", 1)'
+mutate "18 iOS: 変数に置いた UserDefaults を見ない" "scripts/audit_grep.sh" "変数に置いた UserDefaults への資格情報の書き込みに ★" \
+  's = s.replace("|[Dd]efaults\\.set(Value|Object)?\\(|", "|", 1)'
+mutate "18 iOS: @AppStorage を見ない" "scripts/audit_grep.sh" "@AppStorage の資格情報の名前に ★" \
+  's = s.replace("|@AppStorage\\(\x27", "\x27", 1)'
+mutate "18 iOS: Objective-C の書き方を見ない" "scripts/audit_grep.sh" "Objective-C の NSUserDefaults の資格情報の書き込みに ★" \
+  's = s.replace("|(NSUserDefaults[^;]*|[Dd]efaults)[[:space:]]+set(Object|Value)?:", "", 1)'
+mutate "18 ATS: ほかの例外と一緒でも NSAllowsArbitraryLoads に ★ を付ける" "scripts/audit_grep.sh" "ほかの例外と一緒の NSAllowsArbitraryLoads は並べるだけ" \
+  's = s.replace("out(\"n\", !other, aal", "out(\"n\", 1, aal", 1)'
+mutate "18 ATS: 古い TLS を見ない" "scripts/audit_grep.sh" "古い TLS を許す ATS の例外を並べる" \
+  's = s.replace("if (v ~ /^TLSv1\\.[01]$/)", "if (0)", 1)'
+mutate "18 ATS: 既定どおりの TLS も並べる" "scripts/audit_grep.sh" "既定どおりの ATS の例外を並べない" \
+  's = s.replace("if (v ~ /^TLSv1\\.[01]$/)", "if (1)", 1)'
+mutate "18 ATS: 前方秘匿性を見ない" "scripts/audit_grep.sh" "前方秘匿性を外す ATS の例外を並べる" \
+  's = s.replace("{ if (v == \"false\") out(\"n\", 0, n, t, k", "{ if (0) out(\"n\", 0, n, t, k", 1)'
+mutate "18 Expo: 設定の ATS を見ない" "scripts/audit_grep.sh" "Expo の設定の NSAllowsArbitraryLoads に ★" \
+  's = s.replace("{ aal = FNR; aals = $0 }", "{ }", 1)'
+mutate "4b: 秘密の語の名前に ★ を付けない" "scripts/audit_grep.sh" "秘密の語を含む EXPO_PUBLIC_ の名前に ★" \
+  's = s.replace("if ($0 ~ /SECRET|PRIVATE|SERVICE_ROLE", "if (0 && $0 ~ /SECRET|PRIVATE|SERVICE_ROLE", 1)'
+mutate "4b: KEY を含む名前すべてに ★ を付ける" "scripts/audit_grep.sh" "公開前提の anon key に ★ を付けない" \
+  's = s.replace("if ($0 ~ /SECRET|PRIVATE|SERVICE_ROLE", "if ($0 ~ /KEY|SECRET|PRIVATE|SERVICE_ROLE", 1)'
+mutate "資料: 一覧を取る命令が止められたときの手順を消す" "SKILL.md" "ファイルの一覧を取る命令が止められたときの手順" \
+  's = s.replace("**命令を分けて実行し直す。**", "**別の方法を試す。**", 1)'
+mutate "資料: 13 から Helm の既定の観点を消す" "references/13-infrastructure.md" "資料 13・14 に、事前の洗い出しで足した観点がある" \
+  's = s.replace("の既定で権限が決まる", "の既定を読む", 1)'
 mutate "0: Clerk を下の階層で判定しない" "scripts/audit_grep.sh" "下の階層の Clerk・Firebase・Convex も判定する" \
   's = s.replace(" || [[ -n \"$(nested_pkg \x27\"@clerk/\x27)\" ]]; } && baas", "; } && baas", 1)'
 mutate "23: リアルタイムを古い Supabase の条件で判定する" "scripts/audit_grep.sh" "下の階層の Supabase でもリアルタイム通信を判定する" \

@@ -1,0 +1,58 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: 架空の定義。値はすべて架空
+Parameters:
+  Env:
+    Type: String
+Resources:
+  OrdersDb:  # 暗号化・公開・削除の保護をどれも書いていない
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      DBInstanceClass: db.t4g.micro
+      # StorageEncrypted: true
+  LedgerDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres
+      StorageEncrypted: true
+      DBSubnetGroupName: !Ref PrivateSubnets
+      DeletionProtection: true
+  ReplicaDb:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      SourceDBInstanceIdentifier: !Ref LedgerDb
+      DBSubnetGroupName: default
+      DeletionProtection: true
+  AuroraWriter:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: aurora-postgresql
+      DBClusterIdentifier: !Ref Cluster
+  WebServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-00000000000000000
+  BatchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        MetadataOptions:
+          HttpTokens: required
+  Worker:
+    Type: AWS::EC2::Instance
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref BatchTemplate
+        Version: "1"
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: true
+  LogsBucket:
+    Type: AWS::S3::Bucket
+Outputs:
+  OrdersEndpoint:
+    Value: !GetAtt OrdersDb.Endpoint.Address

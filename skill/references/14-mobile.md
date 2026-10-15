@@ -67,8 +67,10 @@ find . \( -name 'google-services.json' -o -name 'GoogleService-Info.plist' \
   -not -path '*/node_modules/*' 2>/dev/null
 ```
 
-**`EXPO_PUBLIC_` などの接頭辞が付いた変数は、ビルドのときにアプリの中へ文字列として入る。** 名前に KEY・SECRET・TOKEN が
-入っていれば、その値は配布物から取り出せる（下の表で用途を分ける）。`keystore.properties` や `key.properties` に
+**`EXPO_PUBLIC_` などの接頭辞が付いた変数は、ビルドのときにアプリの中へ文字列として入る**（Expo の資料は、コンパイルしたアプリの中に
+平文で見えるので秘密を置かないよう書いている）。名前に KEY・SECRET・TOKEN が入っていれば、その値は配布物から取り出せる（下の表で用途を分ける）。
+`scripts/audit_grep.sh` の 4b 節は、名前に SECRET・PRIVATE・SERVICE_ROLE・PASSWORD などの秘密の語を含むものに ★ を付ける。
+anon key や publishable key のような公開前提の鍵は名前に KEY が入るだけなので ★ を付けない（その鍵で何ができるかを下の表で確かめる）。`keystore.properties` や `key.properties` に
 署名鍵のパスワードが書かれ、リポジトリに入っていれば、署名鍵のファイルと合わせて偽アプリを作れる。
 
 **すべての鍵が問題なわけではない。** 用途で分ける。
@@ -93,6 +95,7 @@ Generative Language API（Gemini）を有効にすると、**配布済みの鍵�
 ```bash
 grep -rnE -e 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|localStorage' \
   -e 'sqlite|Realm|shared_preferences|SecureStore|Keychain|EncryptedSharedPreferences' \
+  -e '@AppStorage|kSecAttrAccessible|kSecAttrSynchronizable|ACCESSIBLE\.ALWAYS' \
   --include='*.swift' --include='*.kt' --include='*.java' --include='*.dart' \
   --include='*.ts' --include='*.js' . 2>/dev/null | head -20
 ```
@@ -103,13 +106,17 @@ grep -rnE -e 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|localSt
   資格情報の置き場として意図されたもの。問題なし。ただし Keychain は**いつ読めるか**と**どこへ同期されるか**を属性で決める。
   `kSecAttrAccessible` が `kSecAttrAccessibleAlways` 系（非推奨）なら端末のロック中も読める。`ThisDeviceOnly` の付かない値や
   `kSecAttrSynchronizable` が true なら、iCloud キーチェーンやバックアップを通じて別の端末へ移る。トークンは
-  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` などの端末に閉じた値にしているかを見る
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` などの端末に閉じた値にしているかを確かめる。`kSecAttrAccessibleAlways` は iOS 12 で非推奨になった値で、
+  Apple の資料はアプリでの使用を勧めていない。包みのライブラリでも同じ値を渡せる（React Native の Keychain の `ACCESSIBLE.ALWAYS`、Expo の
+  `SecureStore.ALWAYS`、Swift の `.accessibility(.always)`）。`scripts/audit_grep.sh` の 18 節は、これらに ★ を付け、同期の指定を並べる
 - **`EncryptedSharedPreferences`** — 置き場としては今も安全側で、判定は**問題なし**。ただし**ライブラリ
   （`androidx.security:security-crypto`）全体が 2025 年に非推奨になった**ので、`references/08-privacy-compliance.md` の
   6 節と同じく「気づいたこと」として渡す（指摘には数えない）
 - **`UserDefaults` / `SharedPreferences` / `AsyncStorage`** — 平文で残る。
   **認証トークンやパスワードを置いていれば指摘**。端末のバックアップにも入る。`scripts/audit_grep.sh` の 18 節は、
-  書き込む鍵の名前に token・password・secret・session などを含む行に ★ を付ける（名前での判定なので、中身を読んで確かめる）
+  書き込む鍵の名前に token・password・secret・session などを含む行に ★ を付ける（名前での判定なので、中身を読んで確かめる）。
+  iOS の `UserDefaults` は書き方が多い。`UserDefaults.standard.set(…)` のほか、変数に置いた `defaults.set(…)`、Objective-C の
+  `[… setObject:… forKey:@"…"]`、SwiftUI の `@AppStorage("…")`（中身は `UserDefaults`）も同じ置き場になる
 - **ログへの出力**。デバッグ用の出力が残っていて、個人情報や token を書いていないか。Android の `Log.*` は端末の共通のログ（logcat）に入り、
   ログを読む権限を持つアプリが入った端末もある。Android の公式の資料は、配るビルドでは機微な値をログに出さず、R8 で
   `Log.v`・`Log.d`・`Log.i` を消すよう勧めている。React Native の `console.log` や iOS の `print`・`NSLog` も同じ
@@ -129,7 +136,8 @@ grep -rnE --exclude-dir=node_modules '(Log\.[vdiwe]|Timber\.[vdiwe]|NSLog|os_log
 ```bash
 # 平文通信の許可と、利用者が入れた証明書を信頼する設定
 grep -rnE -e 'usesCleartextTraffic|cleartextTrafficPermitted|NSAllowsArbitraryLoads' \
-  -e 'NSExceptionAllowsInsecureHTTPLoads|certificates src="user"' --include='*.xml' --include='*.plist' . 2>/dev/null
+  -e 'NSExceptionAllowsInsecureHTTPLoads|NSExceptionMinimumTLSVersion|NSExceptionRequiresForwardSecrecy|certificates src="user"' \
+  --include='*.xml' --include='*.plist' --include='app.json' --include='app.config.*' . 2>/dev/null
 # 証明書の検証を切っている
 grep -rnE -e 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509TrustManager' \
   -e 'setHostnameVerifier|badCertificateCallback|rejectUnauthorized' . 2>/dev/null | head
@@ -137,6 +145,13 @@ grep -rnE -e 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509Trus
 
 - **平文通信を許可していないか**（`usesCleartextTraffic="true"` / `NSAllowsArbitraryLoads`）。
   「一部のドメインだけ」の例外指定なら、その範囲を確かめる
+- **iOS の ATS は、`NSAllowsArbitraryLoads` のほかにも緩める書き方がある**（既定は Apple の資料による）。
+  - 例外のドメインの `NSExceptionMinimumTLSVersion` を `TLSv1.0`・`TLSv1.1` にすると古い TLS を許す（既定は `TLSv1.2`。1.2 より下げると審査で理由を求められる）
+  - `NSExceptionRequiresForwardSecrecy` を `NO` にすると、前方秘匿性の無い暗号を許す（既定は `YES`）
+  - `NSExceptionAllowsInsecureHTTPLoads`・`NSAllowsArbitraryLoadsInWebContent`・`NSAllowsArbitraryLoadsForMedia` は、その範囲で平文を許す
+  - `NSAllowsArbitraryLoadsInWebContent`・`NSAllowsArbitraryLoadsForMedia`・`NSAllowsLocalNetworking` のどれかを書くと、iOS 10 以降は
+    `NSAllowsArbitraryLoads` の値を無視する。`scripts/audit_grep.sh` の 18 節は、その組み合わせでは `NSAllowsArbitraryLoads` に ★ を付けずに並べる
+  - Expo では `app.json`・`app.config.*` の `ios.infoPlist` に書いた値がビルドで `Info.plist` に入る。18 節はこれも読む
 - **証明書の検証を切っていないか。** Web の O 節と同じだが、モバイルでは
   **開発中に入れた回避策がそのまま出荷される**ことが多い
 - **Android の `network_security_config` で `<certificates src="user" />` を信頼していないか。** 利用者（や端末に入り込んだ

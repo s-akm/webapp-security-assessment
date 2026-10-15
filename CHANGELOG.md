@@ -51,6 +51,50 @@ Express の医療の題材で再評価の回（前回の台帳 30 件）を当�
   足した変異 3 件（`./tests/mutations.sh --only 'check-worktree|根と呼ぶ'`）、`./tests/self-audit.sh`
 - 確かめていない: 中身が消えた原因。CI（Ubuntu・macOS）での実行。古い git（2.48 より前）では相対パスの登録の検査が絶対パスの登録で実行される
 
+**事前の洗い出し（17・18・4b 節）: 資源に書いていない項目と、扱っていなかった書き方を足した。資料 13・14 にも同じ観点を書いた。**
+2.30.0 の時点で、資源ごとに「書いていない項目」を探すのは Terraform の AWS の DB とインスタンスだけで、CloudFormation は 1 行で書いた値
+（`StorageEncrypted: false` など）しか読んでいなかった。CloudFormation では書かないことが穴になる項目が多く（RDS の暗号化は既定で無効、
+`PubliclyAccessible` は DB サブネットグループを書かなければ既定で true）、書いていない定義は素通りしていた。Azure・Google Cloud・Helm・iOS の
+代表的な誤設定も、資料にも洗い出しにも無かった。足したもの（★ は「ほぼ確実に指摘になるもの」、それ以外は並べるだけ）:
+
+- CloudFormation（YAML の `Resources:` の下の字下げと、JSON の `"Resources"` の中の括弧の深さで資源を区切る。JSON の文字列の中の括弧は数えない）:
+  `AWS::RDS::DBInstance` で `StorageEncrypted` が無い ★、`PubliclyAccessible` が無く DB サブネットグループも無いか `default` ★（読み取りレプリカ・復元は並べるだけ）、
+  `DeletionProtection` が無い（並べる）。`AWS::EC2::Instance`・`LaunchTemplate`・`AutoScaling::LaunchConfiguration` で `HttpTokens` が無い ★
+  （起動テンプレートを使うインスタンスは数えない）。Aurora の DB インスタンスは暗号化と削除の保護をクラスタで決めるので数えない。
+  `AWS::RDS::DBCluster` の暗号化は、CloudFormation と RDS の API の資料に既定が書かれていないので並べるだけにした
+- S3: 公開アクセスのブロックを `false` にした行と `AccessControl: PublicRead` を並べる。書いていないことは数えない（2023-04 以降に作るバケットは既定で有効）
+- Azure（azurerm）: DB の防火壁の規則が 0.0.0.0〜255.255.255.255 ★、0.0.0.0〜0.0.0.0（ほかの利用者の契約のものを含む Azure のすべての資源）は並べる。
+  `allow_nested_items_to_be_public` の書いていないストレージアカウント（4.x までは既定が true、5.x からは false）、匿名で読めるコンテナ、
+  受信元が `*` か `Internet` のネットワークの規則を並べる
+- Google Cloud（google）: Cloud SQL の `authorized_networks` の `0.0.0.0/0` ★。`public_access_prevention` を書いていないバケット（既定は `inherited`）を並べる。
+  Azure Storage と Google Cloud は保管データを常に暗号化するので、暗号化の書き漏れは数えない
+- Helm: テンプレートが `{{ .Values.… }}`・`toYaml .Values.…` で差し込む値を `values.yaml` の既定と突き合わせ、特権・ホストの名前空間の共有 ★、
+  権限の昇格・root は並べる。テンプレートが参照しない値は数えない
+- iOS: `kSecAttrAccessibleAlways`（と React Native の `ACCESSIBLE.ALWAYS`、Expo の `SecureStore.ALWAYS`、Swift の `.accessibility(.always)`）★、
+  `kSecAttrSynchronizable` の true を並べる。`UserDefaults` への資格情報の書き込みの ★ を、変数に置いた受け手・Objective-C の `setObject:forKey:`・
+  SwiftUI の `@AppStorage` にも広げた。ATS の例外の `NSExceptionMinimumTLSVersion`（TLSv1.0・1.1）と `NSExceptionRequiresForwardSecrecy` の false を並べる。
+  `NSAllowsArbitraryLoadsInWebContent` などと一緒に書いた `NSAllowsArbitraryLoads` は、iOS 10 以降は無視されるので ★ を外して並べる（以前は ★ だった）
+- Expo: `app.json`・`app.config.*` の `ios.infoPlist` の `NSAllowsArbitraryLoads` ★。4b 節で、公開用の接頭辞（`EXPO_PUBLIC_`・`NEXT_PUBLIC_` など。接頭辞を問わない）の
+  名前に SECRET・PRIVATE・SERVICE_ROLE・SERVICE_ACCOUNT・PASSWORD・CREDENTIAL・ADMIN_KEY などを含むものに ★。anon key・publishable key のような
+  公開前提の鍵は、名前に KEY や TOKEN が入るだけなので ★ を付けない（4b 節は以前から、名前の一覧と設定のブロックの ★ を分けていた）
+
+既定はどれも公式の資料で確かめた（AWS の CloudFormation と RDS の API・S3 の資料、Terraform の azurerm と google の各プロバイダの資料、
+Microsoft の Azure SQL と Azure Storage の資料、Google Cloud の既定の暗号化と公開アクセスの防止の資料、Apple の ATS とキーチェーンの資料、Expo の環境変数の資料）。
+架空の題材 `tests/fixtures/iac-clouds/`・`mobile-ios/` に穴のある側と正しく作った側を並べ、検査と変異を足した
+
+**資料: ファイルの一覧を取る命令が止められたときの手順を SKILL.md に書いた。** 許可の設定によっては `cd`・`;`・パイプでつないだ命令が止められ、
+実地の評価で一覧を取れないまま事前の洗い出しに名前の出たファイルだけを読み、5 つのファイルを開かずに 12 件を見落とした回があった
+（評価の仕組みの側は、2.30.0 で一覧を事前に作って渡すようにした。こちらは利用者の環境でも同じことが起きうるので、手順として書いた）。
+命令を分けて実行し直し、一覧を取れたことと全ファイルを読む範囲に入れたことを確かめてから先へ進む。検査と変異を足した
+
+ATS の読み方を書き直したので、既存の変異「18 モバイル: false の ATS も数える」の置き換えの対象を新しい書き方に合わせた（自己監査が空振りとして見つけた）。
+
+確かめたこと: `tests/run.sh` の全件（成功 1384 / 失敗 0 / 省略 1。省略は以前からの 1 件）、足した変異 34 件と置き換えの対象を直した既存の変異 1 件
+（`tests/mutations.sh --only` で、すべて失敗を捕まえた）、`tests/self-audit.sh`（worktree の pre-push フックの項目だけが赤）。
+確かめていないこと: 実在の CloudFormation・Azure・Google Cloud・Helm・iOS の定義には当てていない（題材はすべて架空）。1 行に詰めた JSON の
+CloudFormation は資源を区切れない。Helm の values.yaml の並び（`- ` の行）の中の値と、`-f`・`--set`・helmfile で上書きした値は読まない。
+Bicep・ARM テンプレート・CDK・Pulumi は扱っていない。実地の評価（題材の点数）はまだ当てていない
+
 ## [2.30.0] — 2026-10-15
 
 **2.29.0 の後に残した課題を片付け、評価の仕組みの穴を直した回。** 事前の洗い出しに、CI で外部の値を環境ファイルへ書く形と、資料 13（基盤）・14（モバイル）の
