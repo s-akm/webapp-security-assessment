@@ -1850,7 +1850,9 @@ hr "4. 秘密情報のハードコード（値は伏字にして出力する）"
     . 2>/dev/null \
     | grep -vE '[:=][[:space:]]*(process\.env|import\.meta\.env|os\.environ|os\.getenv|getenv\(|ENV\[|ENV\.fetch|Deno\.env|System\.getenv|Environment\.GetEnvironmentVariable|config\(|settings\.|env\()' \
     | grep -viE '^[^:]*(\.md|(^|/)(test|tests|__tests__|spec|fixtures?|examples?)/[^:]*|\.(test|spec)\.[a-z]+):' \
-    | grep -viE '^[^:]*:[0-9]+:.*(example|sample|dummy|placeholder|your[_-]|xxx|changeme)'
+    | grep -viE '^[^:]*:[0-9]+:.*(example|sample|dummy|placeholder|your[_-]|xxx|changeme)' \
+    | grep -viE '(token|secret|password|credential)[A-Za-z_]*["'"'"']?[[:space:]]*[:=][[:space:]]*["'"'"'`](required|optional|disabled|enabled|none|null|true|false|strict|default|bearer|header|cookie|inherit)["'"'"'`]'
+  # ↑ 設定の列挙の値（CloudFormation の "HttpTokens": "required" など）は鍵ではない。名前に token を含むだけで並んでいた
   grep -rnE "${EXA[@]}" --exclude='.env*' \
     'eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{20,}|(AKIA|ASIA)[0-9A-Z]{16}|(sk|rk)_live_|sk-(proj|ant)-|github_pat_|gh[pousr]_[0-9A-Za-z]{20,}|npm_[0-9A-Za-z]{30,}|xox[abprs]-[0-9A-Za-z]|whsec_[0-9A-Za-z]{16,}|sb_secret_|-----BEGIN [A-Z ]*PRIVATE KEY' \
     . 2>/dev/null

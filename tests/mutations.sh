@@ -997,6 +997,8 @@ mutate "資料: 危ない書き方を運用次第で判断保留にする" "refe
   's = s.replace("**危ない書き方そのものは、今の運用で悪用できなくても 問題あり にする。**", "**危ない書き方も、運用が分からなければ判断保留にする。**", 1)'
 mutate "資料: 仮定した運用で問題ありにする決まりを消す" "references/04-findings-register.md" "確かめていない運用を仮定して問題ありにせず" \
   's = s.replace("**確かめていない運用を仮定して 問題あり にしない。**", "**運用も考える。**", 1)'
+mutate "4 節: 設定の列挙の値も鍵として並べる" "scripts/audit_grep.sh" "名前に token を含む設定の列挙の値は鍵として並べず" \
+  's = s.replace("(required|optional|disabled|enabled|none|null|true|false|strict|default|bearer|header|cookie|inherit)", "(zz-never-matches)", 1)'
 mutate "eval: 題材のファイルの一覧を作らない" "../tests/eval/run-eval.sh" "題材のファイルの一覧を、スキルを置く前に作って" \
   's = s.replace("-type f -print | sed \x27s|^\\./||\x27 | LC_ALL=C sort ) > \"$EVID/files.txt\"", "-type f -print | sed \x27s|^\\./||\x27 | LC_ALL=C sort ) > /dev/null", 1)'
 mutate "eval: 一覧の置き場を指示に書かない" "../tests/eval/prompt.md" "題材のファイルの一覧の置き場を示す" \

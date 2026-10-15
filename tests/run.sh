@@ -3451,6 +3451,15 @@ if [[ $LKRC -ne 0 && ! -f "$LK/local/history.tsv" ]]; then
   ok "eval: 答えの一覧の置き場に触れた回は、当て直しの前の記録でも、採点も記録もしない"
 else ng "eval: 答えの一覧の置き場に触れた回は、当て直しの前の記録でも、採点も記録もしない" "終了コード ${LKRC}、history.tsv $( [[ -f "$LK/local/history.tsv" ]] && echo あり || echo 無し)"; fi
 
+# 4 節: 名前に token を含む設定の列挙の値（"HttpTokens": "required"）は鍵として並べない。鍵らしい値は並べる
+HT="$TMP/ht-enum"; rm -rf "$HT"; mkdir -p "$HT"
+printf '{\n  "Resources": { "Web": { "Type": "AWS::EC2::Instance",\n    "Properties": { "MetadataOptions": { "HttpTokens": "required" } } } },\n  "Settings": { "apiToken": "q8Zr2mLx7Vb4Nc1T" }\n}\n' > "$HT/stack.json"
+HTO="$(cd "$HT" && bash "$SKILL/scripts/audit_grep.sh" . 2>&1)"
+HT4="$(sed -n '/=== 4\. 秘密情報のハードコード/,/=== 4b\./p' <<<"$HTO")"
+if ! grep -F 'HttpTokens' <<<"$HT4" >/dev/null && grep -F 'apiToken' <<<"$HT4" >/dev/null; then
+  ok "4 節: 名前に token を含む設定の列挙の値は鍵として並べず、鍵らしい値は並べる"
+else ng "4 節: 名前に token を含む設定の列挙の値は鍵として並べず、鍵らしい値は並べる" "$(tr '\n' ' ' <<<"$HT4" | cut -c1-240)"; fi
+
 # 版の比較（compare.py）。版を上げてよいかの判定に使うので、劣後を見逃さないか・足りない回数で「劣後なし」と言わないかを確かめる。
 # 架空の題材 t1 で、旧 9.9.0 と新 9.9.1 を比べる。コミットは git で解けない語にして、版の名前でまとめさせる
 cmp_case() {  # <名前> <新の見つけた（空白区切り）> <新の違反> <新で項目 X を見つけた回数> [旧のモデル] [新の回ごとのモデル（空白区切り）] [新の答えの数] [未コミットの回を足す] [新の回で対照に誤検出するか]
