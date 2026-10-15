@@ -4,9 +4,10 @@
   prep_anchors.py <表.json> <写しのディレクトリ> <答えの一覧の出力先.json>
 
 題材ごとの中身は、すべて表（手元の tests/eval/local/ に置く。公開しない）に書く。
-表のパスは、すべて写しのプロジェクトルートから、名前を変える前のパスで書く。
+表のパスは、すべて写しのプロジェクトルートから、名前を変える前のパスで書く（keep があれば、残すディレクトリから）。
 
   {
+    "keep": "examples/app",                  このディレクトリだけを残し、中身をプロジェクトルートへ移す（下の「残す」）
     "require": ["challenges.md"],            写しが正しい題材かの確かめ。無ければ止める
     "items": [                               答え。anchors は (ファイル, そのファイルの中の一節)
       {"id": "sqli-login", "basis": "課題 2", "category": "Injection", "scope": "in",
@@ -19,23 +20,48 @@
     "hint_regex": "vulnerab|injection|…",    これを含むコメントだけを消す（行は保つ）
     "residual_regex": "vulnerab|…",          消したあとに残ってはいけない語。中身とファイル・ディレクトリの名前を見る。残れば止める
     "replace": [["package.json", "古い文", "新しい文"]],   コメント以外に残る性格の文（そのファイルだけ）
+    "replace_base64": [["古い語", "新しい語"]],             base64 の値（20 文字以上）を復号した中の語を置き換え、符号化し直す（全ファイル）
     "replace_everywhere": [["古い語", "新しい語"]],         識別子などに残るもの（全ファイル）
     "replace_regex": [["src/x.ts", "正規表現", "置き換え"]],  形で見つけて置き換える（そのファイルだけ。1 行ずつ当て、行は保つ）
-    "replace_regex_everywhere": [["正規表現", "置き換え"]],   同じことを全ファイルに当てる。どこにも一致しなければ止める
-    "blank_lines": [["database/init.sh", "正規表現"]],     一致する行を空にする（行は保つ）
+    "replace_regex_everywhere": [["正規表現", "置き換え"]],   同じことを全ファイルに当てる
+    "blank_lines": [["database/init.sh", "正規表現"]],     一致する行を空にする（行は保つ。大小を区別しない）
     "rename": [["app/sqli_demo", "app/search"]],           名前に手掛かりがあるファイル・ディレクトリの名前を変える（下の「名前を変える」）
-    "secrets": ["題材に埋め込まれた値"]      結果に写していれば違反として数える（score.py）
+    "secrets": ["題材に埋め込まれた値"],     結果に写していれば違反として数える（score.py）
+    "secrets_regex": "tok-[0-9a-f]{32}",     題材に埋め込まれた値を、前処理の後の中身から集めて secrets に足す（下の「値を集める」）
+    "secrets_min": 8                         集めた値がこれより少なければ止める（書かなければ 1）
   }
+
+置き換え（replace・replace_base64・replace_everywhere・replace_regex・replace_regex_everywhere・blank_lines）は、
+どれも一致が無ければ止める（題材のコミットを上げてコードが変わったときに、置き換えが外れたまま黙って通さないため）。
+当てる時点で一致しなくても、前処理の前の写しに一致があれば止めない（手掛かりのコメントを消す段や前の置き換えで先に消えた一節）。
+行の数が変わる置き換えも止める。順は replace → replace_base64 → replace_everywhere → replace_regex →
+replace_regex_everywhere → blank_lines で、後のものは、前のものを当てた後の中身に対して行う。
 
 答えの項目には、次も書ける。
   アンカーの 3 つ目     そのアンカーだけの until（[ファイル, 一節, 正規表現]）。穴の入口（ハンドラ）と、危ない処理をする本体
                        （別のファイルのサービスなど）を 1 つの答えに並べるとき、範囲の終わりの決め方が違うため。
                        書くなら、その項目のアンカーはすべて範囲で持つ（項目の until か、アンカーごとの until）
+                       3 つ目には、次を持つオブジェクトも書ける（[ファイル, 一節, {"lines": 6, "nth": 2}]）
+                         "lines": n   アンカーの行から続く n 行を、答えの行として持つ（行で持つので、採点は行の答えと同じ）
+                         "nth": k     k 回目に一致した行をアンカーの行にする（書かなければ 1 回目）。一致が k 回より少なければ止める
+                         "until": 正規表現   アンカーごとの until（lines とは一緒に書けない）
+                       同じ項目の行が重なれば、1 つにまとめる
   "control": true      対照（正しく作ってあり、指摘してはいけない箇所）。score.py が誤検出として数え、見つけた数の分母に入れない
-  "viewpoint": "02 E"  観点の網羅表（coverage.py）での振り分け先。書かなければ category から決める
+  "viewpoint": "02 E"  観点の網羅表（coverage.py）での振り分け先。書かなければ category から決める（観点の一覧も書ける）
+  "note": "…"          答えの一覧にそのまま写す注記（範囲外にした理由など）
+範囲外の答えは、場所を持たなくてよい（anchors を空にする）。
 
 答えの場所は、アンカーを写しの中で探して決める。見つからなければ止める（題材のコミットを上げてコードが
 変わったときに、黙ってずれないため）。手掛かりは、行番号を保ったまま消す（答えの行と評価者が見る行を一致させる）。
+
+残す（keep）: リポジトリの下の階層の 1 つのディレクトリだけを題材にするとき（ほかの道具の試験用に置かれたアプリなど）。
+最初に、そのディレクトリの中身をプロジェクトルートへ移し、ほかをすべて消す。リポジトリのほかの部分（道具の本体・文書・試験）には
+どこに何の穴があるかが書いてあり、ディレクトリの名前にも手掛かりがあるため。表のほかのパスは、残すディレクトリからのパスで書く。
+run-eval.sh の当てるディレクトリ（targets.tsv の 7 列目）は使わない。
+
+値を集める（secrets_regex）: すべての文字のファイルの中身から正規表現に一致する値と、base64 の値（20 文字以上）を復号した中で
+一致する値を集め、一致した base64 の値そのものも secrets に足す。題材が乱数の値を多く埋め込むとき、表に並べずに済ませるため。
+集めるのは置き換えと名前の変更の後（評価するエージェントが見る値）。
 
 コメントの消し方は、ファイルの種類ごとの記法の表（SUFFIX_SYNTAX・NAME_SYNTAX）で決める。拡張子で引き、拡張子の無い
 ファイルは名前（Dockerfile など）で引く。写しの名前（.example・.backup など）は内側の拡張子で引き、どれにも無ければ
@@ -45,12 +71,14 @@
 名前を変える（rename）: ファイルかディレクトリを、新しいパスへ動かす。答えの場所のパスは新しいパスに移し、行番号は変えない。
 ほかのファイルからの参照（import・マニフェストの登録・パス）も同じ規則で置き換える。ディレクトリなら名前、ファイルなら
 拡張子を除いた名前を、識別子の一部でない（前後が英数字と _ でない）ところだけ、すべての文字のファイルで新しい名前にする。
-置き換えで行の数は変わらない。
+置き換えで行の数は変わらない。動かした後に空になった元の親のディレクトリは消す（名前に手掛かりのある親が空のまま残るため。
+パッケージのディレクトリを別の階層へ動かすときなど）。rename は上から順に当てる。2 つ目以降の元のパスは、前の rename を当てた後のパスで書く。
 
 調べるファイル: 写しの中の、UTF-8 で読めるファイルすべて（拡張子を問わない）。外すのは、.git と node_modules の中、
 シンボリックリンク、バイナリ（NUL を含むか UTF-8 で読めない）だけ。ロックファイル（LOCKFILES）は、中身を消し残しの確かめと
 コメントの消去から外し、全体の置き換えと名前の確かめには含める（理由は LOCKFILES の注記）。
 """
+import base64
 import json
 import os
 import pathlib
@@ -225,6 +253,65 @@ def blank_hint_paragraphs(lines, syn, hint):
     return n
 
 
+# base64 の値（20 文字以上）。前に英数字・+・/ が続かず、後ろに英数字・+・/・= が続かないもの
+B64 = re.compile(r'(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])')
+
+
+def b64_text(s):
+    """base64 の値を復号した文字列。正しい base64 でないか、復号した中身が UTF-8 で読めなければ None"""
+    try:
+        return base64.b64decode(s, validate=True).decode('utf-8')
+    except ValueError:   # binascii.Error と UnicodeDecodeError は ValueError の下
+        return None
+
+
+def keep_only(root, sub):
+    """sub のディレクトリだけを残し、中身をプロジェクトルートへ移す。ほかはすべて消す"""
+    keep = (root / sub).resolve()
+    if (root / sub).is_symlink() or root not in keep.parents or not keep.is_dir():
+        sys.exit(f'残すディレクトリが無い: {sub}（表と題材が合っていないか、前処理済み）')
+    tmp = root / ('.prep-keep-' + os.urandom(6).hex())
+    keep.rename(tmp)
+    for p in root.iterdir():
+        if p == tmp:
+            continue
+        if p.is_dir() and not p.is_symlink():
+            shutil.rmtree(p)
+        else:
+            p.unlink()
+    for p in tmp.iterdir():
+        p.rename(root / p.name)
+    tmp.rmdir()
+
+
+def find_anchor(root, it, a, item_until):
+    """アンカー 1 つから、行で持つ場所の一覧か、範囲 1 つを返す（(locs, range)）"""
+    rel, anchor = a[0], a[1]
+    opt = a[2] if len(a) > 2 else {}
+    if isinstance(opt, str):
+        opt = {'until': opt}
+    if not isinstance(opt, dict) or set(opt) - {'lines', 'nth', 'until'} or ('lines' in opt and 'until' in opt):
+        sys.exit(f'{it["id"]}: アンカーの 3 つ目は until の正規表現か、lines・nth・until を持つオブジェクト（lines と until は一緒に書けない）: {opt!r}')
+    nth, n = opt.get('nth', 1), opt.get('lines')
+    if not isinstance(nth, int) or nth < 1 or (n is not None and (not isinstance(n, int) or n < 1)):
+        sys.exit(f'{it["id"]}: nth と lines は 1 以上の整数: {opt!r}')
+    until = re.compile(opt['until']) if 'until' in opt else (None if n else item_until)
+    if not (root / rel).is_file():
+        sys.exit(f'アンカーのファイルが無い: {rel}（題材のコードが変わった。表を直す）')
+    lines = (root / rel).read_text(encoding='utf-8').split('\n')
+    hits = [i for i, l in enumerate(lines, start=1) if anchor in l]
+    if len(hits) < nth:
+        sys.exit(f'アンカーが見つからない: {rel}: {anchor}（{len(hits)} 回。{nth} 回目を指している。題材のコードが変わった。表を直す）')
+    start = hits[nth - 1]
+    if until:
+        # 処理の範囲で持つ。指摘は処理の本文の中を指すことが多く、アンカーの 1 行からは離れるため
+        end = next((i - 1 for i in range(start + 1, len(lines) + 1) if until.search(lines[i - 1])), len(lines))
+        return [], {'file': rel, 'start': start, 'end': end}
+    if start + (n or 1) - 1 > len(lines):
+        sys.exit(f'答えの行がファイルの終わりを越える: {rel}: {anchor}（lines {n}）')
+    return [{'file': rel, 'line': k} for k in range(start, start + (n or 1))], None
+
+
 def moved(rel, old, new):
     """名前を変えたあとのパス"""
     if rel == old or rel.startswith(old + '/'):
@@ -245,6 +332,11 @@ def rename(root, old, new):
         sys.exit(f'名前を変える先が正しくない: {new!r}')
     dst.parent.mkdir(parents=True, exist_ok=True)
     src.rename(dst)
+    # 動かした後に空になった元の親のディレクトリを消す（名前に手掛かりのある親が空のまま残らないように）
+    parent = src.parent
+    while parent != root and parent.is_dir() and not any(parent.iterdir()):
+        parent.rmdir()
+        parent = parent.parent
     if old_tok == new_tok:
         return 0
     rx = re.compile(r'(?<![A-Za-z0-9_])' + re.escape(old_tok) + r'(?![A-Za-z0-9_])')
@@ -264,6 +356,9 @@ def main():
     spec = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
     root = pathlib.Path(sys.argv[2]).resolve()
     out = pathlib.Path(sys.argv[3])
+    # 0. 下の階層の 1 つのディレクトリだけを題材にするなら、そこだけを残してプロジェクトルートへ移す（表のパスはここから）
+    if spec.get('keep'):
+        keep_only(root, spec['keep'].strip('/'))
     for rel in spec.get('require', []):
         if not (root / rel).exists():
             sys.exit(f'{rel} が無い: {root}（表と題材が合っていないか、前処理済み）')
@@ -273,28 +368,26 @@ def main():
     for it in spec['items']:
         locs, ranges = [], []
         item_until = re.compile(it['until']) if it.get('until') else None
-        for a in it['anchors']:
-            rel, anchor = a[0], a[1]
-            until = re.compile(a[2]) if len(a) > 2 else item_until
-            lines = (root / rel).read_text(encoding='utf-8').split('\n')
-            hits = [i for i, l in enumerate(lines, start=1) if anchor in l]
-            if not hits:
-                sys.exit(f'アンカーが見つからない: {rel}: {anchor}（題材のコードが変わった。表を直す）')
-            if until:
-                # 処理の範囲で持つ。指摘は処理の本文の中を指すことが多く、アンカーの 1 行からは離れるため
-                end = next((i - 1 for i in range(hits[0] + 1, len(lines) + 1) if until.search(lines[i - 1])), len(lines))
-                ranges.append({'file': rel, 'start': hits[0], 'end': end})
-            else:
-                locs.append({'file': rel, 'line': hits[0]})
+        for a in it.get('anchors', []):
+            l, r = find_anchor(root, it, a, item_until)
+            # 同じ行を 2 度持たない（続く n 行が、ほかのアンカーの行と重なるとき）
+            locs += [x for x in l if x not in locs]
+            ranges += [r] if r else []
         if locs and ranges:
             # 採点は行で持つ答えなら範囲を見ないので、混ぜると範囲の側が黙って使われない
             sys.exit(f'{it["id"]}: 行で持つアンカーと範囲で持つアンカーが混ざっている（アンカーごとの until を揃える）')
         row = {'id': it['id'], 'keys': [it.get('basis', it['id'])], 'name': it.get('basis', ''),
                'category': it.get('category', ''), 'scope': it.get('scope', 'in'), 'locations': locs, 'ranges': ranges}
-        for k in ('control', 'viewpoint'):
+        for k in ('control', 'viewpoint', 'note'):
             if k in it:
                 row[k] = it[k]
         items.append(row)
+    ids = [x['id'] for x in items]
+    if len(set(ids)) != len(ids):
+        sys.exit(f'答えの id が重複している: {sorted({i for i in ids if ids.count(i) > 1})}')
+
+    # 前処理の前の写しの中身（置き換えの一致を確かめるときに見る）
+    orig = {p.relative_to(root).as_posix(): read_text(p) for p in text_files(root, locks=True)}
 
     # 2. 手掛かりのコメントを消す（段落ごと → 複数行のコメント → 1 行の中のコメント）。記法は種類ごとの表で引く
     para = re.compile(spec['paragraph_hint_regex'], re.I) if spec.get('paragraph_hint_regex') else None
@@ -320,26 +413,66 @@ def main():
                 stripped += sum(1 for a, b in zip(t.split('\n'), lines) if a != b)
                 write_same_lines(p, t2, t)
 
-    # 3. コメント以外に残る性格の文
+    # 3. コメント以外に残る性格の文。どれも一致が無ければ止める（題材のコミットを上げたときに、置き換えが外れたまま黙って通さない）。
+    # 当てる時点で一致しなくても、前処理の前の写しに一致があれば外れとはみなさない（手掛かりのコメントを消す段や、前の置き換えで
+    # 先に消えた一節。表の置き換えは、コメントを消し損ねたときの備えとして書くことがある）
+    def missed(msg):
+        sys.exit(f'{msg}（前処理の前の写しにも無い。題材のコミットが変わった。表を直す）')
+
+    def line_hit(rx, text):
+        return any(rx.search(l) for l in text.split('\n'))
+
     for rel, old, new in spec.get('replace', []):
         f = root / rel
-        if f.is_file():
-            f.write_text(f.read_text(encoding='utf-8').replace(old, new), encoding='utf-8')
+        if not f.is_file():
+            missed(f'replace の対象が無い: {rel}')
+        t = f.read_text(encoding='utf-8')
+        if old in t:
+            write_same_lines(f, t.replace(old, new), t)
+        elif old not in orig.get(rel, ''):
+            missed(f'replace の一節が見つからない: {rel}: {old[:60]}')
+    if spec.get('replace_base64'):
+        # base64 の値を復号して置き換え、符号化し直す（Secret の値などに題材の名前が入っているとき）
+        hit = {old: 0 for old, _ in spec['replace_base64']}
+
+        def recode(m):
+            d = b64_text(m.group(0))
+            if d is None:
+                return m.group(0)
+            d2 = d
+            for old, new in spec['replace_base64']:
+                if old in d2:
+                    hit[old] += 1
+                    d2 = d2.replace(old, new)
+            return m.group(0) if d2 == d else base64.b64encode(d2.encode('utf-8')).decode('ascii')
+        for p in text_files(root, locks=True):
+            t = read_text(p)
+            t2 = B64.sub(recode, t)
+            if t2 != t:
+                write_same_lines(p, t2, t)
+        for old in (o for o, n in hit.items() if not n):
+            if not any(old in (b64_text(m.group(0)) or '') for t in orig.values() for m in B64.finditer(t)):
+                missed(f'replace_base64 がどの base64 の値の中にも一致しない: {old}')
     for old, new in spec.get('replace_everywhere', []):
+        hit = 0
         for p in text_files(root, locks=True):
             t = read_text(p)
             if old in t:
-                p.write_text(t.replace(old, new), encoding='utf-8')
+                hit += 1
+                write_same_lines(p, t.replace(old, new), t)
+        if not hit and not any(old in t for t in orig.values()):
+            missed(f'replace_everywhere がどのファイルにも一致しない: {old}')
     for rel, pattern, new in spec.get('replace_regex', []):
         f = root / rel
         if not f.is_file():
-            sys.exit(f'replace_regex の対象が無い: {rel}')
+            missed(f'replace_regex の対象が無い: {rel}')
         rx = re.compile(pattern)
         before = f.read_text(encoding='utf-8').split('\n')
         after = [rx.sub(new, l) for l in before]
-        if after == before:
-            sys.exit(f'replace_regex が一致しない: {rel}: {pattern}（題材のコードが変わった。表を直す）')
-        f.write_text('\n'.join(after), encoding='utf-8')
+        if after != before:
+            write_same_lines(f, '\n'.join(after), '\n'.join(before))
+        elif not line_hit(rx, orig.get(rel, '')):
+            missed(f'replace_regex が一致しない: {rel}: {pattern}')
     for pattern, new in spec.get('replace_regex_everywhere', []):
         rx, hit = re.compile(pattern), 0
         for p in text_files(root, locks=True):
@@ -348,14 +481,18 @@ def main():
             if after != before:
                 hit += 1
                 write_same_lines(p, '\n'.join(after), '\n'.join(before))
-        if not hit:
-            sys.exit(f'replace_regex_everywhere がどのファイルにも一致しない: {pattern}（題材のコードが変わった。表を直す）')
+        if not hit and not any(line_hit(rx, t) for t in orig.values()):
+            missed(f'replace_regex_everywhere がどのファイルにも一致しない: {pattern}')
     for rel, pattern in spec.get('blank_lines', []):
         f = root / rel
-        if f.is_file():
-            rx = re.compile(pattern, re.I)
-            f.write_text('\n'.join('' if rx.search(l) else l for l in f.read_text(encoding='utf-8').split('\n')),
-                         encoding='utf-8')
+        if not f.is_file():
+            missed(f'blank_lines の対象が無い: {rel}')
+        rx = re.compile(pattern, re.I)
+        before = f.read_text(encoding='utf-8').split('\n')
+        if any(rx.search(l) for l in before):
+            f.write_text('\n'.join('' if rx.search(l) else l for l in before), encoding='utf-8')
+        elif not line_hit(rx, orig.get(rel, '')):
+            missed(f'blank_lines が一致しない: {rel}: {pattern}')
 
     # 4. 答えや手順が書いてあるファイルを消す
     for rel in spec.get('remove', []):
@@ -397,7 +534,26 @@ def main():
         if left:
             sys.exit('手掛かりの消し残しがある: ' + ' '.join(left[:10]))
 
-    data = {'target': spec.get('name', ''), 'secrets': spec.get('secrets', []), 'items': items}
+    # 題材に埋め込まれた値を、前処理の後の中身から集める（平文と、base64 の中。一致した base64 の値そのものも）
+    secrets = list(spec.get('secrets', []))
+    if spec.get('secrets_regex'):
+        rx = re.compile(spec['secrets_regex'])
+        plain, encoded = set(), set()
+        for p in text_files(root, locks=True):
+            t = read_text(p)
+            plain.update(m.group(0) for m in rx.finditer(t))
+            for m in B64.finditer(t):
+                d = b64_text(m.group(0))
+                found = [x.group(0) for x in rx.finditer(d)] if d else []
+                if found:
+                    plain.update(found)
+                    encoded.add(m.group(0))
+        if len(plain) < spec.get('secrets_min', 1):
+            sys.exit(f'secrets_regex で集めた値が {len(plain)} 件（secrets_min {spec.get("secrets_min", 1)} 件より少ない）。'
+                     '置き換えの順か正規表現を見直す')
+        secrets += [s for s in sorted(plain) + sorted(encoded) if s not in secrets]
+
+    data = {'target': spec.get('name', ''), 'secrets': secrets, 'items': items}
     out.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     n_in = sum(1 for x in items if x['scope'] == 'in' and not x.get('control'))
     n_ctl = sum(1 for x in items if x.get('control'))

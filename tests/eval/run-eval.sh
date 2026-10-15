@@ -137,7 +137,9 @@ PREP_SCRIPT="${PREP%% *}"; PREP_ARGS="${PREP#"$PREP_SCRIPT"}"
 if [[ -f "$LOCAL/$PREP_SCRIPT" ]]; then PREP_PATH="$LOCAL/$PREP_SCRIPT"; else PREP_PATH="$EVAL/$PREP_SCRIPT"; fi
 # 前提の列（6 列目）。無ければ premise/<題材の名前>.md
 PREMISE="$(printf '%s' "$line" | cut -f6)"; [[ -n "$PREMISE" ]] || PREMISE="premise/$TARGET.md"
-# 当てるディレクトリ（7 列目）。モノレポは対象のアプリのディレクトリだけを渡す（SKILL.md の「スクリプト」）
+# 当てるディレクトリ（7 列目）。モノレポは対象のアプリのディレクトリだけを渡す（SKILL.md の「スクリプト」）。
+# 名前は前処理の前のもの。名前に手掛かりがあるディレクトリや、ほかの部分に答えが書いてあるリポジトリの下の階層を題材にするときは、
+# この列を使わず、表の keep（prep_anchors.py）で、そのディレクトリだけを残してプロジェクトルートへ移す
 SUBDIR="$(printf '%s' "$line" | cut -f7)"
 # 前処理の列が「-」なら、答えの無い題材（実在の OSS）。採点せず、指摘の一覧だけを出す
 NO_ANSWERS=0; [[ "$PREP" == "-" ]] && NO_ANSWERS=1

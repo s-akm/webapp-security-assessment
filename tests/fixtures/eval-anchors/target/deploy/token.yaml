@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-token
+data:
+  token: bGFiLWRlbW8tMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+stringData:
+  backup: svc-fedcba9876543210fedcba9876543210
