@@ -658,9 +658,9 @@ mutate "19: 持ち主の列を見ずに ★ を付ける" "scripts/audit_grep.sh
 mutate "資料: URL を取る属性の是正の勧めを消す" "references/07-web-vulnerabilities.md" "URL を取る属性は、止まる版でも是正を勧めると書いている" \
   's = s.replace("止まる版の属性にしか出ない値でも、\n保存の時点で `http`・`https` に絞る是正は勧める", "止まる版の属性にしか出ない値は、\n是正は要らない", 1)'
 mutate "前処理: アンカーごとの until を見ない" "../tests/eval/prep_anchors.py" "アンカーごとに範囲の終わりを決める" \
-  's = s.replace("until = re.compile(a[2]) if len(a) > 2 else item_until", "until = item_until", 1)'
+  's = s.replace("until = re.compile(opt[\x27until\x27]) if \x27until\x27 in opt else (None if n else item_until)", "until = None if n else item_until", 1)'
 mutate "前処理: 正規表現の置き換えを当てない" "../tests/eval/prep_anchors.py" "正規表現で見つけて置き換える" \
-  's = s.replace("        after = [rx.sub(new, l) for l in before]\n        if after == before:", "        after = before\n        if False:", 1)'
+  's = s.replace("        if after != before:\n            write_same_lines(f,", "        if False:\n            write_same_lines(f,", 1)'
 mutate "資料: 使われていない定義を決めつける" "references/13-infrastructure.md" "使われていない古い定義は、決めつけずに確かめ、削除か更新を勧めると書いている" \
   's = s.replace("- **ただし、使われていないと決めつけない。**", "- **使われていないものとして扱う。**", 1)'
 mutate "資料: 開発環境向けの設定の残りを見ない" "references/02-code-audit.md" "開発環境向けの設定の残りを、本番でも動く経路があれば指摘すると書いている" \
@@ -906,6 +906,39 @@ mutate "eval: バイナリも中身を確かめる" "../tests/eval/prep_anchors.
   's = s.replace("    if b\x27\\0\x27 in b:\n        return None\n", "", 1)'
 mutate "eval: ロックファイルも消し残しを確かめる" "../tests/eval/prep_anchors.py" "ロックファイルの依存の注記は、消し残しに数えない" \
   's = s.replace("(locks or p.name.lower() not in LOCKFILES)", "True", 1)'
+# 題材ごとの前処理を共通の道具に寄せる作業で足した機能（続く n 行・n 回目・注記・置き換えの外れ・空の親・base64・値を集める・残す）
+mutate "eval: アンカーの続く行を答えにしない" "../tests/eval/prep_anchors.py" "アンカーの行から続く n 行と、n 回目に一致した行を答えにする" \
+  's = s.replace("for k in range(start, start + (n or 1))]", "for k in range(start, start + 1)]", 1)'
+mutate "eval: n 回目の一致を見ない" "../tests/eval/prep_anchors.py" "アンカーの行から続く n 行と、n 回目に一致した行を答えにする" \
+  's = s.replace("    start = hits[nth - 1]\n", "    start = hits[0]\n", 1)'
+mutate "eval: n 回目の一致が足りなくても黙る" "../tests/eval/prep_anchors.py" "n 回目の一致が無ければ止まる" \
+  's = s.replace("    if len(hits) < nth:\n", "    if not hits:\n", 1)'
+mutate "eval: 続く行がファイルの終わりを越えても止めない" "../tests/eval/prep_anchors.py" "続く行がファイルの終わりを越えれば止まる" \
+  's = s.replace("    if start + (n or 1) - 1 > len(lines):\n", "    if False:\n", 1)'
+mutate "eval: 項目の注記を写さない" "../tests/eval/prep_anchors.py" "項目の注記を答えの一覧に写す" \
+  's = s.replace("for k in (\x27control\x27, \x27viewpoint\x27, \x27note\x27):", "for k in (\x27control\x27, \x27viewpoint\x27):", 1)'
+mutate "eval: replace の外れを止めない" "../tests/eval/prep_anchors.py" "replace の一致が無ければ止まる" \
+  's = s.replace("        elif old not in orig.get(rel, \x27\x27):\n", "        elif False:\n", 1)'
+mutate "eval: 先に消えた一節も外れとして止める" "../tests/eval/prep_anchors.py" "先に消えた一節は、置き換えの外れとみなさない" \
+  's = s.replace("        elif old not in orig.get(rel, \x27\x27):\n", "        else:\n", 1)'
+mutate "eval: replace_everywhere の外れを止めない" "../tests/eval/prep_anchors.py" "replace_everywhere の一致が無ければ止まる" \
+  's = s.replace("        if not hit and not any(old in t for t in orig.values()):\n", "        if False:\n", 1)'
+mutate "eval: blank_lines の外れを止めない" "../tests/eval/prep_anchors.py" "blank_lines の一致が無ければ止まる" \
+  's = s.replace("        elif not line_hit(rx, orig.get(rel, \x27\x27)):\n            missed(f\x27blank_lines", "        elif False:\n            missed(f\x27blank_lines", 1)'
+mutate "eval: replace_base64 の外れを止めない" "../tests/eval/prep_anchors.py" "replace_base64 の一致が無ければ止まる" \
+  's = s.replace("            if not any(old in (b64_text(m.group(0)) or \x27\x27)", "            if False and not any(old in (b64_text(m.group(0)) or \x27\x27)", 1)'
+mutate "eval: 名前を変えた後の空の親を残す" "../tests/eval/prep_anchors.py" "空になった元の親のディレクトリを消す" \
+  's = s.replace("    while parent != root and parent.is_dir() and not any(parent.iterdir()):", "    while False:", 1)'
+mutate "eval: base64 の中を置き換えない" "../tests/eval/prep_anchors.py" "base64 の値を復号して置き換え" \
+  's = s.replace("            t2 = B64.sub(recode, t)\n", "            t2 = t\n", 1)'
+mutate "eval: 内容から値を集めない" "../tests/eval/prep_anchors.py" "平文と base64 の中から集める" \
+  's = s.replace("        secrets += [s for s in sorted(plain) + sorted(encoded) if s not in secrets]", "        secrets += []", 1)'
+mutate "eval: 一致した base64 の値を secrets に足さない" "../tests/eval/prep_anchors.py" "一致した base64 の値そのものも secrets に足す" \
+  's = s.replace("                    encoded.add(m.group(0))\n", "                    pass\n", 1)'
+mutate "eval: 集めた値の数を確かめない" "../tests/eval/prep_anchors.py" "集めた値が secrets_min より少なければ止まる" \
+  's = s.replace("        if len(plain) < spec.get(\x27secrets_min\x27, 1):", "        if False:", 1)'
+mutate "eval: 残すディレクトリだけを残さない" "../tests/eval/prep_anchors.py" "1 つのディレクトリだけを残し" \
+  's = s.replace("        keep_only(root, spec[\x27keep\x27].strip(\x27/\x27))", "        pass", 1)'
 mutate "eval: 答えの一覧をエージェントの置き場の中に置く" "../tests/eval/run-eval.sh" "エージェントに見せる置き場（ws）の外に置く" \
   's = s.replace("SRC=\"$WS/target\"; OUT=\"$WORK/out\"", "SRC=\"$WS/target\"; OUT=\"$WS/out\"", 1)'
 mutate "資料: 危ない書き方を運用次第で判断保留にする" "references/04-findings-register.md" "危ない書き方は運用を問わず問題ありにする" \

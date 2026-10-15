@@ -65,8 +65,48 @@
           "prefs.putString("
         ]
       ]
+    },
+    {
+      "id": "list-lines",
+      "basis": "例",
+      "category": "Misc",
+      "scope": "out",
+      "note": "続く行と n 回目の一致の例",
+      "anchors": [
+        [
+          "app/service.ts",
+          "async ",
+          {
+            "nth": 2,
+            "lines": 3
+          }
+        ],
+        [
+          "app/service.ts",
+          "return [",
+          {
+            "lines": 2
+          }
+        ]
+      ]
+    },
+    {
+      "id": "doc-only",
+      "basis": "例",
+      "category": "Misc",
+      "scope": "out",
+      "note": "場所を持たない範囲外の答え",
+      "anchors": []
     }
   ],
+  "replace_base64": [
+    [
+      "lab-demo",
+      "svc"
+    ]
+  ],
+  "secrets_regex": "svc-[0-9a-f]{32}",
+  "secrets_min": 2,
   "paragraph_hint_regex": "VULN:",
   "replace_regex_everywhere": [
     [
@@ -82,6 +122,10 @@
     [
       "mobile/SqlInjectionScreen.kt",
       "mobile/SearchScreen.kt"
+    ],
+    [
+      "mobile/src/vulnerable_lab/notes",
+      "mobile/src/com/example/notes"
     ]
   ],
   "remove": [
@@ -95,6 +139,11 @@
       "app/server.js",
       "// 検索の処理",
       "// 検索"
+    ],
+    [
+      "app/server.js",
+      "SQL injection: the query",
+      "検索の式"
     ]
   ],
   "secrets": [

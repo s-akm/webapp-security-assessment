@@ -24,5 +24,12 @@
 - `training-build-7` は、ファイルを指定しない正規表現の置き換え（replace_regex_everywhere）で、ロックファイルも含めて置き換わるべきもの
 - `target/mobile/vulnerable_cache/` と `target/mobile/SqlInjectionScreen.kt` は、名前に手掛かりがある例（rename）。答えの場所は新しいパスに移り、
   `import` とマニフェストの登録も新しい名前になるべきもの
+- `target/app/service.ts` の 6〜8 行目は、2 回目に一致した行から続く 3 行と、別のアンカーの続く 2 行を 1 つの答えにまとめる例（lines・nth。重なる行は 1 つにする）。
+  場所を持たない範囲外の答えと、答えの一覧に写す注記（note）の例も表にある
+- 表の replace の 2 つ目（`app/server.js` の 4 行目の一節）は、手掛かりのコメントを消す段で先に消える。置き換えの外れとして止めない例
+- `target/mobile/src/vulnerable_lab/notes/` は、別の階層へ名前を変える例。空になった元の親（`vulnerable_lab`）が消えるべきもの
+- `target/deploy/token.yaml` は、base64 の値の中の語を置き換える例（replace_base64）と、平文と base64 の中から値を集める例（secrets_regex）。
+  値は架空のもの
+- 表の keep（下の階層の 1 つのディレクトリだけを残す）は、検査が表を書き換えて確かめる
 - `target/package-lock.json.fixture` の依存の非推奨の注記は、消し残しの語を含むが、ロックファイルの中身なので止めない例。
   依存関係グラフに拾わせないよう `.fixture` を付けて置き、検査が `fixture_cp` で写すときに外す

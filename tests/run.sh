@@ -3151,6 +3151,72 @@ else ng "eval[前処理]: コメントの記法の表に無い種類のファイ
 PCB="$(pa_case binary assets/blob.bin '\0vulnerable injection\0')"; PCB_RC=$?
 if [[ $PCB_RC -eq 0 ]]; then ok "eval[前処理]: バイナリのファイルは中身を確かめずに飛ばす"
 else ng "eval[前処理]: バイナリのファイルは中身を確かめずに飛ばす" "$(tr '\n' ' ' <<<"$PCB" | cut -c1-160)"; fi
+# 題材ごとの前処理を共通の道具に寄せる作業で足した機能（続く n 行・n 回目・注記・置き換えの外れ・空の親・base64・値を集める・残す）
+# 答えの一覧から項目を 1 つ取り出す
+pa_item() { python3 -c "import json,sys; print(json.dumps({x['id']:x for x in json.load(open(sys.argv[1]))['items']}[sys.argv[2]], ensure_ascii=False, sort_keys=True))" "$TMP/eval-pa.json" "$1" 2>/dev/null; }
+if [[ "$(pa_item list-lines | python3 -c "import json,sys; print([(l['file'], l['line']) for l in json.load(sys.stdin)['locations']])" 2>/dev/null)" == "[('app/service.ts', 6), ('app/service.ts', 7), ('app/service.ts', 8)]" ]]; then
+  ok "eval[前処理]: アンカーの行から続く n 行と、n 回目に一致した行を答えにする"
+else ng "eval[前処理]: アンカーの行から続く n 行と、n 回目に一致した行を答えにする" "$(pa_item list-lines | cut -c1-200)"; fi
+if grep -F '"note": "続く行と n 回目の一致の例"' <<<"$(pa_item list-lines)" >/dev/null && grep -F '"note": "場所を持たない範囲外の答え"' <<<"$(pa_item doc-only)" >/dev/null \
+   && grep -F '"locations": []' <<<"$(pa_item doc-only)" >/dev/null; then
+  ok "eval[前処理]: 項目の注記を答えの一覧に写す"
+else ng "eval[前処理]: 項目の注記を答えの一覧に写す" "$(pa_item doc-only | cut -c1-200)"; fi
+if [[ -s "$TMP/eval-pa.json" ]] && grep -F 'SQL injection: the query' "$ROOT/tests/fixtures/eval-anchors/spec.json" >/dev/null && ! grep -F 'SQL injection' "$PA/app/server.js" >/dev/null 2>&1; then
+  ok "eval[前処理]: 手掛かりのコメントを消す段で先に消えた一節は、置き換えの外れとみなさない"
+else ng "eval[前処理]: 手掛かりのコメントを消す段で先に消えた一節は、置き換えの外れとみなさない" "前処理が止まったか、表の置き換えが無い"; fi
+if [[ -f "$PA/mobile/src/com/example/notes/Note.kt" && ! -e "$PA/mobile/src/vulnerable_lab" ]]; then
+  ok "eval[前処理]: 名前を変えた後に空になった元の親のディレクトリを消す"
+else ng "eval[前処理]: 名前を変えた後に空になった元の親のディレクトリを消す" "$(cd "$PA/mobile/src" 2>/dev/null && find . | tr '\n' ' ')"; fi
+if grep -F 'token: c3ZjLTAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVm' "$PA/deploy/token.yaml" >/dev/null 2>&1; then
+  ok "eval[前処理]: base64 の値を復号して置き換え、符号化し直す"
+else ng "eval[前処理]: base64 の値を復号して置き換え、符号化し直す" "$(grep 'token:' "$PA/deploy/token.yaml" 2>/dev/null)"; fi
+PASEC="$(python3 -c "import json,sys; print(' '.join(json.load(open(sys.argv[1]))['secrets']))" "$TMP/eval-pa.json" 2>/dev/null)"
+if grep -F 'svc-0123456789abcdef0123456789abcdef' <<<"$PASEC" >/dev/null && grep -F 'svc-fedcba9876543210fedcba9876543210' <<<"$PASEC" >/dev/null \
+   && grep -F 'dummy-embedded-value' <<<"$PASEC" >/dev/null; then
+  ok "eval[前処理]: 埋め込まれた値を、平文と base64 の中から集める"
+else ng "eval[前処理]: 埋め込まれた値を、平文と base64 の中から集める" "$PASEC"; fi
+contains "eval[前処理]: 一致した base64 の値そのものも secrets に足す" 'c3ZjLTAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVm' "$PASEC"
+# 表を書き換えて前処理する。<名前> <表を書き換える Python の文（d が表）>
+pa_spec() {
+  local d="$TMP/eval-anchors-$1"; rm -rf "$d"; fixture_cp "$PAF" "$d"
+  python3 - "$ROOT/tests/fixtures/eval-anchors/spec.json" "$TMP/eval-anchors-$1-spec.json" "$2" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1], encoding='utf-8'))
+exec(sys.argv[3])
+json.dump(d, open(sys.argv[2], 'w', encoding='utf-8'), ensure_ascii=False)
+PY
+  python3 -B "$ROOT/tests/eval/prep_anchors.py" "$TMP/eval-anchors-$1-spec.json" "$d" "$TMP/eval-anchors-$1.json" 2>&1
+}
+# 置き換えが外れたら止まる（題材のコミットを上げたときに、黙って通さない）。<名前> <書き換え> <期待する文言> <検査名>
+pa_stops() {
+  local o rc; o="$(pa_spec "$1" "$2")"; rc=$?
+  if [[ $rc -ne 0 ]] && grep -F "$3" <<<"$o" >/dev/null; then ok "$4"
+  else ng "$4" "終了コード $rc: $(tr '\n' ' ' <<<"$o" | cut -c1-160)"; fi
+}
+pa_stops miss-replace "d['replace'].append(['app/server.js', '題材に無い一節', 'x'])" 'replace の一節が見つからない' \
+  "eval[前処理]: replace の一致が無ければ止まる"
+pa_stops miss-everywhere "d['replace_everywhere'] = [['題材に無い語', 'x']]" 'replace_everywhere がどのファイルにも一致しない' \
+  "eval[前処理]: replace_everywhere の一致が無ければ止まる"
+pa_stops miss-blank "d['blank_lines'] = [['app/server.js', '題材に無い行']]" 'blank_lines が一致しない' \
+  "eval[前処理]: blank_lines の一致が無ければ止まる"
+pa_stops miss-base64 "d['replace_base64'].append(['題材に無い語', 'x'])" 'replace_base64 がどの base64 の値の中にも一致しない' \
+  "eval[前処理]: replace_base64 の一致が無ければ止まる"
+pa_stops few-secrets "d['secrets_min'] = 99" 'secrets_regex で集めた値が' \
+  "eval[前処理]: 集めた値が secrets_min より少なければ止まる"
+pa_stops nth-missing "d['items'][0]['anchors'][0].append({'nth': 9})" 'アンカーが見つからない' \
+  "eval[前処理]: n 回目の一致が無ければ止まる"
+pa_stops lines-eof "d['items'][0]['anchors'][0].append({'lines': 50})" '答えの行がファイルの終わりを越える' \
+  "eval[前処理]: 続く行がファイルの終わりを越えれば止まる"
+# 下の階層の 1 つのディレクトリだけを題材にする（keep）。表のパスは残すディレクトリから書く
+PK="$(pa_spec keep "d.clear(); d.update({'keep': 'app', 'require': ['server.js'], 'items': [{'id': 'k', 'anchors': [['server.js', 'SELECT id FROM items']]}]})")"; PK_RC=$?
+PKD="$TMP/eval-anchors-keep"
+if [[ $PK_RC -eq 0 && -f "$PKD/server.js" && -f "$PKD/views/list.ejs" && ! -e "$PKD/app" && ! -e "$PKD/docs" && ! -e "$PKD/mobile" ]] \
+   && [[ -z "$(find "$PKD" -maxdepth 1 -name '.prep-keep-*' 2>/dev/null)" ]] \
+   && python3 -c "import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))['items'][0]['locations']==[{'file':'server.js','line':5}] else 1)" "$TMP/eval-anchors-keep.json" 2>/dev/null; then
+  ok "eval[前処理]: 下の階層の 1 つのディレクトリだけを残し、プロジェクトルートへ移す"
+else ng "eval[前処理]: 下の階層の 1 つのディレクトリだけを残し、プロジェクトルートへ移す" "終了コード ${PK_RC}: $(tr '\n' ' ' <<<"$PK" | cut -c1-120) $(ls -A "$PKD" 2>/dev/null | tr '\n' ' ')"; fi
+pa_stops keep-missing "d.clear(); d.update({'keep': 'no-such-dir', 'items': []})" '残すディレクトリが無い' \
+  "eval[前処理]: 残すディレクトリが無ければ止まる"
 
 # 観点の網羅表（coverage.py）。答えの分類と検査の名前の区分を、スキルの観点に振り分けて数える。題材の名前は出さない
 CV="$TMP/coverage"; mkdir -p "$CV/answers"
