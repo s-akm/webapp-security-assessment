@@ -6,7 +6,7 @@
 # 語は手元の非公開のファイルからだけ集める。語そのものが案件や題材を特定する情報なので、リポジトリには入れない。
 #   1. tests/ngwords.local            実案件を示す語（1 行 1 語または正規表現）
 #   2. tests/eval/local/targets.tsv   実地の評価の題材。名前・取得元のリポジトリ名・owner/repo を、区切りの揺れ込みで取り出す
-#   3. tests/eval/local/*.json        題材の表の name と secrets（題材に埋め込まれた値）
+#   3. tests/eval/local/*.json        題材の表の name と secrets（題材に埋め込まれた値。よくある弱いパスワードは除く）
 #   4. tests/eval/local/ngwords       題材を特定できるその他の語（特徴的なパスなど。任意）
 # 4 文字未満の語は出さない（一般の語に当たりすぎる）。tests/run.sh・tests/self-audit.sh・build/hooks/pre-push が使う。
 set -uo pipefail
@@ -25,6 +25,16 @@ def regex_lines(path):
         for l in path.read_text(encoding='utf-8').splitlines():
             if l.strip() and not l.lstrip().startswith('#'):
                 out.append(l.strip())
+
+# よくある弱いパスワード（数字に置き換えた書き方を含む）は、どの題材かを示さない。題材に埋め込まれていても語に入れない
+# （公開の検査の題材が同じ値を使っていて、照合が誤って一致した。2026-10-15）
+WEAK = {'password', 'admin', 'administrator', 'root', 'toor', 'secret', 'letmein', 'welcome', 'changeme', 'qwerty',
+        'default', 'guest', 'test', '123456', '12345678', 'password1', 'passw0rd'}
+LEET = str.maketrans({'0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '@': 'a', '$': 's'})
+
+def weak_password(v):
+    low = v.lower()
+    return low in WEAK or low.translate(LEET) in WEAK
 
 def word(w):
     w = w.strip()
@@ -56,7 +66,7 @@ for j in sorted(local.glob('*.json')) if local.is_dir() else []:
         if d.get('name'):
             word(d['name'])
         for s in d.get('secrets', []):
-            if len(s) >= 4:
+            if len(s) >= 4 and not weak_password(s):
                 out.append(re.escape(s))
 regex_lines(local / 'ngwords')
 seen = set()

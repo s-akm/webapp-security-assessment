@@ -2866,6 +2866,14 @@ IWB="$TMP/idw-broken"; mkdir -p "$IWB/tests"; printf 'goodword\nbad[word\n' > "$
 bash "$ROOT/build/identifying-words.sh" "$IWB" >/dev/null 2>&1; iwrc=$?
 if [[ $iwrc -eq 2 ]]; then ok "語の道具: 正規表現として読めない行があれば止まる"
 else ng "語の道具: 正規表現として読めない行があれば止まる" "終了コード $iwrc"; fi
+# 題材の表の secrets のうち、よくある弱いパスワード（数字に置き換えた書き方も）は語に入れない。組み合わせた値や鍵らしい値は入れる
+IWW="$TMP/idw-weak"; mkdir -p "$IWW/tests/eval/local"
+printf '{"name": "canary-weak", "secrets": ["passw0rd", "P@ssword", "op3rat0r:KiteRiver42", "q8Zr2mLx7Vb4"]}\n' > "$IWW/tests/eval/local/canary-weak.json"
+IWWO="$(bash "$ROOT/build/identifying-words.sh" "$IWW" 2>/dev/null)"
+if ! grep -ixF 'passw0rd' <<<"$IWWO" >/dev/null && ! grep -ixF 'P@ssword' <<<"$IWWO" >/dev/null \
+   && grep -F 'op3rat0r:KiteRiver42' <<<"$IWWO" >/dev/null && grep -F 'q8Zr2mLx7Vb4' <<<"$IWWO" >/dev/null; then
+  ok "語の道具: よくある弱いパスワードは語に入れず、組み合わせた値や鍵らしい値は入れる"
+else ng "語の道具: よくある弱いパスワードは語に入れず、組み合わせた値や鍵らしい値は入れる" "$(tr '\n' ' ' <<<"$IWWO" | cut -c1-200)"; fi
 # 途中で止まったら知らせる（C-37）
 AGX="$(bash "$SKILL/scripts/audit_grep.sh" "$TMP/no-such-dir-$$" 2>&1)"
 contains "audit_grep[中断]: 途中で止まったら、出力が途中までであることを出す" "=== 中断 ==="          "$AGX"
