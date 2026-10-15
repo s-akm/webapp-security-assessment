@@ -2993,6 +2993,35 @@ absent   "eval[採点]: 対照に掛かる指摘を一覧外に数えない"    
 if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if (d["controls"], d["control_fp"]) == (2, 1) else 1)' "$TMP/eval-cs.json" 2>/dev/null; then
   ok "eval[採点]: 対照の数と誤検出の数を集計に残す"
 else ng "eval[採点]: 対照の数と誤検出の数を集計に残す" "summary に controls・control_fp が無いか、数が違う"; fi
+# 対照に掛かったと数えるのは、指摘の場所が対照を狭く指したとき（1 行か、幅 30 行以内の範囲）だけ。
+# ハンドラ全体を範囲で指した別の指摘が、中の対照の行に掛かって誤検出と数えられていた。1 行の場所を併せて書いた指摘は数える
+cat > "$TMP/eval-cwa.json" <<'EOF'
+{"items": [
+  {"id": "CW1", "scope": "in", "category": "x", "control": true, "locations": [{"file": "svc/pay.py", "line": 40}]},
+  {"id": "CW2", "scope": "in", "category": "x", "control": true, "locations": [{"file": "svc/order.py", "line": 40}]},
+  {"id": "CW3", "scope": "in", "category": "x", "control": true, "locations": [{"file": "svc/cart.py", "line": 40}]},
+  {"id": "CW4", "scope": "in", "category": "x", "control": true, "locations": [{"file": "svc/ship.py", "line": 40}]}
+]}
+EOF
+cat > "$TMP/eval-cwr.json" <<'EOF'
+{"findings": [
+  {"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "y", "locations": [{"file": "svc/pay.py", "line": 22, "end_line": 61}]},
+  {"id": "S-02", "title": "t", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "y", "locations": [{"file": "svc/order.py", "line": 35, "end_line": 48}]},
+  {"id": "S-03", "title": "t", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "y", "locations": [{"file": "svc/cart.py", "line": 42}]},
+  {"id": "S-04", "title": "t", "verdict": "問題あり", "priority": "P2", "fact": "x", "assessment": "y", "locations": [{"file": "svc/ship.py", "line": 22, "end_line": 61}, {"file": "svc/ship.py", "line": 40}]}
+ ], "unconfirmed": [{"id": "U-1", "text": "a", "blocks": []}], "maintain": []}
+EOF
+SCW="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-cwa.json" "$TMP/eval-cwr.json" 2>&1 || true)"
+if grep -E '対照を守った +control +CW1 ' <<<"$SCW" >/dev/null; then ok "eval[採点]: 広い範囲で指した別の指摘は対照の誤検出に数えない"
+else ng "eval[採点]: 広い範囲で指した別の指摘は対照の誤検出に数えない" "CW1 が対照を守ったになっていない"; fi
+if grep -E '誤検出（対照） +control +CW2 ' <<<"$SCW" >/dev/null; then ok "eval[採点]: 狭い範囲で対照を指した問題ありは誤検出に数える"
+else ng "eval[採点]: 狭い範囲で対照を指した問題ありは誤検出に数える" "CW2 が誤検出（対照）になっていない"; fi
+if grep -E '誤検出（対照） +control +CW3 ' <<<"$SCW" >/dev/null; then ok "eval[採点]: 1 行で対照を指した問題ありは誤検出に数える"
+else ng "eval[採点]: 1 行で対照を指した問題ありは誤検出に数える" "CW3 が誤検出（対照）になっていない"; fi
+if grep -E '誤検出（対照） +control +CW4 ' <<<"$SCW" >/dev/null; then ok "eval[採点]: 広い範囲でも対照の行を 1 行で併せて指せば誤検出に数える"
+else ng "eval[採点]: 広い範囲でも対照の行を 1 行で併せて指せば誤検出に数える" "CW4 が誤検出（対照）になっていない"; fi
+contains "eval[採点]: 対照に数えない広い範囲の指摘は一覧外に残す"   "答えの一覧に無い「問題あり」 1 件" "$SCW"
+contains "eval[採点]: 対照への誤検出は狭く指したものだけを数える"   "対照 4 か所のうち、誤って「問題あり」と指摘したもの 3 か所" "$SCW"
 # 未確認事項が止めている相手は、指摘（S-）でも別の未確認事項（U-）でもよい。実在しない ID だけを咎める
 cat > "$TMP/eval-su.json" <<'EOF'
 {"findings": [{"id": "S-01", "title": "t", "verdict": "問題あり", "priority": "P1", "fact": "x", "assessment": "y",

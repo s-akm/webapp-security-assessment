@@ -12,7 +12,8 @@ schema.json の形のオブジェクトそのもの。
    判定が「問題あり」なら見つけた、「判断保留」なら保留、「問題なし」なら見誤り、無ければ見落とし
 2. 答えの一覧に無い「問題あり」。誤検出とは限らない（教材には印の無い穴も多い）。人が読んで仕分ける
    答えの一覧に対照（"control": true。正しく作ってあり、指摘してはいけない箇所）があれば、そこに掛かる「問題あり」を
-   誤検出（対照）として数える。対照は見つけた数の分母に入れない
+   誤検出（対照）として数える。対照は見つけた数の分母に入れない。対照に掛かったと数えるのは、指摘の場所が対照を
+   狭く指したとき（1 行か、幅 PRECISE 以下の範囲）だけ。ハンドラ全体を範囲で指した別の指摘を、中の対照に数えないため
 3. スキルの方針を守っているか。判定を丸投げする言い回し、事実と所見の書き分け、優先度、未確認事項、鍵の値の転記
 """
 import argparse
@@ -130,6 +131,19 @@ def matches(item, finding, tol):
     return bool(matching_locs(item, finding, tol))
 
 
+def control_locs(item, finding, tol):
+    """対照に掛かる、指摘の場所の一覧。対照を狭く指した場所だけを数える。
+
+    1 行で指した場所は答えと同じ規則（前後 tol 行まで、いちばん近い答えの行にだけ）。範囲で指した場所は、
+    幅が PRECISE 以下で対照の行を含むときだけ数える。答えの一致は範囲が広くても（WIDE 以下なら）認めるが、
+    対照に同じ規則を使うと、ハンドラ全体を範囲で指した別の正しい指摘（例: 処理の開始に回数の上限が無い）が、
+    同じハンドラの中の対照の行（例: 冪等性のキーで重複を止める行）に掛かり、誤検出と数えてしまう
+    （実測で、架空の通販の題材の 3 回すべてで起き、版の比較で劣後と出た）。
+    範囲が広い指摘でも、場所の一覧に対照の行を 1 行で指した場所があれば、その場所で数える
+    """
+    return [l for l in matching_locs(item, finding, tol) if span(l)[1] - span(l)[0] <= PRECISE]
+
+
 def score(answers, result, tol):
     findings = result.get('findings') or []
     ANSWER_LINES.clear()
@@ -138,7 +152,11 @@ def score(answers, result, tol):
             ANSWER_LINES.setdefault(norm(al['file']), []).append(al['line'])
     rows, matched_ids = [], set()
     for it in answers['items']:
-        hit = [f for f in findings if matches(it, f, tol)]
+        # 対照は狭く指した場所だけで見る（control_locs の注記）。範囲で広く指しただけの指摘は、対照に一致させず一覧外に残す
+        if it.get('control'):
+            hit = [f for f in findings if control_locs(it, f, tol)]
+        else:
+            hit = [f for f in findings if matches(it, f, tol)]
         matched_ids.update(id(f) for f in hit)
         verdicts = {f.get('verdict') for f in hit}
         if it.get('control'):
