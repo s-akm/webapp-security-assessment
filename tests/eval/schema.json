@@ -17,7 +17,7 @@
             "items": {
               "type": "object",
               "properties": {
-                "file": { "type": "string", "description": "リポジトリの根からの相対パス" },
+                "file": { "type": "string", "description": "プロジェクトルートからの相対パス" },
                 "line": { "type": "integer" },
                 "end_line": { "type": "integer" }
               },
