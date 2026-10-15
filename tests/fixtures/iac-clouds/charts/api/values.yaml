@@ -1,0 +1,6 @@
+# 架空のチャート。正しく作った側
+securityContext:
+  privileged: false
+  allowPrivilegeEscalation: false
+  runAsUser: 10001
+hostNetwork: false

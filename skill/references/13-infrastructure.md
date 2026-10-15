@@ -139,21 +139,38 @@ grep -rnE '0\.0\.0\.0/0|::/0|public|acl.*public-read|allUsers|allAuthenticatedUs
 # DB を外から直接つなげる設定と、インスタンスのメタデータの取得の方式
 grep -rnE 'publicly_accessible|PubliclyAccessible|http_tokens|HttpTokens|metadata_options|MetadataOptions' \
   --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
+# Azure と Google Cloud の公開（DB の防火壁の範囲、受信元、ストレージの公開の可否）
+grep -rnE 'start_ip_address|end_ip_address|source_address_prefix|allow_nested_items_to_be_public|container_access_type|authorized_networks|public_access_prevention' \
+  --include='*.tf' . 2>/dev/null | head -20
 ```
 
 - 全開放の受信規則（`0.0.0.0/0`）が、管理用のポート（SSH・RDP）や**DB・キャッシュのポート**
   （PostgreSQL 5432・MySQL 3306・Redis 6379・MongoDB 27017・Elasticsearch 9200）に付いていないか
 - **RDS などのマネージド DB に `publicly_accessible = true` が付いていないか。** 受信規則と組み合わさると、
   インターネットから DB へ直接つなげる。Terraform の `aws_db_instance` は書かなければ `false` だが、RDS の API
-  （CloudFormation の `PubliclyAccessible` もこれに従う）は、Aurora でない DB で `DBSubnetGroup` を指定しないと既定が `true` になる。
-  CloudFormation では、書いていないことも確かめる
+  （CloudFormation の `PubliclyAccessible` もこれに従う）は、Aurora でない DB で `DBSubnetGroupName` を指定しないか `default` にすると
+  既定が `true` になる（RDS の `CreateDBInstance` の資料）。**CloudFormation では、書いていないことも確かめる。** `scripts/audit_grep.sh` の
+  17 節は、YAML の `Resources:` の下の字下げと、JSON の `"Resources"` の中の括弧の深さで資源を区切り、`AWS::RDS::DBInstance` の
+  `StorageEncrypted`・`PubliclyAccessible`・`DeletionProtection`、`AWS::EC2::Instance`・`LaunchTemplate` の `HttpTokens` を書いていないものを並べる
+  （Aurora の DB インスタンスは暗号化と削除の保護をクラスタで決めるので数えない。読み取りレプリカとスナップショットからの復元は、暗号化を元から引き継ぐ）
 - **EC2 のインスタンスメタデータを IMDSv2 に限っているか**（Terraform は `metadata_options` の `http_tokens = "required"`、
   CloudFormation は `MetadataOptions` の `HttpTokens: required`）。指定が無ければ、作成時の既定（AMI やアカウントの設定）に任される。
   IMDSv1 が残っていると、アプリの SSRF（`references/07-web-vulnerabilities.md` の 5 節）から、インスタンスの資格情報を取られやすくなる
 - ストレージが公開読み取りになっていないか
 - **意図した公開もある**（静的サイトの配信）。用途を確かめてから起票する
 - **既定値は作成時期で違う。** AWS の S3 は 2023-04 以降に作ったバケットだけ、公開ブロックが有効・ACL 無効が既定になった。
-  それより前からあるバケットは変わっていないので、作成日を確かめる
+  それより前からあるバケットは変わっていないので、作成日を確かめる。定義に公開ブロックを書いていないこと自体は、今作るバケットでは穴ではない。
+  `BlockPublicAcls: false`（`block_public_acls = false`）のように外している定義と、`AccessControl: PublicRead` は、意図した公開かを確かめる
+- **Azure と Google Cloud も同じ考え方で確かめる**（既定は各プロバイダの資料で確かめたもの）。
+  - Azure の DB の防火壁の規則（`azurerm_mssql_firewall_rule` など）で `start_ip_address = "0.0.0.0"`・`end_ip_address = "255.255.255.255"` なら、
+    すべての IP アドレスから DB へ届く。`0.0.0.0`〜`0.0.0.0` は「Azure のサービスを許可」で、**ほかの利用者の契約のものを含む** Azure のすべての資源から届く（Microsoft の資料）
+  - Azure のネットワークの規則で `source_address_prefix` が `*` か `Internet` の受信の許可は、`0.0.0.0/0` と同じ
+  - `azurerm_storage_account` の `allow_nested_items_to_be_public` は、azurerm 4.x までは既定が `true`（中のコンテナを匿名の公開にできる）、
+    5.x からは `false`。書いていなければ、使っているプロバイダの版を確かめる。コンテナの `container_access_type` が `blob` か `container` なら匿名で読める
+  - Google Cloud の SQL の `authorized_networks` に `0.0.0.0/0` があれば、すべての IP アドレスから DB へ届く。ファイアウォールの `source_ranges` も同じ
+  - `google_storage_bucket` の `public_access_prevention` は既定が `inherited` で、組織のポリシーで強制していなければ、中のものを
+    `allUsers` に公開できる。`enforced` にしているかを確かめる
+  - Azure Storage と Google Cloud は保管データを常に暗号化する（各社の資料）。暗号化の書き漏れは、AWS の RDS のような穴にならない
 
 ### 3-2. 権限の広さ
 
@@ -179,6 +196,7 @@ CI に渡している資格情報が広い権限を持っていれば、`referen
 
 - 保管データの暗号化が有効になっているか（既定で無効な資源がある）。**Terraform の `aws_db_instance` の `storage_encrypted` は
   書かなければ `false`**（`aws_rds_cluster` も `provisioned` では `false`、`serverless` では `true`）。RDS の API も既定は暗号化しない。
+  **CloudFormation の `AWS::RDS::DBInstance` の `StorageEncrypted` も、書かなければ暗号化しない**（CloudFormation の資料）。
   暗号化は作ったあとで切り替えられず、スナップショットからの作り直しになる
 
 ```bash
@@ -245,6 +263,11 @@ grep -rnE 'backup_retention_period|skip_final_snapshot|deletion_protection|Delet
   `verbs`・`resources` に `"*"` を書いていないか。`*` は今ある資源だけでなく、**後から増える資源の種類にも届く**
 - リソース制限（`limits`）があるか。無ければ 1 つのポッドで全体が落ちる。名前空間に `LimitRange` があれば、
   書いていないコンテナに既定の上限が入る。Helm のテンプレートで値を差し込む書き方は、`values.yaml` まで読む
+- **Helm のチャートは、`values.yaml` の既定で権限が決まる。** テンプレートが `privileged: {{ .Values.securityContext.privileged }}` や
+  `{{- toYaml .Values.securityContext | nindent 12 }}` のように値を差し込んでいると、マニフェストの行を読んでも値は分からない。
+  `values.yaml` の既定に `privileged: true`・`hostNetwork: true`・`runAsUser: 0` などがあれば、上書きせずに入れた環境ではそのまま動く。
+  `scripts/audit_grep.sh` の 17 節は、テンプレートが参照する `.Values.…`（とその下の階層）と `values.yaml` の既定を突き合わせて並べる。
+  実際に入れるときの `-f`・`--set`・helmfile の値で上書きしていれば、そちらで決まるので、配備の手順の値も確かめる
 
 ```bash
 # コメントの行を除いて、ホストへ届く設定と RBAC の広さを見る

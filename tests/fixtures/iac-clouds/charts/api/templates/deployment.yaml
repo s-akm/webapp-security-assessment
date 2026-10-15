@@ -1,0 +1,18 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-api
+spec:
+  template:
+    spec:
+      hostNetwork: {{ .Values.hostNetwork }}
+      containers:
+        - name: api
+          image: example.test/api:1.0.0
+          securityContext:
+            privileged: {{ .Values.securityContext.privileged }}
+            allowPrivilegeEscalation: {{ .Values.securityContext.allowPrivilegeEscalation }}
+            runAsUser: {{ .Values.securityContext.runAsUser }}
+          resources:
+            limits:
+              cpu: 200m

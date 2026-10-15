@@ -1860,7 +1860,12 @@ hr "4. 秘密情報のハードコード（値は伏字にして出力する）"
 
 hr "4b. クライアントに露出する環境変数（特権鍵が混ざっていないか）"
 {
-  grep -rhoE "${EXA[@]}" '(NEXT_PUBLIC|NUXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|GATSBY|STORYBOOK|ASTRO_PUBLIC|PUBLIC|VUE_APP|NG_APP|SVELTE_PUBLIC|REMIX_PUBLIC)_[A-Z0-9_]+' . 2>/dev/null | sort -u | sed 's/^/  /'
+  # 公開用の接頭辞の付いた名前は、ビルドで値がそのまま配布物（ブラウザの JS・アプリの中）に入る（Expo の資料は EXPO_PUBLIC_ について
+  # 「コンパイルしたアプリの中に平文で見える」と書く）。名前に秘密の語（SECRET・PRIVATE・SERVICE_ROLE など）があれば ★。
+  # 公開を前提にした鍵（Supabase の anon・publishable、Firebase の apiKey、決済の publishable、地図のトークン）は名前に KEY や TOKEN が入るので、
+  # KEY・TOKEN だけでは ★ を付けない（用途は 02 の C-1・14 の 1 節の表で分ける）
+  grep -rhoE "${EXA[@]}" '(NEXT_PUBLIC|NUXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|GATSBY|STORYBOOK|ASTRO_PUBLIC|PUBLIC|VUE_APP|NG_APP|SVELTE_PUBLIC|REMIX_PUBLIC)_[A-Z0-9_]+' . 2>/dev/null | sort -u \
+    | LC_ALL=C awk '{ if ($0 ~ /SECRET|PRIVATE|SERVICE_ROLE|SERVICE_ACCOUNT|PASSWORD|PASSWD|CREDENTIAL|ADMIN_(KEY|TOKEN)/) printf "  ★ %s   ← 秘密の語を含む名前を、公開用の接頭辞で配っている\n", $0; else printf "  %s\n", $0 }'
   # 名前の接頭辞ではなく、設定のブロックでブラウザへ配るもの（Nuxt の runtimeConfig.public・Next.js の env と
   # publicRuntimeConfig・Expo の extra）。ブロックの中に鍵らしい名前があれば ★
   find . $(prune_expr) -o -type f \( -name 'nuxt.config.*' -o -name 'next.config.*' -o -name 'app.config.*' -o -name 'app.json' \) -print 2>/dev/null \
@@ -1875,7 +1880,8 @@ hr "4b. クライアントに露出する環境変数（特権鍵が混ざって
       done | cut -c1-200
 } | show
 echo "  ※ SERVICE_ROLE / SECRET / PRIVATE / ADMIN を含む名前がこの一覧にあれば、その時点で P0 の候補。報告書を待たずに依頼者へ知らせる（SKILL.md の守ること 6）"
-echo "    ★ は、ブラウザへ配る設定のブロック（runtimeConfig.public・env・publicRuntimeConfig・extra）の中の鍵らしい名前"
+echo "    ★ は、秘密の語を含む公開用の名前と、ブラウザへ配る設定のブロック（runtimeConfig.public・env・publicRuntimeConfig・extra）の中の鍵らしい名前。"
+echo "    anon・publishable のような公開前提の鍵には付けない（鍵で何ができるかは 02 の C-1 で確かめる）"
 
 hr "4c. .env の混入と gitignore"
 {
@@ -2347,16 +2353,103 @@ if [[ -n "$iac" ]]; then
           l ~ /^[ \t]*"?(not)?(action|resource)"?[ \t]*:[ \t]*$/ { mode = 2; kind = ind($0); key = $0; sub(/^[ \t]*"?/, "", key); sub(/["]?[ \t]*:.*/, "", key); next }
         ' "$f" 2>/dev/null
       done <<<"$CLOUD_FILES" | lim 15
+      # ストレージを公開にする書き方（S3 の公開アクセスのブロックを false にする・公開の ACL、Azure のコンテナの匿名の読み取り）と、
+      # 受信元を限定しない Azure のネットワークの規則（* ・Internet。0.0.0.0/0 は上の行で並ぶ）。コメントの行は見ない
+      grep -rnE "${EXA[@]}" '"?(BlockPublicAcls|BlockPublicPolicy|IgnorePublicAcls|RestrictPublicBuckets)"?[[:space:]]*:[[:space:]]*["'"'"']?false|(block_public_acls|block_public_policy|ignore_public_acls|restrict_public_buckets)[[:space:]]*=[[:space:]]*false|"?AccessControl"?[[:space:]]*:[[:space:]]*["'"'"']?PublicRead|container_access_type[[:space:]]*=[[:space:]]*"(blob|container)"|allow_nested_items_to_be_public[[:space:]]*=[[:space:]]*true|source_address_prefix(es)?[[:space:]]*=[[:space:]]*\[?[[:space:]]*"(\*|Internet|Any)"' \
+        --include='*.tf' --include='*.json' --include='*.y*ml' --include='*.template' . 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*(#|//)' | lim 10
     } | show
     echo "  ※ 意図した公開もある（静的サイトの配信）。用途を確かめてから起票する"
+    echo "    Azure の受信の規則（source_address_prefix が * か Internet）は、direction が Inbound で access が Allow ならどこからでも届く"
 
     # DB とインスタンスの設定（13 の 3-1・3-3・3-5）。既定値は Terraform の AWS プロバイダの資料による:
     # aws_db_instance の publicly_accessible・storage_encrypted・skip_final_snapshot・deletion_protection はどれも既定が false。
     # aws_rds_cluster の storage_encrypted は provisioned では false（serverless では true）。
     # インスタンスのメタデータの http_tokens は optional か required で、指定が無ければ AMI とアカウントの設定に任される。
-    # ★ は、外から届く・暗号化されない・IMDSv1 が残る・消したら戻せない、のどれかを定義に書いている（または既定のままにしている）もの
-    echo "  --- クラウド資源: DB とインスタンスの設定（公開・暗号化・メタデータ・消失への備え）---"
+    # ★ は、外から届く・暗号化されない・IMDSv1 が残る・消したら戻せない、のどれかを定義に書いている（または既定のままにしている）もの。
+    # Azure（azurerm）と Google Cloud（google）も同じ考え方で判定する。既定は各プロバイダの資料による: azurerm_storage_account の
+    # allow_nested_items_to_be_public は 4.x までは既定が true、5.x からは false。google_storage_bucket の public_access_prevention は既定が
+    # inherited（組織のポリシーで強制していなければ公開にできる）。Azure の DB の防火壁の規則は、0.0.0.0〜255.255.255.255 ならすべての IP、
+    # 0.0.0.0〜0.0.0.0 なら Azure のサービスすべて（ほかの利用者の契約のものを含む。Microsoft の資料）から届く。
+    # Azure Storage と Google Cloud は保管データを常に暗号化する（各社の資料）ので、暗号化の書き漏れは数えない
+    # CloudFormation の資源ごとに、書いていない項目を探す（13 の 3-1・3-3・3-5）。YAML は Resources: の下の字下げで、
+    # JSON は "Resources" の中の { } の深さで資源の範囲を区切る（完全な解析はしない。1 行に詰めた JSON は区切れない）。
+    # 既定は AWS の公式の資料による: AWS::RDS::DBInstance の StorageEncrypted は書かなければ暗号化しない。PubliclyAccessible は、
+    # DBSubnetGroupName を書かないか default なら Aurora でない DB で true（RDS の CreateDBInstance）。DeletionProtection は既定で無効。
+    # EC2 の MetadataOptions の HttpTokens は、AMI とアカウントの設定で決まる（optional になりうる）。
+    # Aurora の DB インスタンス（DBClusterIdentifier・aurora のエンジン）は、暗号化と削除の保護をクラスタで決めるので数えない。
+    # 読み取りレプリカとスナップショットからの復元は、暗号化を元から引き継ぐので数えない。
+    # S3 の公開アクセスのブロックは 2023-04 以降に作るバケットで既定が有効なので、書いていないことは数えない（false と書いたものは上の段で並べる）
+    cfn_scan() { LC_ALL=C awk -v f="$1" '
+      function ind(s) { match(s, /^[ \t]*/); return RLENGTH }
+      function out(star, n, s, why) { printf "  %s%s:%d:%s   ← %s\n", (star ? "★ " : ""), f, n, s, why }
+      function val(s) { sub(/^[^:]*:[ \t]*/, "", s); gsub(/["\047,]/, "", s); sub(/[ \t]+$/, "", s); return s }
+      function nostr(s) { gsub(/"([^"\\]|\\.)*"/, "\"\"", s); return s }
+      function keys(s,   t, k) {
+        t = s
+        while (match(t, /"?[A-Za-z][A-Za-z0-9]*"?[ \t]*:/)) {
+          k = substr(t, RSTART, RLENGTH); t = substr(t, RSTART + RLENGTH)
+          gsub(/["\t :]/, "", k); seen[k] = 1
+        }
+      }
+      function flush(   aur, inh) {
+        if (rid == "") return
+        if (ty == "AWS::RDS::DBInstance") {
+          aur = ("DBClusterIdentifier" in seen) || tolower(eng) ~ /^aurora/
+          inh = ("SourceDBInstanceIdentifier" in seen) || ("SourceDbiResourceId" in seen) || ("DBSnapshotIdentifier" in seen) || ("SourceDBInstanceAutomatedBackupsArn" in seen)
+          if (!aur && !inh && !("StorageEncrypted" in seen)) out(1, rl, rs, "StorageEncrypted が無い。既定は暗号化しない")
+          # 読み取りレプリカと復元は、作る API が別で既定の書き方も違うので ★ を付けずに並べる
+          if (!aur && !("PubliclyAccessible" in seen) && (!("DBSubnetGroupName" in seen) || sng == "default")) {
+            if (inh) out(0, rl, rs, "PubliclyAccessible が無く、DB サブネットグループが無いか default（レプリカ・復元の既定を実機で確かめる）")
+            else out(1, rl, rs, "PubliclyAccessible が無く、DB サブネットグループを指定していない（または default）。既定で外から届く（true）")
+          }
+          if (!aur && !("DeletionProtection" in seen)) out(0, rl, rs, "DeletionProtection の指定が無い（既定は無効。本番の DB なら有効にする）")
+        }
+        if (ty == "AWS::RDS::DBCluster") {
+          if (!("StorageEncrypted" in seen) && !("SnapshotIdentifier" in seen) && !("SourceDBClusterIdentifier" in seen) && !("ReplicationSourceIdentifier" in seen))
+            out(0, rl, rs, "StorageEncrypted の指定が無い（クラスタの既定は資料に書かれていない。実機で暗号化を確かめる）")
+          if (!("DeletionProtection" in seen)) out(0, rl, rs, "DeletionProtection の指定が無い（既定は無効。本番の DB なら有効にする）")
+        }
+        if (ty ~ /^AWS::EC2::(Instance|LaunchTemplate)$|^AWS::AutoScaling::LaunchConfiguration$/ && !("HttpTokens" in seen) && !(ty == "AWS::EC2::Instance" && ("LaunchTemplate" in seen)))
+          out(1, rl, rs, "MetadataOptions で HttpTokens を required にしていない。IMDSv1 が残りうる（既定は AMI とアカウントの設定）")
+        rid = ""; ty = ""; eng = ""; sng = ""; delete seen
+      }
+      # コメント（行頭の # と、YAML の行末の # 以降）を外す。JSON の文字列の中の # は残る（キーの判定には使わない）
+      /^[ \t]*#/ || /^[ \t]*$/ { next }
+      { s = $0; if (!json) sub(/[ \t]+#.*$/, "", s) }
+      !started { started = 1; if (s ~ /^[ \t]*\{/) json = 1 }
+      json {
+        # 文字列を空にしてから { } を数える（Fn::Sub の ${…} の { } を数えない）
+        t = nostr(s); o = gsub(/\{/, "", t); c = gsub(/\}/, "", t)
+        if (resd && d == resd && s ~ /^[ \t]*"[^"]+"[ \t]*:/) { flush(); rid = s; rl = FNR; rs = $0; sub(/^[ \t]*"[^"]+"[ \t]*:/, "", s) }
+        if (rid != "") {
+          keys(s)
+          if (s ~ /"Type"[ \t]*:/) { ty = s; sub(/.*"Type"[ \t]*:[ \t]*"/, "", ty); sub(/".*/, "", ty) }
+          if (s ~ /"Engine"[ \t]*:[ \t]*"/) { eng = s; sub(/.*"Engine"[ \t]*:[ \t]*"/, "", eng); sub(/".*/, "", eng) }
+          if (s ~ /"DBSubnetGroupName"[ \t]*:[ \t]*"/) { sng = s; sub(/.*"DBSubnetGroupName"[ \t]*:[ \t]*"/, "", sng); sub(/".*/, "", sng) }
+        }
+        if (!resd && s ~ /"Resources"[ \t]*:[ \t]*\{/) resd = d + 1
+        d += o - c
+        if (resd && rid != "" && d <= resd) flush()
+        if (resd && d < resd) resd = 0
+        next
+      }
+      # YAML
+      { i = ind(s) }
+      s ~ /^Resources:[ \t]*$/ { inr = 1; ri = -1; next }
+      inr && i == 0 { flush(); inr = 0 }
+      !inr { next }
+      ri < 0 { ri = i }
+      i == ri && s ~ /^[ \t]*[A-Za-z0-9]+:[ \t]*$/ { flush(); rid = s; rl = FNR; rs = $0; next }
+      rid != "" {
+        keys(s)
+        if (s ~ /^[ \t]*Type:/) ty = val(s)
+        if (s ~ /^[ \t]*Engine:/) eng = val(s)
+        if (s ~ /^[ \t]*DBSubnetGroupName:/) sng = val(s)
+      }
+      END { flush() }' "$1" 2>/dev/null; }
+    echo "  --- クラウド資源: 資源ごとの設定（公開・暗号化・メタデータ・消失への備え。書いていない項目を含む）---"
     {
+      {
       while IFS= read -r f; do
         [[ -n "$f" ]] || continue
         LC_ALL=C awk -v f="$f" '
@@ -2373,13 +2466,24 @@ if [[ -n "$iac" ]]; then
               if (!del) out(0, rl, rs, "deletion_protection の指定が無い（既定は無効。本番の DB なら有効にする）")
               if (rt == "aws_db_instance" && !bk && !rep) out(0, rl, rs, "backup_retention_period の指定が無い（自動バックアップの保存期間を実機で確かめる）")
             }
+            if (rt == "azurerm_storage_account" && !anp) out(0, rl, rs, "allow_nested_items_to_be_public の指定が無い。azurerm 4.x までは既定が true（コンテナを匿名の公開にできる）、5.x からは false。使っているプロバイダの版を確かめる")
+            if (rt == "google_storage_bucket" && !pap) out(0, rl, rs, "public_access_prevention の指定が無い（既定は inherited。組織のポリシーで強制していなければ、中のものを公開にできる）")
+            if (rt ~ /^azurerm_[a-z0-9_]*firewall_rule$/) {
+              if (fws == "0.0.0.0" && fwe == "255.255.255.255") out(1, rl, rs, "すべての IP アドレスからの接続を許す（DB・キャッシュへ直接つなげる）")
+              else if (fws == "0.0.0.0" && fwe == "0.0.0.0") out(0, rl, rs, "Azure のサービスすべて（ほかの利用者の契約のものを含む）からの接続を許す")
+            }
             rt = ""
           }
           /^[ \t]*(#|\/\/)/ { next }
           { s = $0; sub(/[ \t]+(#|\/\/).*$/, "", s) }
           match(s, /^resource[ \t]+"[a-z0-9_]+"/) { flush(); rt = substr(s, RSTART, RLENGTH); sub(/^resource[ \t]+"/, "", rt); sub(/"$/, "", rt)
-            rl = FNR; rs = $0; d = 0; opened = 0; tokreq = tokopt = enc = encf = sls = rep = del = bk = lt = 0 }
+            rl = FNR; rs = $0; d = 0; opened = 0; tokreq = tokopt = enc = encf = sls = rep = del = bk = lt = anp = pap = 0; fws = fwe = "" }
           rt != "" {
+            if (s ~ /(allow_nested_items_to_be_public|allow_blob_public_access)[ \t]*=/) anp = 1
+            if (s ~ /public_access_prevention[ \t]*=/) pap = 1
+            if (s ~ /start_ip_address[ \t]*=/) { fws = s; sub(/.*=[ \t]*"?/, "", fws); sub(/".*/, "", fws) }
+            if (s ~ /end_ip_address[ \t]*=/) { fwe = s; sub(/.*=[ \t]*"?/, "", fwe); sub(/".*/, "", fwe) }
+            if (rt == "google_sql_database_instance" && s ~ /value[ \t]*=[ \t]*"0\.0\.0\.0\/0"/) out(1, FNR, $0, "authorized_networks に 0.0.0.0/0。すべての IP アドレスから DB へ直接つなげる")
             if (s ~ /http_tokens[ \t]*=[ \t]*"required"/) tokreq = 1
             if (s ~ /http_tokens[ \t]*=[ \t]*"optional"/) { tokopt = FNR; tokopts = $0 }
             if (s ~ /storage_encrypted[ \t]*=[ \t]*true/) enc = 1
@@ -2401,9 +2505,13 @@ if [[ -n "$iac" ]]; then
           s ~ /"?HttpTokens"?[ \t]*:[ \t]*["\047]?optional/ { out(1, FNR, $0, "HttpTokens が optional。IMDSv1 が残る") }
           END { flush() }' "$f" 2>/dev/null
       done <<<"$CLOUD_FILES"
-    } | lim 20 | show
+      } | lim 20
+      # CloudFormation の資源の書いていない項目は、Terraform の分の件数の切り捨てで消えないよう別に数える
+      while IFS= read -r f; do [[ -n "$f" ]] && cfn_scan "$f"; done <<<"$CFN_FILES" | lim 15
+    } | show
     echo "  ※ 開発用の環境なら、消失への備えは軽く扱ってよい。どの環境の定義かを確かめてから起票する"
-    echo "  ※ CloudFormation は 1 行で書いた値だけを見る（資源ごとに、書いていない項目を探すのは Terraform だけ）"
+    echo "  ※ 資源ごとに書いていない項目を探すのは、Terraform の AWS の DB とインスタンス・Azure と Google Cloud のストレージと DB の防火壁、"
+    echo "    CloudFormation の DB とインスタンス。CloudFormation は YAML と、改行して書いた JSON を読む（1 行に詰めた JSON は資源を区切れない）"
   fi
 
   if [[ -n "$HAS_TF" ]]; then
@@ -2482,6 +2590,55 @@ if [[ -n "$iac" ]]; then
     fi
     echo "  ※ Secret は base64 であって暗号化ではない。マニフェストにある値は平文と同じ扱い"
   fi
+
+  # Helm のチャート（Chart.yaml のあるディレクトリ）。テンプレートが {{ .Values.… }} で差し込む値は、values.yaml の既定で決まる。
+  # 上のマニフェストの段は {{ }} の行を値として読まないので、ここで values.yaml の既定とテンプレートの参照を突き合わせる。
+  # values.yaml を「a.b.c = 値」に平らにし（並び（- の行）は辿らない）、テンプレートが参照する .Values.a.b（またはその上の .Values.a）
+  # の下にある権限の設定を並べる。★ は上の段と同じ（ホストの名前空間の共有・特権）。参照されていない値は数えない
+  # shellcheck disable=SC2046
+  HELM_CHARTS="$(find . $(prune_expr) -o -type f -name 'Chart.yaml' -print 2>/dev/null | sed 's#^\./##' | sort | head -30)"
+  helm_flat() { LC_ALL=C awk '
+    /^[ \t]*#/ || /^[ \t]*$/ { next }
+    { s = $0; sub(/[ \t]+#.*$/, "", s); match(s, /^ */); i = RLENGTH }
+    s ~ /^ *- / { next }
+    match(s, /^ *[A-Za-z0-9_.-]+:/) {
+      k = substr(s, i + 1, RLENGTH - i - 1); v = substr(s, RLENGTH + 1); gsub(/^[ \t]+|[ \t]+$/, "", v); gsub(/^["\047]|["\047]$/, "", v)
+      while (n > 0 && ind[n] >= i) n--
+      p = ""; for (j = 1; j <= n; j++) p = p key[j] "."; p = p k
+      if (v != "") printf "%d\t%s\t%s\t%s\n", FNR, p, v, $0
+      n++; ind[n] = i; key[n] = k
+    }' "$1" 2>/dev/null; }
+  helm_scan() {
+    local d="$1" vf
+    vf="$d/values.yaml"; [[ -f "$vf" ]] || vf="$d/values.yml"; [[ -f "$vf" && -d "$d/templates" ]] || return 0
+    # 参照: テンプレートの「ファイル:行:.Values.a.b」。値: 「行 \t a.b.c \t 値 \t 元の行」
+    { grep -rnoE '\.Values\.[A-Za-z0-9_.]+' "$d/templates" 2>/dev/null | sed $'s#:\\.Values\\.#\t#'; echo "@@"; helm_flat "$vf"; } \
+      | LC_ALL=C awk -F'\t' -v vf="$vf" '
+        $0 == "@@" { vals = 1; next }
+        !vals { p = $2; sub(/\.+$/, "", p); if (!(p in ref)) ref[p] = $1; next }
+        {
+          n = split($2, a, "."); leaf = a[n]; v = tolower($3); star = -1
+          if (leaf == "privileged" && v == "true") { star = 1; why = "特権コンテナになる" }
+          else if (leaf ~ /^host(PID|IPC|Network)$/ && v == "true") { star = 1; why = "ホストの名前空間を共有する" }
+          else if (leaf == "allowPrivilegeEscalation" && v == "true") { star = 0; why = "権限の昇格を許す" }
+          else if (leaf == "runAsUser" && v == "0") { star = 0; why = "利用者 ID 0（root）で動く" }
+          if (star < 0) next
+          # 値の場所そのものか、その上の階層を参照しているテンプレートを探す
+          r = ""; q = $2
+          while (q != "") { if (q in ref) { r = ref[q]; rp = q; break } if (!sub(/\.[^.]*$/, "", q)) q = "" }
+          if (r == "") next
+          printf "  %s%s:%d:%s   ← 既定のまま入れると%s（%s が .Values.%s を差し込む）\n", (star ? "★ " : ""), vf, $1, $4, why, r, rp
+        }'
+  }
+  if [[ -n "$HELM_CHARTS" ]]; then
+    echo "  --- Helm: values.yaml の既定で決まる権限（テンプレートが {{ .Values.… }} で差し込むもの）---"
+    {
+      while IFS= read -r c; do [[ -n "$c" ]] && helm_scan "$(dirname "$c")"; done <<<"$HELM_CHARTS" > "$HF_LIST.helm"
+      grep '^  ★' "$HF_LIST.helm" | lim 10
+      grep -v '^  ★' "$HF_LIST.helm" | lim 10
+    } | show
+    echo "  ※ 入れるときに -f や --set で値を上書きしていれば、実際の値はそちらで決まる。配備の手順（CI の定義・helmfile など）の値も確かめる"
+  fi
 fi
 
 if [[ -n "$mob" ]]; then
@@ -2497,16 +2654,30 @@ if [[ -n "$mob" ]]; then
   echo "  --- 端末に何を保存しているか ---"
   {
     # 平文の置き場に、資格情報の名前で書き込んでいる行（AsyncStorage・SharedPreferences・Flutter の shared_preferences・UserDefaults）
-    st18="$(grep -rnE "${EXA[@]}" 'AsyncStorage\.(setItem|multiSet|mergeItem)\(|(edit\(\)|[Ee]ditor|[Pp]refs?|[Pp]references)\.put(String|StringSet)\(|([Pp]refs?|[Pp]references)\.setString\(|UserDefaults[^;]*\.set(Value)?\(' \
+    # UserDefaults は、受け手を変数に置く書き方（let defaults = UserDefaults.standard; defaults.set(…)）、Objective-C の
+    # [… setObject:… forKey:@"…"]、SwiftUI の @AppStorage("…")（中身は UserDefaults）でも書かれる
+    st18="$(grep -rnE "${EXA[@]}" 'AsyncStorage\.(setItem|multiSet|mergeItem)\(|(edit\(\)|[Ee]ditor|[Pp]refs?|[Pp]references)\.put(String|StringSet)\(|([Pp]refs?|[Pp]references)\.setString\(|UserDefaults[^;]*\.set(Value)?\(|[Dd]efaults\.set(Value|Object)?\(|(NSUserDefaults[^;]*|[Dd]efaults)[[:space:]]+set(Object|Value)?:|@AppStorage\(' \
       "${MOB_CODE[@]}" . 2>/dev/null | nocomment | grep -E "$SENS_KEY")"
     [[ -n "$st18" ]] && printf '%s\n' "$st18" | sed 's/^/★ /; s/$/   ← 平文の置き場に、資格情報の名前で値を書いている/' | lim 8
-    grep -rnE "${EXA[@]}" 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults' . 2>/dev/null | grep -vxF -e "$st18" | lim 12
+    grep -rnE "${EXA[@]}" 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|@AppStorage' . 2>/dev/null | grep -vxF -e "$st18" | lim 12
   } | show
   echo "  ※ 上は平文で残る置き場。認証トークンやパスワードを置いていれば指摘（★ は名前で判定したもの。中身を読んで確かめる）"
   {
     grep -rnE "${EXA[@]}" 'Keychain|SecureStore|EncryptedSharedPreferences|FlutterSecureStorage' . 2>/dev/null | lim 8
   } | show
-  echo "  ※ 上は資格情報の置き場として意図されたもの。使われていれば問題なし"
+  echo "  ※ 上は資格情報の置き場として意図されたもの。使われていれば問題なし（いつ読めるかは下の段で確かめる）"
+  # キーチェーンの属性。kSecAttrAccessibleAlways と ThisDeviceOnly の付く方は、端末のロック中も読める値で、iOS 12 で非推奨
+  # （Apple の資料。ThisDeviceOnly の付かない方は、暗号化したバックアップで新しい端末へ移る）。React Native の Keychain の包み
+  # （ACCESSIBLE.ALWAYS）、Expo の SecureStore.ALWAYS、Swift の包み（.accessibility(.always)）も同じ値を渡す。
+  # kSecAttrSynchronizable を true にすると、iCloud キーチェーンで同じ利用者の別の端末へ同期される（並べるだけ）
+  echo "  --- キーチェーンの属性（いつ読めるか・どこへ移るか）---"
+  {
+    grep -rnE "${EXA[@]}" 'kSecAttrAccessibleAlways|ACCESSIBLE\.ALWAYS|SecureStore\.ALWAYS|\.accessibility\([[:space:]]*\.always|accessibility:[[:space:]]*\.always' \
+      "${MOB_CODE[@]}" . 2>/dev/null | nocomment | grep -vE ':[0-9]+:[[:space:]]*import[[:space:]]' \
+      | sed 's/^/★ /; s/$/   ← 端末のロック中も読める値（iOS 12 で非推奨）。WhenUnlockedThisDeviceOnly などに替える/' | lim 8
+    grep -rnE "${EXA[@]}" 'kSecAttrSynchronizable[^,;]*(kCFBooleanTrue|true|@YES)|synchroni[sz]able[[:space:]]*:[[:space:]]*true' \
+      "${MOB_CODE[@]}" . 2>/dev/null | nocomment | sed 's/$/   ← iCloud キーチェーンで、同じ利用者の別の端末へ同期される/' | lim 5
+  } | show
 
   # Android のマニフェストとネットワークセキュリティ構成、iOS の Info.plist を、XML のコメントを除いて読む。
   # ネットワークセキュリティ構成の <debug-overrides> は android:debuggable が true のビルドにしか作用しない（Android の公式の資料）ので数えない。
@@ -2540,13 +2711,25 @@ if [[ -n "$mob" ]]; then
     s ~ /android:usesCleartextTraffic="true"/ { if (dbg) out("n", 0, FNR, $0, "デバッグのビルドだけで平文を許す"); else out("n", 1, FNR, $0, "平文の通信を許す") }
     s ~ /android:debuggable="true"/ { if (dbg) out("d", 0, FNR, $0, "デバッグのビルドのマニフェスト"); else out("d", 1, FNR, $0, "マニフェストで debuggable を true に固定している。配るビルドもデバッグできる") }
     s ~ /android:allowBackup="true"/ { out("d", 0, FNR, $0, "端末のバックアップに入る（Android 12 以降は dataExtractionRules も見る）") }
-    # Info.plist。キーの値は同じ行か次の行の <true/>
-    pk != "" && s ~ /<(true|false)\/>/ { if (s ~ /<true\/>/) out("n", pk == "NSAllowsArbitraryLoads", pkl, pks, (pk == "NSAllowsArbitraryLoads" ? "ATS を外し、すべての通信で平文を許す" : pk " が true。範囲を確かめる")); pk = "" }
-    match(s, /<key>(NSAllowsArbitraryLoads|NSAllowsArbitraryLoadsInWebContent|NSExceptionAllowsInsecureHTTPLoads)<\/key>/) {
-      k = substr(s, RSTART + 5, RLENGTH - 11); rest = substr(s, RSTART + RLENGTH)
-      if (rest ~ /^[ \t]*<true\/>/) out("n", k == "NSAllowsArbitraryLoads", FNR, $0, (k == "NSAllowsArbitraryLoads" ? "ATS を外し、すべての通信で平文を許す" : k " が true。範囲を確かめる"))
-      else if (rest !~ /^[ \t]*<false\/>/) { pk = k; pks = $0; pkl = FNR }
+    # Info.plist の ATS。キーの値は同じ行か次の行（<true/>・<false/>・<string>…</string>）。既定は Apple の資料による:
+    # 例外のドメインの NSExceptionMinimumTLSVersion は TLSv1.2、NSExceptionRequiresForwardSecrecy は YES。
+    # NSAllowsArbitraryLoadsInWebContent・NSAllowsArbitraryLoadsForMedia・NSAllowsLocalNetworking のどれかを書くと、iOS 10 以降は
+    # NSAllowsArbitraryLoads の値を無視する。そのため NSAllowsArbitraryLoads の ★ は、ファイルを読み終えてから決める
+    function ats(k, v, n, t) {
+      if (v ~ /<true\/>/) v = "true"; else if (v ~ /<false\/>/) v = "false"; else { sub(/.*<string>[ \t]*/, "", v); sub(/[ \t]*<\/string>.*/, "", v) }
+      if (k == "NSAllowsArbitraryLoads") { if (v == "true") { aal = n; aals = t } }
+      else if (k ~ /^NSAllows(ArbitraryLoads(InWebContent|ForMedia)|LocalNetworking)$/) { other = 1; if (v == "true" && k != "NSAllowsLocalNetworking") out("n", 0, n, t, k " が true。範囲を確かめる") }
+      else if (k ~ /AllowsInsecureHTTPLoads$/) { if (v == "true") out("n", 0, n, t, k " が true。そのドメインへの平文の通信を許す。範囲を確かめる") }
+      else if (k ~ /RequiresForwardSecrecy$/) { if (v == "false") out("n", 0, n, t, k " が false。前方秘匿性の無い暗号の通信を許す") }
+      else if (k ~ /MinimumTLSVersion$/) { if (v ~ /^TLSv1\.[01]$/) out("n", 0, n, t, k " が " v "。古い TLS の通信を許す") }
     }
+    pk != "" && match(s, /<(true|false)\/>|<string>[^<]*<\/string>/) { ats(pk, substr(s, RSTART, RLENGTH), pkl, pks); pk = "" }
+    match(s, /<key>NS[A-Za-z]*(ArbitraryLoads[A-Za-z]*|LocalNetworking|InsecureHTTPLoads|ForwardSecrecy|MinimumTLSVersion)<\/key>/) {
+      k = substr(s, RSTART + 5, RLENGTH - 11); rest = substr(s, RSTART + RLENGTH)
+      if (rest ~ /^[ \t]*(<(true|false)\/>|<string>[^<]*<\/string>)/) ats(k, rest, FNR, $0)
+      else { pk = k; pks = $0; pkl = FNR }
+    }
+    END { if (aal) out("n", !other, aal, aals, (other ? "NSAllowsArbitraryLoads が true。ただし NSAllowsArbitraryLoadsInWebContent などと一緒に書いてあり、iOS 10 以降はこの値を無視する" : "ATS を外し、すべての通信で平文を許す")) }
     s ~ /<\/debug-overrides>/ { dov = 0 }
     s ~ /<\/base-config>|<base-config[^>]*\/>/ { bc = 0 }
     s ~ /<\/domain-config>/ { dc-- }
@@ -2555,6 +2738,15 @@ if [[ -n "$mob" ]]; then
     [[ -n "$f" ]] || continue
     case "/$f" in */src/debug/*) mob_xml_scan "$f" 1 ;; *) mob_xml_scan "$f" "" ;; esac
   done <<<"$MOB_XML" > "$HF_LIST.mob"
+  # Expo の設定（app.json・app.config.*）の ios.infoPlist に書いた ATS は、ビルドで Info.plist に入る。判定は Info.plist と同じ
+  # shellcheck disable=SC2046
+  find . $(prune_expr) -o -type f \( -name 'app.json' -o -name 'app.config.*' \) -print 2>/dev/null | sed 's#^\./##' | sort | head -20 \
+    | while IFS= read -r f; do LC_ALL=C awk -v f="$f" '
+        /^[ \t]*(\/\/|\*|\/\*)/ { next }
+        /NSAllowsArbitraryLoads["\047]?[ \t]*:[ \t]*true/ { aal = FNR; aals = $0 }
+        /NSAllows(ArbitraryLoads(InWebContent|ForMedia)|LocalNetworking)["\047]?[ \t]*:/ { other = 1 }
+        END { if (aal) printf "n%s\t%s%s:%d:%s   ← %s\n", (other ? "2" : "1"), (other ? "" : "★ "), f, aal, aals, (other ? "NSAllowsArbitraryLoads が true（Expo の設定）。ただし NSAllowsArbitraryLoadsInWebContent などと一緒に書いてあり、iOS 10 以降はこの値を無視する" : "Expo の設定で ATS を外し、すべての通信で平文を許す（ビルドで Info.plist に入る）") }' "$f" 2>/dev/null
+      done >> "$HF_LIST.mob"
 
   echo "  --- 通信 ---"
   {

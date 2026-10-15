@@ -141,6 +141,22 @@ if grep -F '確かめていない運用を仮定して 問題あり にしない
    && grep -F '危ない書き方そのもの（値の直接の展開、確かめの省略など）は、今の運用で悪用できなくても問題あり' "$SKILL/SKILL.md" >/dev/null; then
   ok "資料: 確かめていない運用を仮定して問題ありにせず、危ない書き方は運用を問わず問題ありにする（04・SKILL.md）"
 else ng "資料: 確かめていない運用を仮定して問題ありにせず、危ない書き方は運用を問わず問題ありにする（04・SKILL.md）" "04 か SKILL.md から決まりが消えた"; fi
+# ファイルの一覧を取る命令が止められたときの手順（SKILL.md）。実地の評価で、一覧を取れないまま事前の洗い出しに名前の出たファイルだけを読み、
+# 開かなかったファイルの穴を見落とした回があった
+if grep -F '### ファイルの一覧を取る命令が止められたとき' "$SKILL/SKILL.md" >/dev/null \
+   && grep -F '**命令を分けて実行し直す。**' "$SKILL/SKILL.md" >/dev/null \
+   && grep -F '**全ファイルを読む範囲に入れたことを確かめる。**' "$SKILL/SKILL.md" >/dev/null; then
+  ok "資料: ファイルの一覧を取る命令が止められたときの手順を書いている（SKILL.md）"
+else ng "資料: ファイルの一覧を取る命令が止められたときの手順を書いている（SKILL.md）" "SKILL.md から手順が消えた"; fi
+# 事前の洗い出しの 4b・17・18 節で足した観点が、資料 13・14 にもある（資料と洗い出しのどちらかにだけある、を作らない）
+miss=""
+for pair in "13-infrastructure.md:書いていないことも確かめる" "13-infrastructure.md:Azure と Google Cloud も同じ考え方で確かめる" \
+            "13-infrastructure.md:の既定で権限が決まる" "14-mobile.md:kSecAttrAccessibleAlways" "14-mobile.md:NSExceptionMinimumTLSVersion" \
+            "14-mobile.md:@AppStorage" "14-mobile.md:秘密の語を含むものに ★"; do
+  grep -F -- "${pair#*:}" "$SKILL/references/${pair%%:*}" >/dev/null || miss="$miss ${pair}"
+done
+if [[ -z "$miss" ]]; then ok "資料: 資料 13・14 に、事前の洗い出しで足した観点がある（CloudFormation・Azure・Google Cloud・Helm・iOS・Expo）"
+else ng "資料: 資料 13・14 に、事前の洗い出しで足した観点がある（CloudFormation・Azure・Google Cloud・Helm・iOS・Expo）" "無い:$miss"; fi
 if grep -qF '複数のハンドラにまたがる指摘は、1 つの範囲にまとめず、ハンドラごとに場所を分けて並べる' "$SKILL/references/04-findings-register.md"; then
   ok "複数のハンドラにまたがる指摘の場所を、ハンドラごとに分けると決めている"
 else ng "複数のハンドラにまたがる指摘の場所を、ハンドラごとに分けると決めている" "04 の「台帳の列」の該当箇所から決まりが消えている"; fi
@@ -1070,6 +1086,67 @@ unstarred "audit_grep[18]: src/debug/ のマニフェストの平文の許可は
 # 題材はこのリポジトリの中に写すので、7 節（git の履歴）にはこのリポジトリの履歴が出る。0 節と 18 節だけを見る
 AG018="$(printf '%s\n' "$AGO" | LC_ALL=C awk '/^=== (0|18)\./ { f = 1; print; next } f && /^=== / { f = 0 } f')"
 absent   "audit_grep[18]: 正しく作った Android のアプリに ★ を付けない"         "★" "$(grep -vF '※' <<<"$AG018")"
+
+# 資料 13 の観点のうち、資源に書いていない項目（CloudFormation）・Azure と Google Cloud・Helm の values.yaml の既定（架空の題材 iac-clouds）。
+# repo-iac と分けたのは、17 節の各段の件数の上限で、repo-iac の検査の行が押し出されないようにするため。
+# 穴のある側と正しく作った側（LedgerDb・AuroraWriter・BatchTemplate・Worker・LogsBucket・ApiHost・Vault・private・locked・office・charts/api）を並べ、
+# 正しい側に ★ が付かないことも確かめる
+IC="$TMP/iac-clouds"; fixture_cp "$ROOT/tests/fixtures/iac-clouds" "$IC"
+ICO="$(bash "$SKILL/scripts/audit_grep.sh" "$IC" 2>&1)"
+IC17="$(printf '%s\n' "$ICO" | LC_ALL=C awk 'index($0, "=== 17.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+starred  "audit_grep[17]: CloudFormation の YAML で暗号化を書いていない DB に ★（コメントの指定は数えない）" "OrdersDb:  # 暗号化・公開・削除の保護をどれも書いていない   ← StorageEncrypted が無い" "$IC17"
+starred  "audit_grep[17]: CloudFormation で公開の指定もサブネットグループも無い DB に ★" "OrdersDb:  # 暗号化・公開・削除の保護をどれも書いていない   ← PubliclyAccessible が無く" "$IC17"
+unstarred "audit_grep[17]: CloudFormation で削除の保護を書いていない DB は並べるだけ" "OrdersDb:  # 暗号化・公開・削除の保護をどれも書いていない   ← DeletionProtection" "$IC17"
+unstarred "audit_grep[17]: CloudFormation の読み取りレプリカの公開の既定は並べるだけ" "ReplicaDb:   ← PubliclyAccessible" "$IC17"
+starred  "audit_grep[17]: CloudFormation でメタデータの方式を書いていないインスタンスに ★" "WebServer:   ← MetadataOptions" "$IC17"
+starred  "audit_grep[17]: CloudFormation の JSON で暗号化を書いていない DB に ★" '"ReportsDb": {   ← StorageEncrypted が無い' "$IC17"
+absent   "audit_grep[17]: CloudFormation の JSON の文字列の中の括弧で資源の範囲を誤らない" "ApiHost" "$IC17"
+absent   "audit_grep[17]: CloudFormation で正しく作った資源を並べない（暗号化・サブネットグループ・Aurora・起動テンプレート・既定で守られるバケット）" "LedgerDb" "$IC17"
+absent   "audit_grep[17]: CloudFormation の Aurora の DB インスタンスを数えない" "AuroraWriter" "$IC17"
+absent   "audit_grep[17]: CloudFormation で起動テンプレートを使うインスタンスに IMDS を求めない" "Worker:" "$IC17"
+absent   "audit_grep[17]: CloudFormation で全項目を書いた JSON の DB を並べない" "Vault" "$IC17"
+contains "audit_grep[17]: CloudFormation で公開アクセスのブロックを false にした行を並べる" "cfn/stack.yaml:52:" "$IC17"
+contains "audit_grep[17]: CloudFormation の公開の ACL を並べる" "cfn/stack.yaml:50:" "$IC17"
+starred  "audit_grep[17]: Azure ですべての IP から DB へ届く防火壁の規則に ★" '"azurerm_mssql_firewall_rule" "all"' "$IC17"
+unstarred "audit_grep[17]: Azure のサービスすべてを許す防火壁の規則は並べるだけ" '"azurerm_mssql_firewall_rule" "azure_services"' "$IC17"
+absent   "audit_grep[17]: Azure で接続元を絞った防火壁の規則を並べない" '"office"' "$IC17"
+unstarred "audit_grep[17]: Azure で公開の可否を書いていないストレージアカウントを並べる" '"azurerm_storage_account" "uploads"' "$IC17"
+absent   "audit_grep[17]: Azure で公開を許さないと書いたストレージアカウントを並べない" '"azurerm_storage_account" "private"' "$IC17"
+contains "audit_grep[17]: Azure のコンテナの匿名の読み取りを並べる" "tf/azure.tf:19:" "$IC17"
+contains "audit_grep[17]: Azure の受信元を限定しない規則を並べる" "tf/azure.tf:27:" "$IC17"
+starred  "audit_grep[17]: Google Cloud の SQL の authorized_networks の 0.0.0.0/0 に ★" "tf/gcp.tf:35:        value = \"0.0.0.0/0\"   ← authorized_networks" "$IC17"
+absent   "audit_grep[17]: Google Cloud の SQL で接続元を絞ったものに ★ を付けない" "198.51.100.0/24" "$IC17"
+unstarred "audit_grep[17]: Google Cloud で公開の防止を書いていないバケットを並べる" '"google_storage_bucket" "exports"' "$IC17"
+absent   "audit_grep[17]: Google Cloud で公開の防止を enforced にしたバケットを並べない" '"locked"' "$IC17"
+starred  "audit_grep[17]: Helm の values.yaml の既定の特権に ★" "charts/web/values.yaml:9:" "$IC17"
+starred  "audit_grep[17]: Helm の values.yaml の既定の hostNetwork に ★" "charts/web/values.yaml:11:" "$IC17"
+unstarred "audit_grep[17]: Helm の values.yaml の既定の root は並べるだけ" "charts/web/values.yaml:7:" "$IC17"
+absent   "audit_grep[17]: Helm でテンプレートが参照しない値を並べない" "charts/web/values.yaml:13:" "$IC17"
+absent   "audit_grep[17]: Helm で正しく作ったチャートを並べない" "charts/api/values.yaml" "$IC17"
+
+# 資料 14 の観点のうち、iOS のキーチェーン・ATS の例外・UserDefaults の書き方と、Expo の公開用の名前と設定の ATS（架空の題材 mobile-ios）
+MI="$TMP/mobile-ios"; fixture_cp "$ROOT/tests/fixtures/mobile-ios" "$MI"
+MIO="$(bash "$SKILL/scripts/audit_grep.sh" "$MI" 2>&1)"
+MI18="$(printf '%s\n' "$MIO" | LC_ALL=C awk 'index($0, "=== 18.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+MI4B="$(printf '%s\n' "$MIO" | LC_ALL=C awk 'index($0, "=== 4b.") == 1 { f = 1; next } f && /^=== / { exit } f')"
+starred  "audit_grep[18]: kSecAttrAccessibleAlways に ★"                       "TokenStore.swift:10:" "$MI18"
+starred  "audit_grep[18]: Expo の SecureStore.ALWAYS に ★"                      "secure.ts:5:  await SecureStore.setItemAsync('session', t, { keychainAccessible: SecureStore.ALWAYS });   ← 端末のロック中" "$MI18"
+absent   "audit_grep[18]: 端末に閉じたキーチェーンの値に ★ を付けない"          "TokenStore.swift:19:" "$MI18"
+absent   "audit_grep[18]: コメントアウトしたキーチェーンの値を拾わない"         "TokenStore.swift:24:" "$MI18"
+unstarred "audit_grep[18]: iCloud キーチェーンへの同期を並べる"                 "TokenStore.swift:11:" "$MI18"
+starred  "audit_grep[18]: 変数に置いた UserDefaults への資格情報の書き込みに ★" "TokenStore.swift:27:" "$MI18"
+absent   "audit_grep[18]: 資格情報でない UserDefaults の書き込みに ★ を付けない" "TokenStore.swift:28:" "$MI18"
+starred  "audit_grep[18]: @AppStorage の資格情報の名前に ★"                    "TokenStore.swift:33:" "$MI18"
+starred  "audit_grep[18]: Objective-C の NSUserDefaults の資格情報の書き込みに ★" "Legacy.m:5:" "$MI18"
+unstarred "audit_grep[18]: ほかの例外と一緒の NSAllowsArbitraryLoads は並べるだけ（iOS 10 以降は無視される）" "ios/App/Info.plist:6:" "$MI18"
+unstarred "audit_grep[18]: 古い TLS を許す ATS の例外を並べる"                 "ios/App/Info.plist:14:" "$MI18"
+unstarred "audit_grep[18]: 前方秘匿性を外す ATS の例外を並べる"                "ios/App/Info.plist:16:" "$MI18"
+absent   "audit_grep[18]: 既定どおりの ATS の例外を並べない"                   "ios/App/Info.plist:2" "$MI18"
+starred  "audit_grep[18]: Expo の設定の NSAllowsArbitraryLoads に ★"           "app.json:7:" "$MI18"
+starred  "audit_grep[4b]: 秘密の語を含む EXPO_PUBLIC_ の名前に ★"             "EXPO_PUBLIC_SUPABASE_SERVICE_ROLE_KEY" "$MI4B"
+starred  "audit_grep[4b]: SECRET を含む EXPO_PUBLIC_ の名前に ★"              "EXPO_PUBLIC_WEBHOOK_SECRET" "$MI4B"
+unstarred "audit_grep[4b]: 公開前提の anon key に ★ を付けない"                "EXPO_PUBLIC_SUPABASE_ANON_KEY" "$MI4B"
+unstarred "audit_grep[4b]: 公開前提の publishable key に ★ を付けない"         "EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY" "$MI4B"
 
 # ロックファイルの要否を、パッケージの定義とロックファイルの組で決める（0 節）。その場で小さな構成を作って当てる
 LP="$TMP/lock-pairs"; mkdir -p "$LP/pinned" "$LP/ranged" "$LP/toolonly" "$LP/gomod"

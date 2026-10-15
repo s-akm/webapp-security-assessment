@@ -50,8 +50,8 @@ build/
   identifying-words.sh  公開してはいけない語の一覧を、手元の非公開のファイルから作る（案件語と、評価の題材の名前）
 .github/        CI（macOS と Linux）、Dependabot、secret scanning の設定
 tests/          スキルを直したときに壊れていないかを見る
-  run.sh        検査本体（1335 件）
-  mutations.sh  検査の検査。欠陥を入れて、対応する検査が失敗するかを確かめる（470 件）
+  run.sh        検査本体（1384 件）
+  mutations.sh  検査の検査。欠陥を入れて、対応する検査が失敗するかを確かめる（504 件）
   self-audit.sh 配布前の自己監査。上の 2 つに加え、方針の遵守と配布物を見る
   eval/         実地の評価。スキルを教材に当て、見つけた割合と方針の遵守を測る（費用がかかる。CI では実行しない）
     local/      題材ごとの情報（.gitignore 済み。手元にだけ置く）
@@ -154,7 +154,8 @@ noreply 以外のメールアドレスで作ったコミットを止める。**�
   Terraform・CloudFormation・Dockerfile・Kubernetes の定義だけを持つものと、React Native に Android と iOS の設定を持つものと、
   Gradle だけの Android のアプリ。**対象に無い技術の資料を読ませない**ための判定なので、「有」と「無」の両方が正しく出ることを見る。
   17・18 節は、資料 13・14 の観点ごとに穴のある側と正しく作った側（`hardened.tf`・`api-hardened.yaml`・`services/worker/Dockerfile`・`android-gradle/`）を置き、
-  正しい側に ★ が付かないことも見る
+  正しい側に ★ が付かないことも見る。CloudFormation の書いていない項目・Azure と Google Cloud の Terraform・Helm の `values.yaml` の既定は
+  `tests/fixtures/iac-clouds/`、iOS のキーチェーンと ATS の例外と `UserDefaults` の書き方・Expo の公開用の名前と設定の ATS は `tests/fixtures/mobile-ios/` に置く
 - **基盤・CI・依存・エージェント設定の題材**（`tests/fixtures/supply-baas/`）— `audit_grep.sh` の
   1b / 4d / 9b / 10b / 19 節以降用。**AI エージェントの設定ファイルだけは置かず、検査が一時ディレクトリに作る**
   （開いた人のエディタやエージェントで実際に読み込まれてしまうため）。Supabase のマイグレーション、Firebase のルール、GitHub Actions、
@@ -212,7 +213,7 @@ docker run --rm -v "$PWD":/src:ro wsa-linux bash -c 'set -e; cp -r /src /work/r 
 **検査は「通ること」しか示さない。** 通る検査が、壊れたときに失敗するかどうかは別の話で、
 実際に「浅い場所に題材を置いたため不具合を再現できず素通りしていた」検査があった。
 `mutations.sh` はスキルにわざと欠陥を入れて `run.sh` を実行し、**対応する検査が失敗すること**（＝壊れたことを検査が見つけること）を
-1 つずつ確かめる（470 件）。失敗しない検査は「生きていない」と判定する。
+1 つずつ確かめる（504 件）。失敗しない検査は「生きていない」と判定する。
 
 初回に実行したところ、20 件中 5 件で問題が出た。うち 3 件は検査自体が弱かった
 （期待値が先頭付近の文字だったため、行末で起きる文字化けを検出できていない、など）。
@@ -362,9 +363,10 @@ grep -rnE 'の 2[a-z] 節|の 2[a-z]（|=== 2[a-z]' skill/ tests/   # 例: 2 系
 - **`references/12` / `13` / `14`、07 の 11 節（リアルタイム通信）、09 の 8〜11 節、`audit_grep.sh` の 20・21・23 節、
   テンプレートの `client-console-checklist.md` と `client-sql-request.md` は実案件で使っていない。**
   外部の基準と公開されている事例から起こしたもので、実際に当てると過不足が出るはず。
-  検出（構成の判定）は題材で確かめてある。17・18 節は、基盤とモバイルの教材に当てて足りなかった観点を足したが、
-  資源ごとに「書いていない項目」を探すのは Terraform の AWS の DB とインスタンス、Kubernetes のコンテナの上限だけで、
-  CloudFormation と他のクラウドは 1 行で書いた値しか見ない。19 節（Supabase の RLS・定義者権限の関数・利用者が書き換えられる値での認可）、
+  検出（構成の判定）は題材で確かめてある。17・18 節は、基盤とモバイルの教材に当てて足りなかった観点を足した。
+  資源ごとに「書いていない項目」を探すのは、Terraform の AWS の DB とインスタンス・Azure と Google Cloud のストレージと DB の防火壁、
+  CloudFormation の DB とインスタンス、Kubernetes のコンテナの上限、Helm の `values.yaml` の既定で、どれも架空の題材でしか確かめていない。
+  1 行に詰めた JSON の CloudFormation、Bicep・ARM テンプレート・CDK・Pulumi、Helm の `-f`・`--set` で上書きした値は読まない。19 節（Supabase の RLS・定義者権限の関数・利用者が書き換えられる値での認可）、
   22 節、24 節は、Next.js と Supabase の実案件で使い、19 節の ★ がそのまま重い指摘につながった
 - **実地の評価で測れている枠組みは、Express・NestJS・Rails・Django・FastAPI・Next.js（App Router）＋ Supabase・サーバーレス（SAM）と、GitHub Actions・Terraform・Kubernetes・Android・React Native（題材は 22）。**
   Supabase の RLS はマイグレーションだけの題材 2 つとアプリ全体の題材 1 つで測れるようになった。Server Actions とミドルウェアの対象範囲の穴は、

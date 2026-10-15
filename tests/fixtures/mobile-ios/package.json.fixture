@@ -1,0 +1,5 @@
+{
+  "name": "mobile-ios-fixture",
+  "private": true,
+  "dependencies": { "expo": "54.0.0", "expo-secure-store": "15.0.0" }
+}

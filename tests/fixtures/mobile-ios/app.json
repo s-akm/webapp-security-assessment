@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "fixture",
+    "ios": {
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        }
+      }
+    }
+  }
+}
