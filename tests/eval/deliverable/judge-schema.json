@@ -1,0 +1,240 @@
+{
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "answers.json の項目の id"
+          },
+          "reported": {
+            "type": "boolean"
+          },
+          "instructed": {
+            "type": "string",
+            "enum": [
+              "none",
+              "vague",
+              "concrete"
+            ]
+          },
+          "fixed": {
+            "type": "string",
+            "enum": [
+              "fixed",
+              "partial",
+              "not_fixed",
+              "human_task"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reported",
+          "instructed",
+          "fixed",
+          "reason"
+        ]
+      }
+    },
+    "regressions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    "summary_scores": {
+      "type": "object",
+      "properties": {
+        "danger": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "score",
+            "reason"
+          ]
+        },
+        "order": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "score",
+            "reason"
+          ]
+        },
+        "jargon": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "score",
+            "reason"
+          ]
+        },
+        "length": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "score",
+            "reason"
+          ]
+        },
+        "questions": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "score",
+            "reason"
+          ]
+        }
+      },
+      "required": [
+        "danger",
+        "order",
+        "jargon",
+        "length",
+        "questions"
+      ]
+    },
+    "remediation_scores": {
+      "type": "object",
+      "properties": {
+        "actionable": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "score",
+            "reason"
+          ]
+        },
+        "verifiable": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "score",
+            "reason"
+          ]
+        },
+        "correctness": {
+          "type": "object",
+          "properties": {
+            "score": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "score",
+            "reason"
+          ]
+        }
+      },
+      "required": [
+        "actionable",
+        "verifiable",
+        "correctness"
+      ]
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  },
+  "required": [
+    "items",
+    "regressions",
+    "summary_scores",
+    "remediation_scores",
+    "errors"
+  ]
+}

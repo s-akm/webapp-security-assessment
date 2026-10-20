@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # スキルを実際に当てて、見つけた割合と方針の遵守を測る。
 #
-#   tests/eval/run-eval.sh <題材> [--model <モデル>] [--budget <米ドル>] [--skill-ref <タグ|コミット>] [--previous <前回の出力>] [--record] [--prep-only]
+#   tests/eval/run-eval.sh <題材> [--model <モデル>] [--budget <米ドル>] [--skill-ref <タグ|コミット>] [--no-skill] [--previous <前回の出力>] [--record] [--prep-only]
 #     既定は --model claude-opus-5-5 --budget 10。--skill-ref で、前の版の skill/ を当てる（新しいモデルで基準を作り直すとき）
+#     --no-skill で、スキルを置かず事前の洗い出しもせずに、同じモデルに同じ題材を評価させる（スキルの上乗せを測る基準。版は「なし」で記録する）
 #     --previous で、前回の回の出力（ディレクトリか result.json）の台帳を「前回の台帳」として渡し、再評価として当てる。
 #     前回の ID の引き継ぎを carry_score.py で数えて carry.json に残す（history.tsv の比較には混ぜない）
 #   tests/eval/run-eval.sh --score-only <出力のディレクトリ> [--record]
@@ -26,19 +27,20 @@ LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
 # モデルは更新されていくので、確認日から半年を過ぎたら tests/run.sh が知らせる。新しいモデルが出ていれば、知識と費用と
 # 出力が止められる頻度を比べて選び直し、--skill-ref で前の版の基準を作り直す
 EVAL_MODEL_REVIEWED="2026-09-28"
-MODEL="claude-opus-5-5"; SKILL_REF=""; RETRIES=1; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""; PREVIOUS=""
+MODEL="claude-opus-5-5"; SKILL_REF=""; NO_SKILL=0; RETRIES=1; BUDGET=10; RECORD=0; PREP_ONLY=0; SCORE_ONLY=""; TARGET=""; PREVIOUS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model) MODEL="$2"; shift 2 ;;
     --skill-ref) SKILL_REF="$2"; shift 2 ;;
+    --no-skill) NO_SKILL=1; shift ;;
     --previous) PREVIOUS="$2"; shift 2 ;;
     --retries) RETRIES="$2"; shift 2 ;;
     --budget) BUDGET="$2"; shift 2 ;;
     --record) RECORD=1; shift ;;
     --prep-only) PREP_ONLY=1; shift ;;
     --score-only) SCORE_ONLY="$2"; shift 2 ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) TARGET="$1"; shift ;;
   esac
 done
@@ -220,7 +222,8 @@ if [[ -n "$SKILL_REF" ]]; then
   git -C "$ROOT" archive "$SKILL_REF" skill VERSION | tar -x -C "$WORK/skill-ref"
   SKILL_SRC="$WORK/skill-ref/skill"; SKILL_VERSION_FILE="$WORK/skill-ref/VERSION"
 fi
-( cd "$APP" && bash "$SKILL_SRC/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
+# スキル無しの回は、事前の洗い出しもしない（スキルの一部なので）
+[[ "$NO_SKILL" -eq 1 ]] || ( cd "$APP" && bash "$SKILL_SRC/scripts/audit_grep.sh" . ) > "$EVID/audit-grep.txt" 2>&1 || true
 # 題材のファイルの一覧。エージェントは最初に一覧を取ろうとするが、cd・;・パイプを組み合わせた命令は許可の判定で止められることがあり
 # （2026-10-14 の実測で 10 回中 2 回）、止められると一覧を取れないまま、事前の洗い出しに名前の出たファイルだけを読む（5 ファイルを開かず 12 件を見落とした）。
 # スキルを置く前に作り、指示で置き場を示す。node_modules と .git は並べない
@@ -237,6 +240,14 @@ json.dump({"findings": s.get("findings") or [], "unconfirmed": s.get("unconfirme
   cp "$EVID/previous-register.json" "$OUT/previous-register.json"
   echo "前回の台帳を置いた（$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print(len(r["findings"]), "件の指摘・", len(r["unconfirmed"]), "件の未確認事項")' "$EVID/previous-register.json")）"
 fi
+PROMPT_FILE="$EVAL/prompt.md"
+if [[ "$NO_SKILL" -eq 1 ]]; then
+  # スキル無しの回。スキルを置かず、版とコミットは「なし」で控える
+  [[ -z "$PREVIOUS" ]] || { echo "--no-skill と --previous は一緒に使えない" >&2; exit 2; }
+  PROMPT_FILE="$EVAL/prompt-noskill.md"
+  echo "なし" > "$OUT/skill_version"; printf 'なし' > "$OUT/skill_commit"
+  echo "スキル無しで当てる（事前の洗い出しもしない）"
+else
 echo "audit_grep.sh を先に実行した（$(wc -l < "$EVID/audit-grep.txt" | tr -d ' ') 行）"
 
 # スキルを題材の中に置く。--setting-sources project で、利用者の手元の設定・スキル・CLAUDE.md は読まない
@@ -247,6 +258,7 @@ cat "$SKILL_VERSION_FILE" > "$OUT/skill_version"
 # 行をつなぐのに paste -sd '' は使わない（macOS の paste は区切りを空にできず、失敗して評価が始まらない）
 if [[ -n "$SKILL_REF" ]]; then git -C "$ROOT" rev-parse --short "$SKILL_REF^{commit}" | tr -d '\n' > "$OUT/skill_commit"
 else { git -C "$ROOT" rev-parse --short HEAD; git -C "$ROOT" diff --quiet HEAD -- skill || echo "+未コミット"; } | tr -d '\n' > "$OUT/skill_commit"; fi
+fi
 
 
 if [[ "$PREP_ONLY" -eq 1 ]]; then
@@ -274,7 +286,7 @@ if sys.argv[5]:
           "- 前回の指摘と未確認事項の ID は振り直さない。前回の ID は、今回の台帳でも同じ ID の行として残し、行き先（指摘は 解消・未着手・部分対応・再発・未確認、"
           "未確認事項は 確定・未確認のまま・取り下げ）と根拠を事実の欄に書く\n"
           "- 新しく見つけたものは、前回の続きの番号から振る\n")
-print(t, end="")' "$EVAL/prompt.md" "$premise_file" "$EVID/audit-grep.txt" "$NO_ANSWERS" "${PREVIOUS:+$EVID/previous-register.json}")"
+print(t, end="")' "$PROMPT_FILE" "$premise_file" "$EVID/audit-grep.txt" "$NO_ANSWERS" "${PREVIOUS:+$EVID/previous-register.json}")"
 printf '%s\n' "$prompt" > "$OUT/prompt.txt"
 # 許可は permissions.sh にまとめる（probe-permissions.sh も同じものを使い、CLI を更新したら実際に働くかを確かめる）
 # shellcheck source=permissions.sh
