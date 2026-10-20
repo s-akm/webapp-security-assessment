@@ -114,7 +114,7 @@ printf '\n\033[1m検査の検査 — スキルに欠陥を入れて、対応す�
 
 # ---- 構造 ----
 mutate "存在しない参照先を書く" "SKILL.md" "参照先が実在する" \
-  's = s.replace("## 参照ファイル", "## 参照ファイル\n\n`references/99-nonexistent.md` を読む。\n", 1)'
+  's = s.replace("## スクリプト", "## スクリプト\n\n`references/99-nonexistent.md` を読む。\n", 1)'
 # 実行権限は内容の置換ではないので、mutate を通さず直接扱う
 if [[ ( -z "$ONLY" || "実行権限" == *"$ONLY"* ) && $SHARD_K -le 1 ]]; then
   chmod 644 "$SKILL/scripts/scan_secrets.sh"
@@ -402,7 +402,7 @@ mutate "make_register: スキルの版を入れない" "scripts/make_register.py
 mutate "make_register: 人的・物理的を範囲外にしない" "scripts/make_register.py" "版と構成ごとの中身" \
   's = s.replace("OUT_OF_SCOPE if area in PRIVACY_OUT_OF_SCOPE else \"\"", "\"\"")'
 mutate "make_register: カード決済のシートを常設する" "scripts/make_register.py" "card を付けなければカード決済のシートを作らない" \
-  's = s.replace("    if args.card:\n", "    if True:\n")'
+  's = s.replace("    if card:\n", "    if True:\n")'
 mutate "make_register: 任意のシートの番号を枚数から数える" "scripts/make_register.py" "番号を飛ばさない" \
   's = s.replace("return max(nums) + 1", "return len(names) + 1")'
 mutate "make_register: 実機確認サマリに「参考」を戻す（旧構成）" "scripts/make_register.py" "「参考」の値を残さない" \

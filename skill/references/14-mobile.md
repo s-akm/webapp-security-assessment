@@ -2,7 +2,7 @@
 
 **評価対象にモバイルアプリが含まれるとき**に読む。Web だけなら不要。
 
-**要否の判定**は `scripts/audit_grep.sh` の 0 節が出す。`android/` や `ios/` の
+**要否の判定**は事前の洗い出しの 0 節に出る。`android/` や `ios/` の
 ディレクトリ、`pubspec.yaml`、`Podfile`、`build.gradle`、React Native や Capacitor の
 依存があれば該当する。
 
@@ -14,7 +14,7 @@
 |---|---|---|
 | コードの所在 | サーバー側は手元に無い | **全部が利用者の端末にある** |
 | 秘密の隠し場所 | サーバーに置ける | **無い。取り出せる前提で設計する** |
-| 更新 | 配信すれば即時 | **審査と、利用者の更新操作が要る** |
+| 更新 | 配信すれば即時 | **審査と、利用者の更新操作が必要** |
 | 実行環境 | ブラウザの制約下 | 端末の制約下。root 化された端末もある |
 
 **「アプリの中にあるから見えない」は成り立たない。** 配布されたファイルは逆アセンブルでき、
@@ -32,12 +32,9 @@
 
 ## 確認項目
 
-**版**: MASVS 2.1.0（2024-01）を土台にしている。L1 / L2 / R の段階は 2.0.0 で廃止された。
-試験手順の MASTG は **2.0.0（2026-06）が最初の安定版**で、弱点の一覧 MASWE が両者をつなぐ。
-**指摘には、分かる範囲で MASWE と MASTG-TEST の ID を添える**と、依頼者側の開発者が一次情報を引ける。
-
 OWASP MASVS の分類（Storage / Crypto / Auth / Network / Platform / Code / Resilience /
-Privacy）に沿って並べてある。**該当しない項目は飛ばす。**
+Privacy）に沿って並べてある（版は `references/06-frameworks.md` の表）。**該当しない項目は飛ばす。**
+指摘には、分かる範囲で MASWE や MASTG-TEST の ID を添えると、依頼者側の開発者が一次情報を引ける。
 
 ### 1. 埋め込まれた秘密情報（MASVS-CRYPTO / CODE）
 
@@ -50,15 +47,10 @@ grep -rnoiE --exclude-dir=node_modules \
   --include='*.ts' --include='*.tsx' --include='*.js' --include='*.plist' --include='*.xml' \
   --include='*.gradle' --include='*.properties' --include='app.json' --include='app.config.*' --include='eas.json' . 2>/dev/null \
   | sed -E 's/(["'"'"'])[^"'"'"']{4,}$/\1…/'
-# 引用符を使わない .properties と .env は、名前だけ出す
+# 引用符を使わない .properties と .env、アプリに焼き込まれる公開用の環境変数は、名前だけ出す
 grep -rnoiE --exclude-dir=node_modules '^[[:space:]]*[A-Za-z0-9_.]*(password|secret|token|api[_-]?key)[A-Za-z0-9_.]*[[:space:]]*=' \
   --include='*.properties' --include='.env*' . 2>/dev/null
-
-# アプリに焼き込まれる公開用の環境変数（名前だけ。Expo・React Native・Capacitor の構成）。
-# 接頭辞は scripts/audit_grep.sh の公開用の環境変数の節と同じ
-grep -rhoE --exclude-dir=node_modules \
-  '(NEXT_PUBLIC|NUXT_PUBLIC|VITE|REACT_APP|EXPO_PUBLIC|GATSBY|STORYBOOK|ASTRO_PUBLIC|PUBLIC|VUE_APP|NG_APP|SVELTE_PUBLIC|REMIX_PUBLIC)_[A-Z0-9_]+' \
-  . 2>/dev/null | sort -u
+grep -rhoE --exclude-dir=node_modules '(EXPO_PUBLIC|REACT_APP|VITE|NEXT_PUBLIC|PUBLIC)_[A-Z0-9_]+' . 2>/dev/null | sort -u
 
 # 設定ファイル。配布物に入るもの、入らないが署名の情報を持つもの
 find . \( -name 'google-services.json' -o -name 'GoogleService-Info.plist' \
@@ -67,11 +59,9 @@ find . \( -name 'google-services.json' -o -name 'GoogleService-Info.plist' \
   -not -path '*/node_modules/*' 2>/dev/null
 ```
 
-**`EXPO_PUBLIC_` などの接頭辞が付いた変数は、ビルドのときにアプリの中へ文字列として入る**（Expo の資料は、コンパイルしたアプリの中に
-平文で見えるので秘密を置かないよう書いている）。名前に KEY・SECRET・TOKEN が入っていれば、その値は配布物から取り出せる（下の表で用途を分ける）。
-`scripts/audit_grep.sh` の 4b 節は、名前に SECRET・PRIVATE・SERVICE_ROLE・PASSWORD などの秘密の語を含むものに ★ を付ける。
-anon key や publishable key のような公開前提の鍵は名前に KEY が入るだけなので ★ を付けない（その鍵で何ができるかを下の表で確かめる）。`keystore.properties` や `key.properties` に
-署名鍵のパスワードが書かれ、リポジトリに入っていれば、署名鍵のファイルと合わせて偽アプリを作れる。
+**`EXPO_PUBLIC_` などの接頭辞が付いた変数は、ビルドのときにアプリの中へ文字列として入る。** 名前に SECRET・PRIVATE・SERVICE_ROLE・PASSWORD
+が入るものは、その値が配布物から取り出せる。anon key や publishable key のような公開前提の鍵は、その鍵で何ができるかを下の表で確かめる。
+`keystore.properties` や `key.properties` に署名鍵のパスワードが書かれ、リポジトリに入っていれば、署名鍵のファイルと合わせて偽アプリを作れる。
 
 **すべての鍵が問題なわけではない。** 用途で分ける。
 
@@ -81,14 +71,16 @@ anon key や publishable key のような公開前提の鍵は名前に KEY が�
 | 第三者 API の鍵で、**課金や特権操作ができる**もの | **問題あり。中継サーバーを挟む** |
 | 署名鍵・配布用の証明書がリポジトリにある | **問題あり。これが漏れると偽アプリを作れる** |
 
-**「鍵が入っている」だけで指摘にしない。** その鍵で何ができるかを確かめる。
-Firebase の設定ファイルは公開前提で、守るのは**サーバー側の規則**になる。
-`references/03-runtime-verification.md` の 1 節で規則を確認する。
+**「鍵が入っている」だけで指摘にしない。** その鍵で何ができるかを確かめる。Firebase の設定ファイルは公開前提で、
+守るのは**サーバー側の規則**になる（`references/03-runtime-verification.md` の 1 節）。
 
 **ただし、公開前提の鍵でも呼べる API が増えることがある。** Google の `AIza…` の鍵は、同じ GCP プロジェクトで
-Generative Language API（Gemini）を有効にすると、**配布済みの鍵のまま Gemini を呼べる**状態になる
-（2026-02 に公表。公開 Web 上で使える鍵が数千件見つかった）。**その鍵に API の制限が掛かっているか**を、
-依頼者に GCP のコンソールで確かめてもらう（渡す文面は `templates/client-console-checklist.md` の 11）。確かめられなければ未確認事項に残す。
+Generative Language API（Gemini）を有効にすると、**配布済みの鍵のまま Gemini を呼べる**状態になる。
+**その鍵に API の制限が掛かっているか**を、依頼者に GCP のコンソールで確かめてもらう
+（渡す文面は `templates/client-console-checklist.md` の 11）。確かめられなければ未確認事項に残す。
+
+**直し方:** 課金や特権操作ができる鍵は、自社のサーバー（BaaS の関数など）に移し、アプリはログインした利用者として自社の API を呼ぶ。
+公開前提の鍵は、コンソールで呼べる API とアプリ（パッケージ名・バンドル ID）を制限する。署名鍵はリポジトリから外し、CI の秘密情報に置く。
 
 ### 2. 端末に保存しているもの（MASVS-STORAGE）
 
@@ -103,33 +95,19 @@ grep -rnE -e 'AsyncStorage|SharedPreferences|UserDefaults|NSUserDefaults|localSt
 **保存先で判定が変わる。**
 
 - **`Keychain`（iOS）/ Android Keystore を使った保存 / `SecureStore`** —
-  資格情報の置き場として意図されたもの。問題なし。ただし Keychain は**いつ読めるか**と**どこへ同期されるか**を属性で決める。
-  `kSecAttrAccessible` が `kSecAttrAccessibleAlways` 系（非推奨）なら端末のロック中も読める。`ThisDeviceOnly` の付かない値や
-  `kSecAttrSynchronizable` が true なら、iCloud キーチェーンやバックアップを通じて別の端末へ移る。トークンは
-  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` などの端末に閉じた値にしているかを確かめる。`kSecAttrAccessibleAlways` は iOS 12 で非推奨になった値で、
-  Apple の資料はアプリでの使用を勧めていない。包みのライブラリでも同じ値を渡せる（React Native の Keychain の `ACCESSIBLE.ALWAYS`、Expo の
-  `SecureStore.ALWAYS`、Swift の `.accessibility(.always)`）。`scripts/audit_grep.sh` の 18 節は、これらに ★ を付け、同期の指定を並べる
-- **`EncryptedSharedPreferences`** — 置き場としては今も安全側で、判定は**問題なし**。ただし**ライブラリ
-  （`androidx.security:security-crypto`）全体が 2025 年に非推奨になった**ので、`references/08-privacy-compliance.md` の
-  6 節と同じく「気づいたこと」として渡す（指摘には数えない）
-- **`UserDefaults` / `SharedPreferences` / `AsyncStorage`** — 平文で残る。
-  **認証トークンやパスワードを置いていれば指摘**。端末のバックアップにも入る。`scripts/audit_grep.sh` の 18 節は、
-  書き込む鍵の名前に token・password・secret・session などを含む行に ★ を付ける（名前での判定なので、中身を読んで確かめる）。
-  iOS の `UserDefaults` は書き方が多い。`UserDefaults.standard.set(…)` のほか、変数に置いた `defaults.set(…)`、Objective-C の
-  `[… setObject:… forKey:@"…"]`、SwiftUI の `@AppStorage("…")`（中身は `UserDefaults`）も同じ置き場になる
-- **ログへの出力**。デバッグ用の出力が残っていて、個人情報や token を書いていないか。Android の `Log.*` は端末の共通のログ（logcat）に入り、
-  ログを読む権限を持つアプリが入った端末もある。Android の公式の資料は、配るビルドでは機微な値をログに出さず、R8 で
-  `Log.v`・`Log.d`・`Log.i` を消すよう勧めている。React Native の `console.log` や iOS の `print`・`NSLog` も同じ
-
-```bash
-# ログへの出力のうち、資格情報や個人情報の語を含む行
-grep -rnE --exclude-dir=node_modules '(Log\.[vdiwe]|Timber\.[vdiwe]|NSLog|os_log|debugPrint|print|console\.(log|debug|info))\(' \
-  --include='*.kt' --include='*.java' --include='*.swift' --include='*.dart' --include='*.ts' --include='*.tsx' --include='*.js' . 2>/dev/null \
-  | grep -iE 'token|passw|secret|session|cookie|email|phone|otp|card' | head -20
-```
+  資格情報の置き場として意図されたもの。問題なし。ただし Keychain の属性が `kSecAttrAccessibleAlways` 系（非推奨。包みのライブラリでは
+  `ACCESSIBLE.ALWAYS`・`SecureStore.ALWAYS` など）ならロック中も読め、`ThisDeviceOnly` の付かない値や `kSecAttrSynchronizable` が true なら
+  別の端末へ移る。トークンは `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` などの端末に閉じた値にする
+- **`EncryptedSharedPreferences`** — 置き場としては今も安全側で、判定は**問題なし**。ライブラリが非推奨になっているので、
+  `references/08-privacy-compliance.md` の 6 節と同じく「気づいたこと」として渡す（指摘には数えない）
+- **`UserDefaults` / `SharedPreferences` / `AsyncStorage`** — 平文で残り、端末のバックアップにも入る。**認証トークンやパスワードを置いていれば指摘**。
+  直し方は、Keychain・Keystore・`SecureStore` に移すこと。iOS は `defaults.set(…)`、Objective-C の `setObject:forKey:`、
+  SwiftUI の `@AppStorage("…")`（中身は `UserDefaults`）も同じ置き場になる。鍵の名前（token・password・session など）で候補を絞り、中身を読んで確かめる
+- **ログへの出力**。デバッグ用の出力（Android の `Log.*`・`Timber`、iOS の `print`・`NSLog`、React Native の `console.log`）に、個人情報や
+  token を書いていないか。Android の `Log.*` は端末の共通のログ（logcat）に入る。直し方は、機微な値の出力を消し、配るビルドでは R8 で
+  `Log.v`・`Log.d`・`Log.i` を消すこと（ログの行のうち token・passw・email などの語を含むものを探す）
 - **バックアップの対象から外しているか**（Android の `allowBackup`、iOS の除外指定）。
-  **Android 12 以降は `android:dataExtractionRules` で、クラウドへのバックアップと端末間の転送を別々に指定する。**
-  `allowBackup` だけを見ると判定を誤る
+  Android 12 以降は `android:dataExtractionRules` で、クラウドへのバックアップと端末間の転送を別々に指定するので、`allowBackup` だけで判定しない
 
 ### 3. 通信（MASVS-NETWORK）
 
@@ -143,39 +121,27 @@ grep -rnE -e 'ServerTrustManager|allowInvalidCertificates|trustAllCerts|X509Trus
   -e 'setHostnameVerifier|badCertificateCallback|rejectUnauthorized' . 2>/dev/null | head
 ```
 
-- **平文通信を許可していないか**（`usesCleartextTraffic="true"` / `NSAllowsArbitraryLoads`）。
-  「一部のドメインだけ」の例外指定なら、その範囲を確かめる
-- **iOS の ATS は、`NSAllowsArbitraryLoads` のほかにも緩める書き方がある**（既定は Apple の資料による）。
-  - 例外のドメインの `NSExceptionMinimumTLSVersion` を `TLSv1.0`・`TLSv1.1` にすると古い TLS を許す（既定は `TLSv1.2`。1.2 より下げると審査で理由を求められる）
-  - `NSExceptionRequiresForwardSecrecy` を `NO` にすると、前方秘匿性の無い暗号を許す（既定は `YES`）
-  - `NSExceptionAllowsInsecureHTTPLoads`・`NSAllowsArbitraryLoadsInWebContent`・`NSAllowsArbitraryLoadsForMedia` は、その範囲で平文を許す
-  - `NSAllowsArbitraryLoadsInWebContent`・`NSAllowsArbitraryLoadsForMedia`・`NSAllowsLocalNetworking` のどれかを書くと、iOS 10 以降は
-    `NSAllowsArbitraryLoads` の値を無視する。`scripts/audit_grep.sh` の 18 節は、その組み合わせでは `NSAllowsArbitraryLoads` に ★ を付けずに並べる
-  - Expo では `app.json`・`app.config.*` の `ios.infoPlist` に書いた値がビルドで `Info.plist` に入る。18 節はこれも読む
+- **平文通信を許可していないか**（`usesCleartextTraffic="true"` / `NSAllowsArbitraryLoads`）。Android の `<base-config cleartextTrafficPermitted="true">`
+  （すべての通信）か `<domain-config>`（一部のドメイン）かで重さが違う
+- **iOS の ATS は、`NSAllowsArbitraryLoads` のほかにも緩める書き方がある。** 例外のドメインの `NSExceptionMinimumTLSVersion` を
+  `TLSv1.2` より下げる、`NSExceptionRequiresForwardSecrecy` を `NO` にする、`NSExceptionAllowsInsecureHTTPLoads`・
+  `NSAllowsArbitraryLoadsInWebContent`・`NSAllowsArbitraryLoadsForMedia` でその範囲の平文を許す。Expo では `app.json`・`app.config.*` の
+  `ios.infoPlist` に書いた値が `Info.plist` に入るので、そこも読む
 - **証明書の検証を切っていないか。** Web の O 節と同じだが、モバイルでは
-  **開発中に入れた回避策がそのまま出荷される**ことが多い
+  **開発中に入れた回避策がそのまま出荷される**ことが多い。直し方は、その回避の処理を消し、開発用の証明書は開発のビルドだけで信頼させること
 - **Android の `network_security_config` で `<certificates src="user" />` を信頼していないか。** 利用者（や端末に入り込んだ
-  第三者）が入れた証明書で、通信を中継して読める。API 24 以降を対象にしたアプリは、書かなければ利用者が入れた証明書を信頼しない。
-  `<debug-overrides>` の中だけなら、`android:debuggable` が true のビルドにしか作用しない（Android の公式の資料）。
-  `src/debug/` の下のマニフェストとリソースも、デバッグのビルドにしか入らない
-- **平文の通信は、`<base-config cleartextTrafficPermitted="true">`（すべての通信）か `<domain-config>`（一部のドメイン）かで重さが違う。**
-  API 28 以降を対象にしたアプリは、書かなければ平文を許さない
-- **証明書のピン留めをしているか。** 無いこと自体は直ちに指摘ではない。
-  扱う情報の重さで決める。**入れる場合は更新の手順まで決まっているか**を見る
-  （鍵の更新でアプリが一斉に通信できなくなる事故が起きる）
+  第三者）が入れた証明書で、通信を中継して読める。`<debug-overrides>` の中や `src/debug/` の下だけなら、デバッグのビルドにしか入らない
+- **証明書のピン留めは、無いこと自体は直ちに指摘ではない。** 入れているなら、鍵の更新で一斉に通信できなくならないよう更新の手順があるか
 
 ### 4. 認証とセッション（MASVS-AUTH）
 
 - トークンの保管場所（2 節）と、有効期限
-- **生体認証の使い方。** 端末の生体認証は「その端末の持ち主か」を確かめるもので、
-  **サーバー側の認証の代わりにはならない**。生体認証が通ったことをアプリ側の判定だけで
-  サーバーに伝えていれば指摘になる
+- **生体認証は「その端末の持ち主か」を確かめるもので、サーバー側の認証の代わりにはならない。** 通ったことをアプリ側の判定だけで
+  サーバーに伝えていれば指摘になる（直し方は、Keychain・Keystore に置いた鍵の利用を生体認証で守り、その鍵での署名をサーバーで検証すること）
 - ログアウトでトークンが失効するか（`references/09-browser-verification.md` の 7 節と同じ）
-- **アプリや端末の真正性確認（Play Integrity・App Attest・Firebase App Check）を入れているなら、
-  判定をサーバー側でしているか。** 端末側で判定させると、改ざんで外せる。Firebase App Check は
-  **強制（enforcement）を有効にするまで何も拒否しない**（Firestore・Realtime Database・Storage はコンソールで、
-  Cloud Functions はコードの `enforceAppCheck: true` で有効にする）。Firebase の公式は App Check を
-  認証やルールを「補う」ものとし、すべての不正利用は防げないとしている。**認証や権限設定の代わりには数えない**
+- **アプリや端末の真正性確認（Play Integrity・App Attest・Firebase App Check）を入れているなら、判定をサーバー側でしているか。**
+  Firebase App Check は強制（enforcement）を有効にするまで何も拒否しない（Cloud Functions はコードの `enforceAppCheck: true`）。
+  **認証や権限設定の代わりには数えない**
 
 ### 5. 端末との境界（MASVS-PLATFORM）
 
@@ -201,23 +167,16 @@ grep -rniE --exclude-dir=node_modules \
 - **ログイン画面をアプリ内の WebView で開いていないか。** WebView ではアプリが入力を読めるうえ、利用者は正規の画面かを
   確かめられない。OS のブラウザを使う仕組み（iOS の `ASWebAuthenticationSession`、Android の Custom Tabs）を使う（RFC 8252）
 - **WebView に任意の URL を読み込ませていないか。** 読み込む URL を外部入力から
-  組み立てていれば、アプリの文脈で攻撃者のページが動く
+  組み立てていれば、アプリの文脈で攻撃者のページが動く。直し方は、読み込む先を自社のドメインの許可リストに限ること
 - **JavaScript ブリッジ**（Android の `addJavascriptInterface`、iOS の `WKScriptMessageHandler` 等）で、端末側の機能を
-  Web 側に渡していないか。WebView に外部のページを表示するなら、その組み合わせは危険。受け取る側でメッセージの送り元
-  （表示中のページのオリジン）を確かめているかも見る
-- **WebView の緩い設定。** `setAllowUniversalAccessFromFileURLs(true)`・`setAllowFileAccessFromFileURLs(true)` は、
-  端末内のファイルとして開いたページから他のファイルや任意のオリジンへ届く（API 16 以降の既定は false で、API 30 で非推奨。
-  Android の公式の資料は `WebViewAssetLoader` に替えるよう求めている）。`MIXED_CONTENT_ALWAYS_ALLOW` は
-  HTTPS のページに HTTP の読み込みを混ぜる。**書き方が 3 通りあり、名前の大文字小文字が違う**: Java の `setAllow…(true)`、
-  Kotlin の `allow… = true`、React Native の WebView の属性 `allowUniversalAccessFromFileURLs={true}`・`mixedContentMode="always"`。
-  `setAllowFileAccess(true)` は API 29 以下で既定が true で、ファイルを読ませないなら明示的に切る
+  Web 側に渡していないか。外部のページを表示する WebView との組み合わせは危険。受け取る側で送り元のオリジンを確かめているか
+- **WebView の緩い設定**（ファイルから任意のオリジンへ届く `AllowUniversalAccessFromFileURLs`・`AllowFileAccessFromFileURLs`、HTTP を混ぜる
+  `MIXED_CONTENT_ALWAYS_ALLOW`・`mixedContentMode="always"`）。言語ごとに書き方と大文字小文字が違うので、上の検索の結果を読む。
+  直し方は、その設定を外し、端末内のファイルは `WebViewAssetLoader` で読ませること
 - **他アプリへ公開している入口**（Android の `exported="true"`）が意図したものか
-- **個人情報を表示する画面で、画面の記録を止めているか。** Android は `FLAG_SECURE` でスクリーンショットと
-  最近使ったアプリの一覧のサムネイルを止められる。iOS はアプリが背景に回るときのサムネイルに画面が写るので、覆う処理があるかを見る
-- **クリップボードに秘密の値を置いていないか。** 確認コードや口座番号をコピーさせる機能は、他のアプリから読まれる
-  ことがある。Android 13 以降は、機微な内容として印を付ける指定（`ClipDescription.EXTRA_IS_SENSITIVE`）がある
-- **プッシュ通知の本文に個人情報を入れていないか。** ロック画面に表示され、通知を配る事業者（APNs・FCM）も通る。
-  本文は「新しいメッセージがあります」のようにし、内容はアプリを開いてから取りに行く形にする
+- **画面の外へ個人情報が出る経路。** 個人情報を表示する画面のスクリーンショットとアプリの切り替えのサムネイル（Android は `FLAG_SECURE`、
+  iOS は背景に回るときに覆う処理）、クリップボードに置く秘密の値（他のアプリから読まれることがある）、プッシュ通知の本文
+  （ロック画面に出る。本文は「新しいメッセージがあります」にし、内容はアプリを開いてから取りに行く）
 
 ### 6. 権限（MASVS-PRIVACY）
 
@@ -226,33 +185,24 @@ grep -rnE 'uses-permission|NS[A-Za-z]+UsageDescription' \
   --include='AndroidManifest.xml' --include='Info.plist' . 2>/dev/null | head -20
 ```
 
-- **要求している権限が、機能に対して過剰でないか。** 位置情報・連絡先・カメラ・
-  ストレージは、使っていないなら外す
-- 権限の説明文が、実際の用途と合っているか。**ストアの審査と、
-  `references/08-privacy-compliance.md` の文書との整合の両方に関わる**
-- 取得した情報の送信先が、プライバシーポリシーに書かれているか（08 の 1 節・5 節）
+- **要求している権限が、機能に対して過剰でないか。** 位置情報・連絡先・カメラ・ストレージは、使っていないなら外す
+- 権限の説明文が実際の用途と合っているか、取得した情報の送信先がプライバシーポリシーに書かれているか（ストアの審査と 08 の 1 節・5 節の両方に関わる）
 
 ### 7. 配布物に残るもの（MASVS-CODE / RESILIENCE）
 
 - デバッグ用の設定が残っていないか（`android:debuggable`、テスト用のサーバー URL）。**Gradle の `buildTypes` で、`debug` 以外
-  （`release`・`staging` など）に `debuggable true`（Kotlin の DSL では `isDebuggable = true`）を書いていないか。** `debug` のビルドの種類は
-  既定でデバッグできるので、そこに書いてあるのは問題ない。マニフェストに `android:debuggable="true"` を直に書くと、ビルドの種類を問わず作用する
-- **実行時に外からコードを読み込んでいないか**（`DexClassLoader`・`InMemoryDexClassLoader`・`PathClassLoader`）。読み込む元が
-  外部の保存領域や通信で取ったファイルなら、差し替えられて任意のコードが動く。Android の公式の資料は、業務上の必要が無ければ避け、
-  使うなら内部の保存領域に置き、読み込む前に改ざんを検査するよう求めている。Google Play の方針に反することもある
+  （`release`・`staging` など）に `debuggable true`（Kotlin の DSL では `isDebuggable = true`）を書いていないか。** `debug` のビルドの種類に
+  書いてあるのは問題ない。マニフェストに `android:debuggable="true"` を直に書くと、ビルドの種類を問わず作用する
+- **実行時に外からコードを読み込んでいないか**（`DexClassLoader` など）。読み込む元が外部の保存領域や通信で取ったファイルなら、差し替えられて任意のコードが動く
 
 ```bash
-grep -rnE '(isDebuggable|debuggable)[[:space:]]*=?[[:space:]]*true|android:debuggable="true"' \
-  --include='*.gradle' --include='*.kts' --include='AndroidManifest.xml' . 2>/dev/null | grep -v node_modules
-grep -rnE 'DexClassLoader|PathClassLoader|InMemoryDexClassLoader|DexFile\.loadDex' --include='*.java' --include='*.kt' . 2>/dev/null
+grep -rnE '(isDebuggable|debuggable)[[:space:]]*=?[[:space:]]*true|android:debuggable="true"|DexClassLoader|InMemoryDexClassLoader' \
+  --include='*.gradle' --include='*.kts' --include='AndroidManifest.xml' --include='*.java' --include='*.kt' . 2>/dev/null | grep -v node_modules
 ```
-- **iOS のプライバシーマニフェスト**（`PrivacyInfo.xcprivacy`）。2024-05 から必須。収集するデータの申告が、
-  `references/08-privacy-compliance.md` のプライバシー文書と食い違っていないか
-- **Android の対象 API 水準。** Google Play は 2026-08-31 から新規と更新に API 36 を求めている。
-  古い水準のままなら、TLS 1.0 / 1.1 の無効化（API 35）などの保護が適用されていない
-- ログ出力が本番で無効になっているか
-- **難読化・改竄検知は、優先度を上げすぎない。** 時間稼ぎであって、防御ではない。
-  **サーバー側で守れていないことの代わりにはならない。**
+- **iOS のプライバシーマニフェスト**（`PrivacyInfo.xcprivacy`）の申告が、`references/08-privacy-compliance.md` のプライバシー文書と食い違っていないか
+- **Android の対象 API 水準。** Google Play が求める水準を下回っていれば更新を配れなくなり、新しい水準で入った保護も適用されない。
+  今の要求水準は Google Play の公式の資料で確かめる
+- **難読化・改竄検知は、優先度を上げすぎない。** 時間稼ぎであって、サーバー側で守れていないことの代わりにはならない。
   「難読化していないこと」を単独で指摘に挙げると、本当に危ないものが埋もれる
 
 ---
@@ -261,16 +211,11 @@ grep -rnE 'DexClassLoader|PathClassLoader|InMemoryDexClassLoader|DexFile\.loadDe
 
 Web の `references/09-browser-verification.md` に相当する部分。**評価者が代行しない。**
 
-- **通信の中継は行わない。** 端末に証明書を入れて通信を覗く作業は、
-  依頼者の端末と資格情報を扱うことになる。**手順を渡して結果を受け取る**（03 のモード B）
-- ストアの公開ページから確認できることはある（権限の一覧、プライバシーラベル、
-  最終更新日、対応 OS 版）。**これは外部から見えるので、評価者が確認してよい**
-- **Play の外（APK の直接配布）で配っているか。** Android の認定端末では、開発者の検証が段階的に求められる。
-  2026-09-30 からブラジル・インドネシア・シンガポール・タイで、**指定のアプリストア（Google Play など 7 つ）から
-  入れるアプリ**が対象になり、**2027 年に全世界の、認定端末に配られるすべてのアプリ**へ広がる。ADB や、利用者が
-  危険を承知して 1 回だけ設定する経路では、未検証のアプリも入れられる。配布経路が変わる可能性を依頼者に伝える
-- **配布物の解析（逆コンパイル）は、依頼者の許可を明示的に取ってから。**
-  自社アプリであっても、契約や利用規約で制限されていることがある
+- **通信の中継は行わない。** 依頼者の端末と資格情報を扱うことになるので、**手順を渡して結果を受け取る**（03 のモード B）
+- ストアの公開ページ（権限の一覧、プライバシーラベル、最終更新日、対応 OS 版）は外から見えるので、評価者が確認してよい
+- **Play の外（APK の直接配布）で配っているか。** Android の認定端末では、開発者の身元の検証が段階的に求められるようになっている。
+  配布経路が変わる可能性を依頼者に伝える（時期と対象は Google の公式の資料で確かめる）
+- **配布物の解析（逆コンパイル）は、依頼者の許可を明示的に取ってから。** 自社アプリでも、契約や利用規約で制限されていることがある
 
 ---
 
@@ -284,7 +229,7 @@ Web の `references/09-browser-verification.md` に相当する部分。**評価
 | 影響 | 配布物から取り出して、第三者が課金を発生させられる。
         利用量の上限も設定されていない |
 | 是正 | 呼び出しをサーバー側に移し、アプリからは自社の API を叩く形にする。
-        **鍵の差し替えにはアプリの更新が要るため、先に鍵を失効させると
+        **鍵の差し替えにはアプリの更新が必要なため、先に鍵を失効させると
         既存の利用者が使えなくなる。** 順序を決めてから実施する |
 ```
 

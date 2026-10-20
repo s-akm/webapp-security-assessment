@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""指摘台帳（xlsx）の雛形を生成する。
+"""指摘台帳（xlsx）の雛形を生成する。埋め終えた台帳から、依頼者に渡す版を作る（仕上げ）。
 
     python make_register.py <出力先.xlsx> [--service "サービス名"] [--date 2026-01-15]
                             [--skill-version 2.18.0] [--frameworks none|owasp|full]
                             [--owasp 2025|2021] [--api] [--card] [--stars <audit_grep の出力>] [--force]
+    python make_register.py --finalize <埋めた台帳.xlsx> <渡す版.xlsx> [--force]
 
 出力先が既にあれば止まる（書きかけの台帳を雛形で潰さないため）。上書きするなら --force。
 
@@ -43,7 +44,18 @@ full なら 4_API_Top10）。none では 7_API_Top10 が 1 枚増える。
 実際の指摘を書き始めるときに上書きするか削除する。
 
 注意: openpyxl は数式を文字列として書き込むだけで、計算結果は保持しない。
-表計算ソフトで開くまで合計欄は空に見える。これは正常な挙動。
+表計算ソフトで開くまで合計欄は空に見える（Excel 以外の閲覧ソフトや Python での読み取りでは空のまま）。
+
+--finalize（仕上げ）は、埋め終えた台帳から依頼者に渡す版を別のファイルに作る。元の台帳は変更しない。
+  ・数式（雛形が使う SUM・COUNTA・COUNTBLANK・COUNTIF・COUNTIFS・SUMIFS・SUMPRODUCT・ISERROR・SEARCH・IF・INDEX）を
+    ここで計算し、値に置き換える。ほかの関数があれば、関数の名前とセルを出して止める（黙って空にしない）
+  ・評価者向けの注記（【この欄の使い方】など、雛形の書き方の注記）、総合評価の「整合の確認」の節と
+    「判定が空欄の行」、作業用のシート（★の判定）を外し、外したものの一覧を出す。評価者への指示を括弧に書いた
+    見出しと、雛形のままの副題は依頼者向けのものに置き換え（雛形が評価者向けと依頼者向けの副題を両方持つ）、
+    観点の一覧の観点の名前から資料の番号（「02 A. 」「運用 1. 」など）を外す。
+    例示行の網掛けと斜体も外す。【数え方の但し書き】のように中身を書き換えて渡す注記は残す
+  ・整合の確認が 0 でない、または雛形の見本の文（例示行・前提の空欄）がそのまま残っていれば、渡す版を作らずに
+    止めて、残っているものを出す（終了コード 2）。--force を付ければ作る（既にある渡す版の上書きも --force）
 """
 
 import argparse
@@ -206,7 +218,21 @@ thin = Side(style="thin", color="D6DCE4")
 BORDER = Border(left=thin, right=thin, top=thin, bottom=thin)
 
 
-def title_block(ws, title, subtitle, width):
+# 副題の対応。評価者向けの副題（書き方の決まりを含む）→ 依頼者に渡す版の副題。評価日は {date} に置き換えて持つ
+_CLIENT_SUBTITLES = {}
+_DATE_IN_SUBTITLE = re.compile(r"評価日 [0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _subtitle_key(text):
+    return _DATE_IN_SUBTITLE.sub("評価日 {date}", text)
+
+
+def title_block(ws, title, subtitle, width, client=None):
+    """題と副題を置く。subtitle は評価者が台帳を埋めるときの説明（書き方の決まりを含んでよい）。
+    client は依頼者に渡す版の副題で、仕上げ（--finalize）が、雛形のままの副題をこれに置き換える。
+    None は作業用のシート（渡す版から外す）。"""
+    if client is not None:
+        _CLIENT_SUBTITLES[_subtitle_key(subtitle)] = _subtitle_key(client)
     ws["A1"] = title
     ws["A1"].font = Font(name=FONT, size=16, bold=True, color=NAVY)
     ws["A2"] = subtitle
@@ -241,6 +267,19 @@ def header_row(ws, row, headers, widths):
     ws.freeze_panes = ws.cell(row=row + 1, column=1)
 
 
+# 仕上げ（--finalize）が使う印。雛形を作るたびに、ここへ集まる。
+# 注記の見出し（【…】）ごとに、依頼者に渡す版へ残すか（True）、評価者向けとして外すか（False）。
+_NOTE_LABELS = {}
+# 例示行と書き方の見本の文。渡す版にそのまま残っていれば、書き換え忘れとして止める。
+_TEMPLATE_TEXTS = set()
+
+
+def placeholder(text):
+    """書き換えて使う見本の文を返す（渡す版にそのまま残っていれば、仕上げが止める）。"""
+    _TEMPLATE_TEXTS.add(text)
+    return text
+
+
 def body_row(ws, row, values, example=False):
     for i, v in enumerate(values, start=1):
         c = ws.cell(row=row, column=i, value=v)
@@ -249,13 +288,24 @@ def body_row(ws, row, values, example=False):
         c.border = BORDER
         if example:
             c.fill = PatternFill("solid", fgColor=EXAMPLE_FILL)
+            # 短い値（「問題あり」「認可」など）は実際の行にも同じ値が入るので、見本の印にしない。
+            # 長い文と、<n> や「←」のような書き換える印を含む文だけを数える
+            if isinstance(v, str) and (len(v) >= 30 or "<" in v or "←" in v):
+                _TEMPLATE_TEXTS.add(v)
 
 
-def note(ws, row, text, width):
+def note(ws, row, text, width, client=False):
+    """注記を置く。client=False は評価者向けの書き方の注記で、仕上げ（--finalize）が渡す版から外す。
+    client=True は評価者が中身を書き換えて依頼者に渡す注記（見本のまま残っていれば、仕上げが止める）。"""
     c = ws.cell(row=row, column=1, value=text)
     c.font = Font(name=FONT, size=9, color=GRAY)
     c.alignment = Alignment(vertical="top", wrap_text=True)
     ws.merge_cells(start_row=row, start_column=1, end_row=row + 2, end_column=width)
+    m = re.match(r"【[^】]+】", text)
+    if m:
+        _NOTE_LABELS[m.group(0)] = _NOTE_LABELS.get(m.group(0), False) or client
+    if client:
+        _TEMPLATE_TEXTS.add(text)
 
 
 def section(ws, row, text):
@@ -299,14 +349,33 @@ OBSERVATIONS = [
     "運用 8. 外部診断と受付窓口",
 ]
 OBS_VALUES = ["問題なし", "指摘あり", "未確認", "対象外"]
+# 観点の名前の前に付けた、資料の中の位置を示す接頭辞（資料番号か区分の名前（「02」「運用」など）、空白、
+# 節の記号（A〜Z か数字）、「. 」）。依頼者は資料を持たず、番号に意味が無いので、渡す版（--finalize）では外して
+# 観点の名前だけにする（04 の「観点の一覧」）
+OBS_PREFIX = re.compile(r"^[^\s.]{1,6} (?:[A-Z]|[0-9]{1,2})\. +")
+
+
+# 総合評価の節の見出し。仕上げ（--finalize）は、整合の確認の節と「判定が空欄の行」を渡す版から外し、
+# 評価者への指示を括弧に書いた見出しを、依頼者向けの見出しに置き換える
+CHECK_SECTION = "■ 整合の確認"
+BLANK_VERDICT_LABEL = "判定が空欄の行"
+CLIENT_HEADINGS = {
+    "■ 対応が要る指摘": "■ 対応が要る指摘（判定が問題ありで、状態がクローズでも見送りでもないもの）",
+    "■ 台帳の内訳": "■ 台帳の内訳",
+    "■ 観点の一覧": "■ 観点の一覧",
+}
+DEFAULT_SERVICE = "（サービス名）"
 
 
 def sheet_summary(wb, names, service, date, skill_version, standards):
     ws = wb.create_sheet(names["summary"])
     F = "'{}'".format(names["findings"])
+    placeholder(f"{DEFAULT_SERVICE} セキュリティ評価")   # サービス名を渡さずに作り、書き換え忘れた題
     title_block(ws, f"{service} セキュリティ評価",
                 f"評価日 {date}／個人情報を取り扱う Web アプリケーションとしての適合性評価。"
-                "件数と工数は『{}』から自動集計される。".format(names["findings"]), 5)
+                "件数と工数は『{}』から自動集計される。".format(names["findings"]), 5,
+                client=f"評価日 {date}／個人情報を取り扱う Web アプリケーションとしての適合性評価。"
+                "件数と工数は『{}』の行から集計した値。".format(names["findings"]))
     ws.column_dimensions["A"].width = 30
     for col in "BCDE":
         ws.column_dimensions[col].width = 22
@@ -331,10 +400,12 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
          "代わりではない。", False),
     ]
     r = 5
-    for k, v, placeholder in premises:
+    for k, v, is_placeholder in premises:
+        if is_placeholder:
+            placeholder(v)
         ws.cell(row=r, column=1, value=k).font = Font(name=FONT, size=10, bold=True)
         c = ws.cell(row=r, column=2, value=v)
-        c.font = Font(name=FONT, size=10, color=GRAY if placeholder else "000000")
+        c.font = Font(name=FONT, size=10, color=GRAY if is_placeholder else "000000")
         c.alignment = Alignment(vertical="top", wrap_text=True)
         ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=5)
         if isinstance(v, str) and len(v) > 24:
@@ -389,7 +460,7 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
         ("判断保留", f'=COUNTIF({J},"判断保留")'),
         ("問題なし（クローズ（該当なし））", f'=COUNTIF({J},"問題なし")'),
         # 判定の書き忘れを見つけるための行。0 でなければ、どこかの行に判定が無い
-        ("判定が空欄の行", f"=B{base}-B{base+1}-B{base+4}-B{base+5}"),
+        (BLANK_VERDICT_LABEL, f"=B{base}-B{base+1}-B{base+4}-B{base+5}"),
     ]
     for i, (label, formula) in enumerate(breakdown):
         body_row(ws, base + i, [label, formula, "件"])
@@ -397,7 +468,7 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
     # 整合の確認。04 の決まりに合わない行と、数式の範囲の外に書いた行を数える。どれも 0 が正しい。
     # 集計は数式なので、決まりに合わない行があっても件数は黙ってずれる。ずれを数で見えるようにする
     r = base + len(breakdown) + 1
-    section(ws, r, "■ 整合の確認（どれも 0 になる。0 でなければ指摘事項一覧の該当の行を直す）")
+    section(ws, r, CHECK_SECTION + "（どれも 0 になる。0 でなければ指摘事項一覧の該当の行を直す）")
     header_row(ws, r + 1, ["確かめること", "件数", ""], [30, 10, 4])
     ws.freeze_panes = None
     P = rng("優先度")
@@ -464,7 +535,7 @@ def sheet_summary(wb, names, service, date, skill_version, standards):
          "【数え方の但し書き】台帳 <n> 行 ＝ 問題あり <a> 行（うち 見送り <b>・クローズ（解消） <c>）"
          "＋ 判断保留 <d> 行 ＋ 問題なし <e> 行（クローズ（該当なし））。対応が要る指摘は <a−b−c> 件（P0〜P4）。"
          "別途、指摘ではない前提タスクとして T-1（<作業の名前>）がある。サマリと修正指示書にも同じものを書く。",
-         5)
+         5, client=True)
     r += 4
     note(ws, r,
          "【結論の書き方】土台として成立している点を先に置き、次に先に塞ぐべきものを 3 件まで。"
@@ -503,7 +574,9 @@ def sheet_runtime(wb, names):
     title_block(ws, "実機確認サマリ",
                 "コードからは判定できない実行環境の設定値について、参照系のみで確認した結果。"
                 "データ変更・設定変更は行っていない。判定は 問題なし／問題あり／判断保留 の 3 値で、"
-                "中間の値は作らない。指摘にしない気づいたことは、総合評価の「気づいたこと」に置く。", 5)
+                "中間の値は作らない。指摘にしない気づいたことは、総合評価の「気づいたこと」に置く。", 5,
+                client="コードからは判定できない実行環境の設定値について、参照系のみで確認した結果。"
+                "データ変更・設定変更は行っていない。判定は 問題なし／問題あり／判断保留。")
     header_row(ws, 4, ["区分", "確認項目", "結果（事実）", "判定", "関連ID"], [16, 30, 70, 12, 14])
     body_row(ws, 5, ["アクセス制御", "全テーブルの行レベル権限",
                      "全 <n> テーブルで有効。無効は 0 件（← 実行結果をそのまま書く。「問題ありませんでした」と要約しない）",
@@ -525,7 +598,11 @@ def sheet_findings(wb, names):
                 "当たると分かったものを含む）、N-xx（コードの外で判明し、裏が取れた指摘）。前提タスク（T-x）は"
                 "この表に入れず、対応ロードマップに置く。一度振った ID は再利用しない。"
                 "「指摘事項」には事実を、「想定される影響」には誰が何をできてしまうかを書く。"
-                "根拠の強さは指摘事項の冒頭に印で示す（【実機確認で確定】【新規・実機確認で判明】【依頼者確認】）。", len(FINDING_COLS))
+                "根拠の強さは指摘事項の冒頭に印で示す（【実機確認で確定】【新規・実機確認で判明】【依頼者確認】）。", len(FINDING_COLS),
+                client="判定：問題あり／問題なし／判断保留。優先度：P0＝即日〜3日／P1＝1〜2週間／P2＝1か月／"
+                "P3＝3か月／P4＝6か月（問題なしの行は「—」）。状態：未対応／対応中／クローズ（解消）／"
+                "クローズ（該当なし）／見送り。ID は S-xx がコードを根拠にした指摘、N-xx がコードの外で判明し、"
+                "裏が取れた指摘。根拠の強さは指摘事項の冒頭の印で示す（【実機確認で確定】【新規・実機確認で判明】【依頼者確認】）。")
     ws.row_dimensions[2].height = 58
     header_row(ws, 3, [h for h, _ in FINDING_COLS], [w for _, w in FINDING_COLS])
     example = {
@@ -557,7 +634,8 @@ def sheet_good(wb, names):
     ws = wb.create_sheet(names["good"])
     title_block(ws, "評価できる実装（維持すべき点）",
                 "今後の改修で壊してはいけない実装。これを書かないと、修正の過程で壊れる。"
-                "実機確認で裏が取れたものには【実機】と印を付ける。", 2)
+                "実機確認で裏が取れたものには【実機】と印を付ける。", 2,
+                client="今後の改修で壊してはいけない実装。実機確認で裏が取れたものには【実機】と印を付けた。")
     header_row(ws, 4, ["区分", "内容"], [20, 110])
     body_row(ws, 5, ["認可",
                      "全 API ルートにガードが存在する。無認証は問い合わせ受付・計測・ログアウト等、"
@@ -573,7 +651,9 @@ def sheet_unknown(wb, names):
                 "重要度「高」は、何かの作業を止めているもの。"
                 "「調べれば分かるもの」と「担当者しか知らないもの」を区別して書く。"
                 "「行き先」から右の 3 列は U-x を閉じるとき（再評価、依頼者の確認の結果を戻したとき）に書き、まだ確かめていない行は空欄にする。"
-                "U-x の行は消さず、確定・未確認のまま・取り下げのどれかを選ぶ（references/11-reassessment.md の 3 節）。", width)
+                "U-x の行は消さず、確定・未確認のまま・取り下げのどれかを選ぶ（references/11-reassessment.md の 3 節）。", width,
+                client="コード監査と実機確認を経て、なお確定していない項目。重要度「高」は、何かの作業を止めているもの。"
+                "「行き先」は確かめた結果（確定／未確認のまま／取り下げ）で、まだ確かめていない行は空欄。")
     header_row(ws, 4, [h for h, _ in UNKNOWN_COLS], [w for _, w in UNKNOWN_COLS])
     # 影響する項目は、指摘事項一覧の例示行（S-01）を指す。例示どうしが食い違うと、
     # 総合評価の「整合の確認」が雛形の時点で 0 にならない
@@ -634,7 +714,8 @@ def sheet_stars(wb, names, stars):
     title_block(ws, "★ の判定",
                 "scripts/audit_grep.sh が ★ を付けた行を、1 行ずつ判定して残す。★ を読み流すと、見たのか見落としたのかを後から区別できない。"
                 "判定は 問題あり／問題なし／判断保留。問題ありは起票した指摘の ID を書く（同じ原因の ★ は同じ ID でよい）。"
-                "問題なしは、読んだ箇所と理由を「理由・確認の方法」に書く。空欄と、問題ありなのに台帳に無い ID は総合評価の「整合の確認」が数える。", 6)
+                "問題なしは、読んだ箇所と理由を「理由・確認の方法」に書く。空欄と、問題ありなのに台帳に無い ID は総合評価の「整合の確認」が数える。", 6,
+                client=None)
     header_row(ws, 4, ["No", "節", "場所（ファイル:行）", "判定", "指摘の ID", "理由・確認の方法"],
                [8, 8, 44, 12, 12, 70])
     if stars is None:
@@ -657,7 +738,9 @@ def sheet_roadmap(wb, names):
     title_block(ws, "対応ロードマップ",
                 "依存関係で並べる。深刻度順ではない。前提になっているもの（プラン変更、調査タスク、"
                 "スキーマ復元）を先に置く。指摘ではない前提タスクは T-x の ID でここに置く"
-                "（指摘事項一覧には入れない）。工数に待ち時間（確認待ち・観測期間・承認）は含めない。", 7)
+                "（指摘事項一覧には入れない）。工数に待ち時間（確認待ち・観測期間・承認）は含めない。", 7,
+                client="依存関係の順に並べた（深刻度の順ではない）。前提になる作業を先に置いた。T-x は指摘ではない前提タスク。"
+                "工数に待ち時間（確認待ち・観測期間・承認）は含まない。")
     header_row(ws, 4, ["フェーズ", "時期", "対象ID", "実施内容", "AI実装", "人手", "補足"],
                [13, 13, 15, 44, 11, 11, 88])
     body_row(ws, 5, ["フェーズ0", "即日", "T-1",
@@ -793,7 +876,10 @@ def sheet_privacy(wb, names):
                 "判定は 適合／不適合／判断保留 の 3 値（指摘の判定とは別の軸）。コードから判定できない区分"
                 "（人的・物理的）は「範囲外（取材で聞く）」にし、未確認と混同させない。根拠には実行結果を書き、"
                 "実機で確定したものには【実機確定】と印を付ける。関連 ID が無い行は「—」。"
-                "技術的安全管理措置だけを見て「安全管理措置を講じている」とは書かない。", 6)
+                "技術的安全管理措置だけを見て「安全管理措置を講じている」とは書かない。", 6,
+                client="区分は個人情報保護委員会ガイドライン（通則編）「10（別添）講ずべき安全管理措置の内容」の 7 区分。"
+                "判定は 適合／不適合／判断保留（指摘の判定とは別の軸）。コードから判定できない区分"
+                "（人的・物理的）は「範囲外（取材で聞く）」。実機で確定したものには【実機確定】と印を付けた。")
     ws.row_dimensions[2].height = 58
     header_row(ws, 4, ["区分", "観点", "確認項目", "判定", "確認結果（根拠）", "関連ID"],
                [22, 14, 50, 14, 70, 12])
@@ -817,7 +903,9 @@ def sheet_ipa(wb, names):
     title_block(ws, "IPA 非機能要求グレードによる水準評価",
                 "6 大項目について、現状の水準と事業として求められる水準を並べ、ギャップを示す。"
                 "可用性や性能が低い水準にあること自体は、事業フェーズによっては合理的な選択。"
-                "この表の価値は、セキュリティだけが低い水準に留まってはいけない理由を示せる点にある。", 6)
+                "この表の価値は、セキュリティだけが低い水準に留まってはいけない理由を示せる点にある。", 6,
+                client="6 大項目について、現状の水準と事業として求められる水準を並べ、ギャップを示す。"
+                "可用性や性能が低い水準にあること自体は、事業フェーズによっては合理的な選択。")
 
     ws["A4"] = "■ モデルシステムとの対比"
     ws["A4"].font = Font(name=FONT, size=11, bold=True, color=NAVY)
@@ -830,7 +918,7 @@ def sheet_ipa(wb, names):
         ("モデルシステム②", "社会的影響が限定されるシステム"),
         ("モデルシステム③", "社会的影響が極めて大きいシステム"),
     ], start=6):
-        body_row(ws, i, [a, b, "（現状水準／求められる水準／該当しない）", "", "", ""])
+        body_row(ws, i, [a, b, placeholder("（現状水準／求められる水準／該当しない）"), "", "", ""])
         ws.merge_cells(start_row=i, start_column=3, end_row=i, end_column=4)
         ws.merge_cells(start_row=i, start_column=5, end_row=i, end_column=6)
 
@@ -905,7 +993,8 @@ def sheet_api(wb, names):
     title_block(ws, "OWASP API Security Top 10 (2023) への当てはめ",
                 "API が主体の構成のときに使う。一般の Top 10 と重なるため、両方は並べない。"
                 "一般の Top 10 では拾いにくい API3（プロパティ単位の認可）と "
-                "API9（旧版 API の放置）のために当てはめる価値がある。", 5)
+                "API9（旧版 API の放置）のために当てはめる価値がある。", 5,
+                client="OWASP API Security Top 10 (2023) の各カテゴリへの当てはめ。判定は 適合／条件付き適合／不適合 で、根拠を添えた。")
     header_row(ws, 4, ["No", "カテゴリ", "判定", "主に見るもの", "根拠（要約）"],
                [9, 46, 14, 60, 90])
     for i, (no, name, watch) in enumerate(API_TOP10, start=5):
@@ -923,7 +1012,8 @@ def sheet_owasp(wb, names, edition="2025"):
     title_block(ws, f"OWASP Top 10 ({edition}) への当てはめ",
                 f"OWASP Top 10 の {edition} 版で判定する。個別の指摘を洗い出した後に行う。"
                 "対外説明・網羅性の確認が要る場合のみ。判定は 適合／条件付き適合／不適合 から選び、根拠を 1 行添える。"
-                "「適合」だけだと、見たうえでの適合なのか、見ていないだけなのかが分からない。", 4)
+                "「適合」だけだと、見たうえでの適合なのか、見ていないだけなのかが分からない。", 4,
+                client=f"OWASP Top 10 の {edition} 版の各カテゴリへの当てはめ。判定は 適合／条件付き適合／不適合 で、根拠を添えた。")
     header_row(ws, 4, ["No", "カテゴリ", "判定", "根拠（要約）"], [8, 46, 16, 100])
     rows = OWASP[edition]
     for i, (no, name) in enumerate(rows, start=5):
@@ -984,7 +1074,10 @@ def sheet_card(wb, names):
     title_block(ws, "カード決済を扱う場合の確認",
                 "カード決済を扱うとき（カード番号を自社で持たず、決済代行の画面へ遷移する・埋め込む構成を含む）だけ作る。"
                 "決済画面を読み込む自社ページのスクリプトが改ざんされれば、入力されたカード番号は抜かれる。"
-                "判定は 適合／不適合／判断保留（指摘の判定とは別の軸）。コードから見えないものは「範囲外（取材で聞く）」。", 7)
+                "判定は 適合／不適合／判断保留（指摘の判定とは別の軸）。コードから見えないものは「範囲外（取材で聞く）」。", 7,
+                client="カード決済に関わる基準（PCI DSS、クレジットカード・セキュリティガイドライン）への当てはめ。"
+                "決済画面を読み込む自社ページのスクリプトが改ざんされれば、入力されたカード番号は抜かれる。"
+                "判定は 適合／不適合／判断保留（指摘の判定とは別の軸）。コードから見えないものは「範囲外（取材で聞く）」。")
     ws.row_dimensions[2].height = 58
     header_row(ws, 4, ["基準", "項目", "求めていること", "このスキルで見るところ", "判定", "確認結果（根拠）", "関連ID"],
                [26, 24, 56, 34, 14, 60, 10])
@@ -1024,10 +1117,980 @@ def skill_version_here():
     return ""
 
 
+def build_workbook(frameworks="owasp", owasp="2025", api=False, card=False, stars=None,
+                   service=DEFAULT_SERVICE, date=None, skill_version=""):
+    """雛形の台帳を組み立てて (Workbook, シート名の対応) を返す。保存はしない。"""
+    date = date or _dt.date.today().isoformat()
+    names = dict(LAYOUTS[frameworks])
+    if api:
+        # 一般の Top 10 と重なるため、両方は並べない（references/06-frameworks.md）。
+        # OWASP のシートがある構成では、その位置と番号のまま API のシートに置き換える。
+        # dict は挿入順で並ぶため、作り直して位置を保つ。
+        if "owasp" in names:
+            rebuilt = {}
+            for k, v in names.items():
+                if k == "owasp":
+                    rebuilt["api"] = v.split("_", 1)[0] + "_API_Top10"
+                else:
+                    rebuilt[k] = v
+            names = rebuilt
+        else:
+            names["api"] = f"{next_number(names)}_API_Top10"
+    if card:
+        names["card"] = f"{next_number(names)}_カード決済"
+    # ★の判定は番号を付けずに末尾に置く（番号を付けると、カード決済などのシートの番号がずれる）
+    names["stars"] = STARS_SHEET
+
+    standards = "（references/06-frameworks.md の表から、照らした基準と版を書く）"
+    if "owasp" in names:
+        standards = f"（OWASP Top 10 {owasp} ほか。references/06-frameworks.md の表から書く）"
+    elif "api" in names:
+        standards = "（OWASP API Security Top 10 2023 ほか。references/06-frameworks.md の表から書く）"
+
+    wb = Workbook()
+    wb.remove(wb.active)
+    builders = {
+        "summary": lambda: sheet_summary(wb, names, service, date, skill_version, standards),
+        "runtime": lambda: sheet_runtime(wb, names),
+        "privacy": lambda: sheet_privacy(wb, names),
+        "owasp": lambda: sheet_owasp(wb, names, owasp),
+        "api": lambda: sheet_api(wb, names),
+        "ipa": lambda: sheet_ipa(wb, names),
+        "findings": lambda: sheet_findings(wb, names),
+        "good": lambda: sheet_good(wb, names),
+        "unknown": lambda: sheet_unknown(wb, names),
+        "roadmap": lambda: sheet_roadmap(wb, names),
+        "card": lambda: sheet_card(wb, names),
+        "stars": lambda: sheet_stars(wb, names, stars),
+    }
+    for key in names:
+        builders[key]()
+    fix_views(wb)
+    return wb, names
+
+
+# --------------------------------------------------------------------------
+# 仕上げ（--finalize）。埋め終えた台帳から、依頼者に渡す版を作る。
+#
+# 雛形の件数と工数は数式で、openpyxl は計算結果を保存しない。Excel で開けば計算されるが、プレビュー・一部のビューア・
+# Python での読み取りでは空に見える。渡す版では、雛形が使う関数をここで計算して値に置き換える。
+# 対応していない関数が台帳にあれば、黙って空にせず、関数の名前とセルを出して止める。
+
+# 渡す版から外す、評価者の作業用のシート
+WORK_SHEETS = (STARS_SHEET,)
+
+
+class _Unsupported(Exception):
+    """計算できない数式。where に場所（シート!セル）を入れる。"""
+
+    def __init__(self, msg):
+        super().__init__(msg)
+        self.where = ""
+
+
+class _Err:
+    """表計算ソフトのエラー値（#VALUE! など）。"""
+    __slots__ = ("code",)
+
+    def __init__(self, code):
+        self.code = code
+
+    def __eq__(self, other):
+        return isinstance(other, _Err) and other.code == self.code
+
+    def __hash__(self):
+        return hash(self.code)
+
+    def __repr__(self):
+        return self.code
+
+
+_TOKEN = re.compile(r"""
+ (?P<ws>\s+)
+|(?P<str>"(?:[^"]|"")*")
+|(?P<ref>(?:(?:'(?:[^']|'')+'|[^\s'!(),:;=<>+\-*/&^"{}%]+)!)?
+        (?:\$?[A-Za-z]{1,3}\$?[0-9]+(?::\$?[A-Za-z]{1,3}\$?[0-9]+)?|\$?[A-Za-z]{1,3}:\$?[A-Za-z]{1,3}))
+|(?P<num>[0-9]+(?:\.[0-9]+)?(?:[Ee][+-]?[0-9]+)?|\.[0-9]+)
+|(?P<func>[A-Za-z_][A-Za-z0-9_.]*(?=\())
+|(?P<bool>TRUE|FALSE)
+|(?P<op><>|<=|>=|[=<>+\-*/^&%])
+|(?P<punct>[(),;{}])
+""", re.X)
+_MAX_ROW = 1048576
+
+
+def _tokens(text):
+    out, pos = [], 0
+    while pos < len(text):
+        m = _TOKEN.match(text, pos)
+        if not m:
+            raise _Unsupported(f"読めない数式（{text[pos:pos + 20]!r} の位置）")
+        pos = m.end()
+        if m.lastgroup != "ws":
+            out.append((m.lastgroup, m.group(m.lastgroup)))
+    return out
+
+
+def _parse_ref(text, here):
+    from openpyxl.utils import column_index_from_string as ci
+    sheet = here
+    if "!" in text:
+        sheet, text = text.rsplit("!", 1)
+        if sheet.startswith("'"):
+            sheet = sheet[1:-1].replace("''", "'")
+    a, _, b = text.replace("$", "").partition(":")
+    b = b or a
+
+    def cell(s):
+        m = re.fullmatch(r"([A-Za-z]{1,3})([0-9]*)", s)
+        return ci(m.group(1).upper()), (int(m.group(2)) if m.group(2) else None)
+
+    c1, r1 = cell(a)
+    c2, r2 = cell(b)
+    if r1 is None:          # A:A のような列全体
+        r1, r2 = 1, _MAX_ROW
+    return ("ref", sheet, min(r1, r2), min(c1, c2), max(r1, r2), max(c1, c2))
+
+
+class _Parser:
+    """Excel の数式の構文（比較 < & < 加減 < 乗除 < べき乗 < 単項の符号 < %）を木にする。"""
+
+    def __init__(self, text, here):
+        self.t = _tokens(text)
+        self.i = 0
+        self.here = here
+
+    def peek(self):
+        return self.t[self.i] if self.i < len(self.t) else (None, None)
+
+    def take(self, text=None):
+        k, v = self.peek()
+        if k is None or (text is not None and v != text):
+            raise _Unsupported(f"読めない数式（{text or '値'} が足りない）")
+        self.i += 1
+        return k, v
+
+    def parse(self):
+        node = self.compare()
+        if self.i != len(self.t):
+            raise _Unsupported(f"読めない数式（{self.t[self.i][1]!r} の位置）")
+        return node
+
+    def binary(self, ops, sub):
+        node = sub()
+        while self.peek()[0] == "op" and self.peek()[1] in ops:
+            op = self.take()[1]
+            node = ("bin", op, node, sub())
+        return node
+
+    def compare(self):
+        return self.binary(("=", "<>", "<", ">", "<=", ">="), self.concat)
+
+    def concat(self):
+        return self.binary(("&",), self.additive)
+
+    def additive(self):
+        return self.binary(("+", "-"), self.multiplicative)
+
+    def multiplicative(self):
+        return self.binary(("*", "/"), self.power)
+
+    def power(self):
+        return self.binary(("^",), self.unary)
+
+    def unary(self):
+        k, v = self.peek()
+        if k == "op" and v in ("-", "+"):
+            self.take()
+            node = self.unary()
+            return ("neg", node) if v == "-" else node
+        node = self.primary()
+        while self.peek() == ("op", "%"):
+            self.take()
+            node = ("pct", node)
+        return node
+
+    def primary(self):
+        k, v = self.peek()
+        if k == "num":
+            self.take()
+            return ("val", float(v) if any(ch in v for ch in ".Ee") else int(v))
+        if k == "str":
+            self.take()
+            return ("val", v[1:-1].replace('""', '"'))
+        if k == "bool":
+            self.take()
+            return ("val", v == "TRUE")
+        if k == "ref":
+            self.take()
+            return _parse_ref(v, self.here)
+        if k == "func":
+            self.take()
+            self.take("(")
+            args = []
+            if self.peek() != ("punct", ")"):
+                while True:
+                    if self.peek() in (("punct", ","), ("punct", ")")):
+                        args.append(("val", None))      # 省いた引数
+                    else:
+                        args.append(self.compare())
+                    if self.peek() == ("punct", ","):
+                        self.take()
+                        continue
+                    break
+            self.take(")")
+            return ("func", v.upper(), args)
+        if (k, v) == ("punct", "("):
+            self.take()
+            node = self.compare()
+            self.take(")")
+            return node
+        if (k, v) == ("punct", "{"):
+            self.take()
+            items = []
+            while True:
+                node = self.unary()
+                if node[0] == "neg" and node[1][0] == "val":
+                    node = ("val", -node[1][1])
+                if node[0] != "val":
+                    raise _Unsupported("配列の定数に値でないものがある")
+                items.append(node[1])
+                if self.peek() in (("punct", ","), ("punct", ";")):
+                    self.take()
+                    continue
+                break
+            self.take("}")
+            return ("arr", items)
+        raise _Unsupported(f"読めない数式（{v!r} の位置）")
+
+
+class _Rng:
+    """セルの範囲。値は必要になったときに読む。"""
+    __slots__ = ("calc", "sheet", "r1", "c1", "r2", "c2")
+
+    def __init__(self, calc, sheet, r1, c1, r2, c2):
+        self.calc, self.sheet, self.r1, self.c1, self.r2, self.c2 = calc, sheet, r1, c1, r2, c2
+
+    @property
+    def rows(self):
+        return self.r2 - self.r1 + 1
+
+    @property
+    def cols(self):
+        return self.c2 - self.c1 + 1
+
+    def values(self):
+        return self.calc.range_values(self)
+
+    def present(self):
+        """空でないセルの値（列全体のような大きな範囲を数える関数のため、空のセルを読まない）。"""
+        cells = self.calc.cells.get(self.sheet)
+        if cells is None:
+            yield _Err("#REF!")
+            return
+        for (r, c) in list(cells):
+            if self.r1 <= r <= self.r2 and self.c1 <= c <= self.c2:
+                v = self.calc.value(self.sheet, r, c)
+                if v is not None:
+                    yield v
+
+
+def _isnum(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _num(v):
+    if isinstance(v, _Err) or _isnum(v):
+        return v
+    if v is None:
+        return 0
+    if isinstance(v, bool):
+        return int(v)
+    if isinstance(v, str):
+        try:
+            return float(v)
+        except ValueError:
+            return _Err("#VALUE!")
+    return _Err("#VALUE!")
+
+
+def _text(v):
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "TRUE" if v else "FALSE"
+    if _isnum(v):
+        return str(int(v)) if float(v).is_integer() else repr(float(v))
+    return str(v)
+
+
+def _plain(v):
+    """セルに書く値。整数になる数は整数で書く。"""
+    if isinstance(v, float) and v.is_integer():
+        return int(v)
+    return v
+
+
+def _rank(v):
+    return 0 if _isnum(v) else 1 if isinstance(v, str) else 2
+
+
+def _compare(op, a, b):
+    if isinstance(a, _Err):
+        return a
+    if isinstance(b, _Err):
+        return b
+    # 空のセルは、相手が文字なら ""、数なら 0、真偽値なら FALSE として比べる
+    if a is None:
+        a = "" if isinstance(b, str) or b is None else False if isinstance(b, bool) else 0
+    if b is None:
+        b = "" if isinstance(a, str) else False if isinstance(a, bool) else 0
+    if _rank(a) != _rank(b):
+        x, y = _rank(a), _rank(b)
+    elif isinstance(a, str):
+        x, y = a.casefold(), b.casefold()
+    else:
+        x, y = a, b
+    return {"=": x == y, "<>": x != y, "<": x < y, ">": x > y, "<=": x <= y, ">=": x >= y}[op]
+
+
+def _wild(pattern):
+    """COUNTIF・SEARCH のワイルドカード（* ? と ~ による打ち消し）を正規表現にする。"""
+    out, i = [], 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "~" and i + 1 < len(pattern) and pattern[i + 1] in "*?~":
+            out.append(re.escape(pattern[i + 1]))
+            i += 2
+            continue
+        out.append(".*" if ch == "*" else "." if ch == "?" else re.escape(ch))
+        i += 1
+    return re.compile("".join(out), re.S)
+
+
+def _matcher(crit):
+    """COUNTIF・COUNTIFS・SUMIFS の条件を、値を受けて一致するかを返す関数にする。"""
+    if isinstance(crit, _Err):
+        return lambda v: v == crit
+    if crit is None:
+        crit = 0            # 空のセルを条件にすると、0 と等しいものだけに一致する
+    if isinstance(crit, bool):
+        return lambda v: isinstance(v, bool) and v == crit
+    if _isnum(crit):
+        return lambda v: _isnum(v) and v == crit
+    s, op = str(crit), "="
+    for o in ("<>", "<=", ">=", "=", "<", ">"):
+        if s.startswith(o):
+            s, op = s[len(o):], o
+            break
+    if s == "":
+        if op == "=":
+            return lambda v: v is None or v == ""
+        if op == "<>":
+            return lambda v: not (v is None or v == "")
+        return lambda v: False
+    try:
+        n = float(s)
+    except ValueError:
+        n = None
+    if n is not None:
+        if op == "<>":
+            return lambda v: not (_isnum(v) and v == n)
+        return lambda v: _isnum(v) and _compare(op, v, n) is True
+    t = s.casefold()
+    if op in ("=", "<>"):
+        pat = _wild(t) if any(ch in t for ch in "*?~") else None
+
+        def eq(v):
+            if not isinstance(v, str):
+                return False
+            return bool(pat.fullmatch(v.casefold())) if pat else v.casefold() == t
+        return eq if op == "=" else (lambda v: not eq(v))
+    return lambda v: isinstance(v, str) and _compare(op, v.casefold(), t) is True
+
+
+def _flat(x):
+    if isinstance(x, _Rng):
+        return x.values()
+    if isinstance(x, list):
+        return x
+    return [x]
+
+
+def _each(f, *xs):
+    """配列の要素ごとに f を当てる（配列と 1 つの値を混ぜてよい）。"""
+    lens = {len(x) for x in xs if isinstance(x, list)}
+    if not lens:
+        return f(*xs)
+    if len(lens - {1}) > 1:
+        return _Err("#N/A")
+    n = max(lens)
+    cols = [x if isinstance(x, list) and len(x) == n else
+            [x[0]] * n if isinstance(x, list) else [x] * n for x in xs]
+    return [f(*vals) for vals in zip(*cols)]
+
+
+def _arith(op, a, b):
+    a, b = _num(a), _num(b)
+    if isinstance(a, _Err):
+        return a
+    if isinstance(b, _Err):
+        return b
+    if op == "+":
+        return a + b
+    if op == "-":
+        return a - b
+    if op == "*":
+        return a * b
+    if op == "/":
+        return _Err("#DIV/0!") if b == 0 else a / b
+    return a ** b
+
+
+def _criteria_pairs(args):
+    if len(args) % 2:
+        raise _Unsupported("条件の範囲と条件が対になっていない")
+    pairs = []
+    for rng, crit in zip(args[0::2], args[1::2]):
+        if not isinstance(rng, _Rng):
+            raise _Unsupported("条件の範囲がセルの範囲でない")
+        pairs.append((rng.values(), crit))
+    sizes = {len(v) for v, _ in pairs}
+    if len(sizes) > 1:
+        return None
+    return pairs
+
+
+def _ifs_each(pairs, fn):
+    """COUNTIFS・SUMIFS。条件に配列（{"P0","P1"} やセルの範囲）があれば、要素ごとの結果の配列を返す。"""
+    lens = {len(c) for _, c in pairs if isinstance(c, list)}
+    n = max(lens) if lens else 0
+    out = []
+    cache = {}
+    for i in range(n or 1):
+        crits = [c[i] if isinstance(c, list) and len(c) > 1 else c[0] if isinstance(c, list) else c
+                 for _, c in pairs]
+        key = tuple(crits)
+        if key not in cache:
+            ms = [_matcher(c) for c in crits]
+            hits = [k for k in range(len(pairs[0][0])) if all(m(vals[k]) for m, (vals, _) in zip(ms, pairs))]
+            cache[key] = fn(hits)
+        out.append(cache[key])
+    return out if n else out[0]
+
+
+def _f_sum(calc, args):
+    total = 0
+    for a in args:
+        vals = a.present() if isinstance(a, _Rng) else a if isinstance(a, list) else None
+        if vals is None:
+            n = _num(a)
+            if isinstance(n, _Err):
+                return n
+            total += n
+            continue
+        for v in vals:
+            if isinstance(v, _Err):
+                return v
+            if _isnum(v):
+                total += v
+    return total
+
+
+def _f_counta(calc, args):
+    n = 0
+    for a in args:
+        if isinstance(a, _Rng):
+            n += sum(1 for _ in a.present())
+        elif isinstance(a, list):
+            n += sum(1 for v in a if v is not None)
+        else:
+            n += 1
+    return n
+
+
+def _f_countblank(calc, args):
+    (rng,) = args
+    if not isinstance(rng, _Rng):
+        raise _Unsupported("COUNTBLANK の引数がセルの範囲でない")
+    return rng.rows * rng.cols - sum(1 for v in rng.present() if v != "")
+
+
+def _f_countif(calc, args):
+    rng, crit = args
+    if not isinstance(rng, _Rng):
+        raise _Unsupported("COUNTIF の範囲がセルの範囲でない")
+    vals = rng.values()
+    crit = calc.operand(crit)
+    cache = {}
+
+    def count(c):
+        if c not in cache:
+            m = _matcher(c)
+            cache[c] = sum(1 for v in vals if m(v))
+        return cache[c]
+    return [count(c) for c in crit] if isinstance(crit, list) else count(crit)
+
+
+def _f_countifs(calc, args):
+    pairs = _criteria_pairs([a if i % 2 == 0 else calc.operand(a) for i, a in enumerate(args)])
+    if pairs is None:
+        return _Err("#VALUE!")
+    return _ifs_each(pairs, len)
+
+
+def _f_sumifs(calc, args):
+    target = args[0]
+    if not isinstance(target, _Rng):
+        raise _Unsupported("SUMIFS の合計の範囲がセルの範囲でない")
+    tv = target.values()
+    pairs = _criteria_pairs([a if i % 2 == 0 else calc.operand(a) for i, a in enumerate(args[1:])])
+    if pairs is None or len(pairs[0][0]) != len(tv):
+        return _Err("#VALUE!")
+    return _ifs_each(pairs, lambda hits: sum(tv[k] for k in hits if _isnum(tv[k])))
+
+
+def _f_sumproduct(calc, args):
+    arrays = [_flat(calc.operand(a)) for a in args]
+    if len({len(a) for a in arrays}) > 1:
+        return _Err("#VALUE!")
+    total = 0
+    for vals in zip(*arrays):
+        p = 1
+        for v in vals:
+            if isinstance(v, _Err):
+                return v
+            p *= v if _isnum(v) else 0      # 数でない要素（真偽値・文字・空）は 0 として掛ける
+        total += p
+    return total
+
+
+def _f_iserror(calc, args):
+    (x,) = args
+    return _each(lambda v: isinstance(v, _Err), calc.operand(x))
+
+
+def _f_search(calc, args):
+    find, within = calc.operand(args[0]), calc.operand(args[1])
+    start = calc.operand(args[2]) if len(args) > 2 else 1
+
+    def one(f, w, s):
+        if isinstance(f, _Err):
+            return f
+        if isinstance(w, _Err):
+            return w
+        s = _num(s)
+        if isinstance(s, _Err) or s < 1:
+            return _Err("#VALUE!")
+        m = _wild(_text(f).casefold()).search(_text(w).casefold(), int(s) - 1)
+        return m.start() + 1 if m else _Err("#VALUE!")
+    return _each(one, find, within, start)
+
+
+def _f_if(calc, args):
+    cond = calc.operand(args[0])
+    yes = calc.operand(args[1]) if len(args) > 1 else True
+    no = calc.operand(args[2]) if len(args) > 2 else False
+
+    def one(c, y, n):
+        if isinstance(c, _Err):
+            return c
+        if isinstance(c, str):
+            return _Err("#VALUE!")
+        y = 0 if y is None else y
+        n = 0 if n is None else n
+        return y if c else n
+    return _each(one, cond, yes, no)
+
+
+def _f_index(calc, args):
+    rng = args[0]
+    r = _num(calc.operand(args[1]))
+    c = _num(calc.operand(args[2])) if len(args) > 2 else None
+    if isinstance(r, _Err):
+        return r
+    if isinstance(rng, list):
+        return rng[int(r) - 1] if 1 <= r <= len(rng) else _Err("#REF!")
+    if not isinstance(rng, _Rng):
+        raise _Unsupported("INDEX の範囲がセルの範囲でない")
+    if c is None:
+        if rng.cols == 1:
+            r, c = r, 1
+        elif rng.rows == 1:
+            r, c = 1, r
+        else:
+            raise _Unsupported("INDEX の 2 次元の範囲で列を省いている")
+    if not (1 <= r <= rng.rows and 1 <= c <= rng.cols):
+        return _Err("#REF!")
+    return calc.value(rng.sheet, rng.r1 + int(r) - 1, rng.c1 + int(c) - 1)
+
+
+# 雛形の数式が使う関数。台帳にこれ以外の関数があれば、仕上げはその名前を出して止める
+_FUNCS = {
+    "SUM": _f_sum, "COUNTA": _f_counta, "COUNTBLANK": _f_countblank, "COUNTIF": _f_countif,
+    "COUNTIFS": _f_countifs, "SUMIFS": _f_sumifs, "SUMPRODUCT": _f_sumproduct,
+    "ISERROR": _f_iserror, "SEARCH": _f_search, "IF": _f_if, "INDEX": _f_index,
+}
+
+
+class _Calc:
+    """台帳の数式を計算する。openpyxl が読み込んだセル（ws._cells）を読むだけで、セルを作らない。"""
+
+    def __init__(self, wb):
+        self.cells = {ws.title: ws._cells for ws in wb.worksheets}
+        self.done = {}
+        self.busy = set()
+        self.ranges = {}
+
+    def value(self, sheet, r, c):
+        cells = self.cells.get(sheet)
+        if cells is None:
+            return _Err("#REF!")
+        cell = cells.get((r, c))
+        if cell is None:
+            return None
+        if cell.data_type == "f":
+            return self.formula(sheet, cell)
+        return cell.value
+
+    def range_values(self, rng):
+        key = (rng.sheet, rng.r1, rng.c1, rng.r2, rng.c2)
+        if key not in self.ranges:
+            if rng.rows * rng.cols > 2_000_000:
+                raise _Unsupported("要素ごとに計算する範囲が大きすぎる")
+            if rng.sheet not in self.cells:
+                self.ranges[key] = [_Err("#REF!")] * (rng.rows * rng.cols)
+            else:
+                self.ranges[key] = [self.value(rng.sheet, r, c)
+                                    for r in range(rng.r1, rng.r2 + 1) for c in range(rng.c1, rng.c2 + 1)]
+        return self.ranges[key]
+
+    def operand(self, x):
+        if isinstance(x, _Rng):
+            return self.value(x.sheet, x.r1, x.c1) if x.rows * x.cols == 1 else x.values()
+        return x
+
+    def formula(self, sheet, cell):
+        key = (sheet, cell.row, cell.column)
+        if key in self.done:
+            return self.done[key]
+        if key in self.busy:
+            raise _Unsupported("循環参照")
+        self.busy.add(key)
+        text = cell.value if isinstance(cell.value, str) else getattr(cell.value, "text", None)
+        try:
+            if not isinstance(text, str):
+                raise _Unsupported(f"数式の形（{type(cell.value).__name__}）")
+            v = self.operand(self.ev(_Parser(text.lstrip("="), sheet).parse(), sheet))
+            if isinstance(v, list):
+                v = v[0] if len(v) == 1 else _Err("#VALUE!")   # 配列の結果は 1 つのセルに入らない
+        except _Unsupported as e:
+            if not e.where:
+                e.where = f"{sheet}!{cell.coordinate}"
+            raise
+        finally:
+            self.busy.discard(key)
+        self.done[key] = v
+        return v
+
+    def ev(self, node, sheet):
+        kind = node[0]
+        if kind == "val":
+            return node[1]
+        if kind == "arr":
+            return list(node[1])
+        if kind == "ref":
+            return _Rng(self, *node[1:])
+        if kind == "neg":
+            return _each(lambda v: _arith("-", 0, v), self.operand(self.ev(node[1], sheet)))
+        if kind == "pct":
+            return _each(lambda v: _arith("/", v, 100), self.operand(self.ev(node[1], sheet)))
+        if kind == "bin":
+            op = node[1]
+            a = self.operand(self.ev(node[2], sheet))
+            b = self.operand(self.ev(node[3], sheet))
+            if op == "&":
+                return _each(lambda x, y: x if isinstance(x, _Err) else y if isinstance(y, _Err)
+                             else _text(x) + _text(y), a, b)
+            if op in ("+", "-", "*", "/", "^"):
+                return _each(lambda x, y: _arith(op, x, y), a, b)
+            return _each(lambda x, y: _compare(op, x, y), a, b)
+        if kind == "func":
+            fn = _FUNCS.get(node[1])
+            if fn is None:
+                raise _Unsupported(f"関数 {node[1]}")
+            return fn(self, [self.ev(a, sheet) for a in node[2]])
+        raise _Unsupported(f"数式の要素 {kind}")
+
+
+def template_marks():
+    """雛形のすべての構成を組み立てて、評価者向けの注記の見出しと、見本の文を集める。"""
+    for fw, api, card in (("full", False, True), ("owasp", True, False), ("none", False, False)):
+        build_workbook(fw, api=api, card=card)
+    evaluator = {k for k, client in _NOTE_LABELS.items() if not client}
+    tokens = set()
+    for t in _TEMPLATE_TEXTS:
+        tokens.update(re.findall(r"<[^<>\s]{1,10}>", t))
+    return evaluator, set(_TEMPLATE_TEXTS), tokens
+
+
+def _clear_rows(ws, first, last):
+    """行の中身と書式を消して隠す。行を詰めると、下の結合と入力規則がずれるため、詰めない。"""
+    for m in list(ws.merged_cells.ranges):
+        if m.min_row <= last and m.max_row >= first:
+            ws.unmerge_cells(m.coord)
+    for (r, c), cell in list(ws._cells.items()):
+        if first <= r <= last:
+            cell.value = None
+            cell.font, cell.fill, cell.border = Font(), PatternFill(), Border()
+    for r in range(first, last + 1):
+        ws.row_dimensions[r].hidden = True
+
+
+def finalize(src, dst, force):
+    from openpyxl import load_workbook
+
+    for p in (src, dst):
+        if not p.lower().endswith(".xlsx"):
+            raise SystemExit(f"--finalize の台帳は .xlsx にする: {p}")
+    if not os.path.isfile(src):
+        raise SystemExit(f"埋めた台帳が無い: {src}")
+    if os.path.abspath(src) == os.path.abspath(dst) or (os.path.exists(dst) and os.path.samefile(src, dst)):
+        raise SystemExit("渡す版を元の台帳と同じ場所には書かない（元の台帳は変更しない）。別のファイル名にする")
+    out_dir = os.path.dirname(os.path.abspath(dst))
+    if not os.path.isdir(out_dir):
+        raise SystemExit(f"出力先のディレクトリが無い: {out_dir}（先に作る）")
+    if os.path.exists(dst) and not force:
+        print(f"既にある: {dst}", file=sys.stderr)
+        print("  前に作った渡す版を上書きしないよう止めた。上書きするなら --force を付ける。", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        wb = load_workbook(src)
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(f"埋めた台帳を開けない: {src}（{e}）")
+    evaluator_labels, template_texts, tokens = template_marks()
+
+    # 1. 数式をすべて計算してから、値に置き換える（置き換えの途中で、まだ計算していない数式が値を読むとずれる）
+    calc = _Calc(wb)
+    results = []
+    try:
+        for ws in wb.worksheets:
+            for (_, _), cell in sorted(ws._cells.items()):
+                if cell.data_type == "f":
+                    results.append((ws.title, cell, calc.formula(ws.title, cell)))
+    except _Unsupported as e:
+        print(f"計算できない数式がある: {e.where} の {e}", file=sys.stderr)
+        print("  対応している関数: " + "・".join(sorted(_FUNCS)), file=sys.stderr)
+        print("  渡す版は作っていない。数式をこの関数で書き直すか、値を手で入れてから、もう一度実行する。", file=sys.stderr)
+        raise SystemExit(1)
+    errors = [f"{t}!{c.coordinate} = {v.code}" for t, c, v in results if isinstance(v, _Err)]
+    if errors:
+        print("計算の結果がエラー値になった数式がある（参照先のシートを消した、など）:", file=sys.stderr)
+        for e in errors:
+            print(f"  {e}", file=sys.stderr)
+        print("  渡す版は作っていない。", file=sys.stderr)
+        raise SystemExit(1)
+    converted = {}
+    for title, cell, v in results:
+        cell.value = _plain(v)
+        converted[title] = converted.get(title, 0) + 1
+
+    remaining, removed_rows, removed_notes, renamed, unfilled = [], [], [], [], []
+    client_sheets = [ws for ws in wb.worksheets if ws.title not in WORK_SHEETS]
+
+    # 2. 整合の確認の節と「判定が空欄の行」。値が 0 でなければ残りとして数え、渡す版からは外す
+    found = False
+    for ws in client_sheets:
+        for r in range(1, ws.max_row + 1):
+            a = ws._cells.get((r, 1))
+            a = a.value if a is not None else None
+            if not isinstance(a, str):
+                continue
+            if a.startswith(CHECK_SECTION):
+                found = True
+                last = r + 1
+                while True:
+                    lab = ws._cells.get((last + 1, 1))
+                    if lab is None or not isinstance(lab.value, str) or not lab.value.strip():
+                        break
+                    last += 1
+                    v = ws._cells.get((last, 2))
+                    v = v.value if v is not None else None
+                    if not (_isnum(v) and v == 0):
+                        remaining.append(f"整合の確認: {lab.value}: {v if v is not None else '（値が無い）'}")
+                removed_rows.append((ws, r, last, f"{a.split('（')[0]}（{last - r - 1} 項目）"))
+            elif a == BLANK_VERDICT_LABEL:
+                v = ws._cells.get((r, 2))
+                v = v.value if v is not None else None
+                if not (_isnum(v) and v == 0):
+                    remaining.append(f"台帳の内訳: {a}: {v}")
+                removed_rows.append((ws, r, r, a))
+    if not found:
+        remaining.append(f"「{CHECK_SECTION}」の節が見つからない（空欄や食い違いが残っていないかを確かめられない）")
+    for ws, first, last, what in removed_rows:
+        _clear_rows(ws, first, last)
+
+    # 3. 評価者向けの注記（雛形の書き方の注記。見出し【…】で見分ける）
+    for ws in client_sheets:
+        for (r, c), cell in sorted(ws._cells.items()):
+            v = cell.value
+            if not isinstance(v, str):
+                continue
+            m = re.match(r"【[^】]+】", v)
+            if m and m.group(0) in evaluator_labels:
+                for mr in list(ws.merged_cells.ranges):
+                    if mr.min_row == r and mr.min_col == c:
+                        ws.unmerge_cells(mr.coord)
+                cell.value = None
+                removed_notes.append(f"{ws.title}!{cell.coordinate} {m.group(0)}")
+                continue
+            # 評価者への指示を括弧に書いた見出しを、依頼者向けの見出しにする
+            for head, client in CLIENT_HEADINGS.items():
+                if c == 1 and v.startswith(head) and v[len(head):len(head) + 1] in ("", "（") and v != client:
+                    cell.value = client
+                    renamed.append(f"{ws.title}!{cell.coordinate} {client}")
+    # 観点の一覧の観点の名前から、資料の番号を外す（節の見出しの 2 行下から、A 列が空になるまで）
+    stripped = []
+    for ws in client_sheets:
+        for r in range(1, ws.max_row + 1):
+            h = ws._cells.get((r, 1))
+            if h is None or not isinstance(h.value, str) or not h.value.startswith("■ 観点の一覧"):
+                continue
+            rr = r + 2
+            while True:
+                cell = ws._cells.get((rr, 1))
+                if cell is None or not isinstance(cell.value, str) or not cell.value.strip():
+                    break
+                new = OBS_PREFIX.sub("", cell.value)
+                if new != cell.value:
+                    cell.value = new
+                    stripped.append(rr)
+                rr += 1
+            if stripped:
+                renamed.append(f"{ws.title} {stripped[0]}〜{stripped[-1]} 行目の観点の名前から資料の番号を外した"
+                               f"（{len(stripped)} 行）")
+    # 副題。雛形のままの副題（評価者向けの書き方の決まりを含む）は、雛形が持つ依頼者向けの副題に置き換える。
+    # 評価者が書き換えた副題は中身が分からないので残し、確かめることとして出す
+    subtitles = []
+    for ws in client_sheets:
+        a2 = ws._cells.get((2, 1))
+        if a2 is None or not isinstance(a2.value, str) or not a2.value.strip():
+            continue
+        client = _CLIENT_SUBTITLES.get(_subtitle_key(a2.value))
+        if client is not None:
+            m = _DATE_IN_SUBTITLE.search(a2.value)
+            a2.value = client.replace("評価日 {date}", m.group(0)) if m else client
+            subtitles.append(ws.title)
+            continue
+        if "自動集計される" in a2.value:
+            a2.value = a2.value.replace("自動集計される", "集計した")   # 渡す版の件数は値で、もう追従しない
+        unfilled.append(f"{ws.title}!A2 の副題は雛形から書き換えてあるので、そのまま残した（評価者向けの文が無いか読む）")
+
+    # 4. 作業用のシート
+    removed_sheets = [n for n in WORK_SHEETS if n in wb.sheetnames]
+    for n in removed_sheets:
+        wb.remove(wb[n])
+
+    # 5. 例示行の網掛けと斜体（例示行に上書きした行が、依頼者の目に見本の行として映る）
+    restyled = {}
+    for ws in client_sheets:
+        for (r, c), cell in ws._cells.items():
+            rgb = cell.fill.fgColor.rgb if cell.fill is not None and cell.fill.fgColor is not None else None
+            if isinstance(rgb, str) and rgb[-6:].upper() == EXAMPLE_FILL and cell.fill.fill_type == "solid":
+                cell.fill = PatternFill()
+                f = cell.font
+                cell.font = Font(name=f.name, size=f.size, bold=f.bold, color=f.color)
+                restyled.setdefault(ws.title, set()).add(r)
+
+    # 6. 雛形の見本の文がそのまま残っている（例示行・書き方の見本・前提の空欄）
+    for ws in client_sheets:
+        for (r, c), cell in sorted(ws._cells.items()):
+            v = cell.value
+            if isinstance(v, str) and v in template_texts:
+                remaining.append(f"雛形のまま: {ws.title}!{cell.coordinate} 「{v[:40]}{'…' if len(v) > 40 else ''}」")
+            elif isinstance(v, str):
+                hit = sorted(t for t in tokens if t in v)
+                if hit:
+                    unfilled.append(f"{ws.title}!{cell.coordinate} に {'・'.join(hit)}")
+
+    if remaining and not force:
+        print(f"渡す版は作っていない: {dst}", file=sys.stderr)
+        print("  埋めた台帳に、次のものが残っている。台帳を直してから、もう一度実行する（このまま作るなら --force）。",
+              file=sys.stderr)
+        for x in remaining:
+            print(f"    {x}", file=sys.stderr)
+        raise SystemExit(2)
+
+    wb.active = 0
+    fix_views(wb)
+    try:
+        wb.save(dst)
+    except OSError as e:
+        raise SystemExit(f"保存できない: {dst}（{e.strerror or e}）")
+
+    print(f"仕上げ: {dst}（元の台帳は変更していない: {src}）")
+    print(f"  数式を値に置き換えた: {sum(converted.values())} セル（"
+          + "、".join(f"{k} {v}" for k, v in converted.items()) + "）")
+    print("  外したシート: " + ("、".join(removed_sheets) if removed_sheets else "無し"))
+    print("  外した節・行:" + ("" if removed_rows else " 無し"))
+    for ws, first, last, what in removed_rows:
+        span = f"{first} 行目" if first == last else f"{first}〜{last} 行目"
+        print(f"    {ws.title} {span}: {what}")
+    print("  外した注記（評価者向け）:" + ("" if removed_notes else " 無し"))
+    for x in removed_notes:
+        print(f"    {x}")
+    if subtitles:
+        print("  副題を依頼者向けにした: " + "、".join(subtitles))
+    if renamed:
+        print("  見出しと観点の名前を依頼者向けにした:")
+        for x in renamed:
+            print(f"    {x}")
+    if restyled:
+        print("  例示行の網掛けと斜体を外した: "
+              + "、".join(f"{k} {', '.join(map(str, sorted(v)))} 行目" for k, v in restyled.items()))
+    if remaining:
+        print("  --force のため、次のものが残ったまま作った:")
+        for x in remaining:
+            print(f"    {x}")
+    if unfilled:
+        print("  確かめること（置き換え忘れや評価者向けの文が無ければ、そのままでよい）:")
+        for x in unfilled:
+            print(f"    {x}")
+
+
+FINALIZE_HELP = """\
+仕上げ（依頼者に渡す版を作る）:
+  make_register.py --finalize <埋めた台帳.xlsx> <渡す版.xlsx> [--force]
+
+  件数と工数の数式を計算して値に置き換え、評価者向けの注記（【この欄の使い方】など）、
+  総合評価の「整合の確認」の節、作業用のシート（★の判定）を外し、雛形のままの副題を依頼者向けにし、
+  観点の一覧の観点の名前から資料の番号（「02 A. 」「運用 1. 」など）を外した版を、別のファイルに作る。
+  外したものの一覧を出す。元の台帳は変更しない。
+  整合の確認が 0 でない・雛形の見本の文が残っているときは、渡す版を作らずに止めて、残っているものを出す
+  （終了コード 2）。対応していない関数の数式があれば、関数の名前を出して止める（終了コード 1）。
+  --force は、既にある渡す版の上書きと、残っているものがあっても作ることの両方を許す。
+"""
+
+
+def finalize_main(argv):
+    ap = argparse.ArgumentParser(prog="make_register.py --finalize",
+                                 description=FINALIZE_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--finalize", nargs=2, metavar=("埋めた台帳.xlsx", "渡す版.xlsx"), required=True,
+                    help="埋めた台帳と、作る渡す版")
+    ap.add_argument("--force", action="store_true",
+                    help="渡す版が既にあれば上書きし、整合の確認が 0 でなくても作る")
+    args = ap.parse_args(argv)
+    finalize(args.finalize[0], args.finalize[1], args.force)
+
+
 def main():
-    ap = argparse.ArgumentParser(description="指摘台帳（xlsx）の雛形を生成する")
+    if "--finalize" in sys.argv[1:]:
+        finalize_main(sys.argv[1:])
+        return
+    ap = argparse.ArgumentParser(description="指摘台帳（xlsx）の雛形を生成する", epilog=FINALIZE_HELP,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("output", help="出力先の .xlsx パス")
-    ap.add_argument("--service", default="（サービス名）", help="対象サービス名")
+    ap.add_argument("--service", default=DEFAULT_SERVICE, help="対象サービス名")
     ap.add_argument("--date", default=_dt.date.today().isoformat(), help="評価日 (YYYY-MM-DD)")
     ap.add_argument("--skill-version", default="",
                     help="評価に使ったスキルの版。省くと、スクリプトの置き場の VERSION を入れる（無ければ空欄）")
@@ -1044,6 +2107,8 @@ def main():
                     help="scripts/audit_grep.sh の出力。★ の一覧を「★の判定」シートに 1 行ずつ取り込む（節と場所だけ）")
     ap.add_argument("--force", action="store_true",
                     help="出力先が既にあれば上書きする（既定では止まる）")
+    ap.add_argument("--finalize", nargs=2, metavar=("埋めた台帳.xlsx", "渡す版.xlsx"),
+                    help="雛形を作らず、埋めた台帳から依頼者に渡す版を作る（下の「仕上げ」）")
     args = ap.parse_args()
     if not args.skill_version:
         args.skill_version = skill_version_here()
@@ -1067,54 +2132,9 @@ def main():
               file=sys.stderr)
         raise SystemExit(1)
 
-    names = dict(LAYOUTS[args.frameworks])
-    if args.api:
-        # 一般の Top 10 と重なるため、両方は並べない（references/06-frameworks.md）。
-        # OWASP のシートがある構成では、その位置と番号のまま API のシートに置き換える。
-        # dict は挿入順で並ぶため、作り直して位置を保つ。
-        if "owasp" in names:
-            rebuilt = {}
-            for k, v in names.items():
-                if k == "owasp":
-                    rebuilt["api"] = v.split("_", 1)[0] + "_API_Top10"
-                else:
-                    rebuilt[k] = v
-            names = rebuilt
-        else:
-            names["api"] = f"{next_number(names)}_API_Top10"
-    if args.card:
-        names["card"] = f"{next_number(names)}_カード決済"
-    # ★の判定は番号を付けずに末尾に置く（番号を付けると、カード決済などのシートの番号がずれる）
-    names["stars"] = STARS_SHEET
     stars = parse_stars(args.stars) if args.stars else None
-
-    standards = "（references/06-frameworks.md の表から、照らした基準と版を書く）"
-    if "owasp" in names:
-        standards = f"（OWASP Top 10 {args.owasp} ほか。references/06-frameworks.md の表から書く）"
-    elif "api" in names:
-        standards = "（OWASP API Security Top 10 2023 ほか。references/06-frameworks.md の表から書く）"
-
-    builders = {
-        "summary": lambda: sheet_summary(wb, names, args.service, args.date,
-                                         args.skill_version, standards),
-        "runtime": lambda: sheet_runtime(wb, names),
-        "privacy": lambda: sheet_privacy(wb, names),
-        "owasp": lambda: sheet_owasp(wb, names, args.owasp),
-        "api": lambda: sheet_api(wb, names),
-        "ipa": lambda: sheet_ipa(wb, names),
-        "findings": lambda: sheet_findings(wb, names),
-        "good": lambda: sheet_good(wb, names),
-        "unknown": lambda: sheet_unknown(wb, names),
-        "roadmap": lambda: sheet_roadmap(wb, names),
-        "card": lambda: sheet_card(wb, names),
-        "stars": lambda: sheet_stars(wb, names, stars),
-    }
-
-    wb = Workbook()
-    wb.remove(wb.active)
-    for key in names:
-        builders[key]()
-    fix_views(wb)
+    wb, names = build_workbook(args.frameworks, args.owasp, args.api, args.card, stars,
+                               args.service, args.date, args.skill_version)
     try:
         wb.save(args.output)
     except OSError as e:
@@ -1132,6 +2152,8 @@ def main():
     print(f"  ・件数と工数の合計は数式。行を足せば自動で追従する（参照範囲は {LAST} 行まで）")
     print("  ・総合評価の「整合の確認」は、どれも 0 になる。0 でなければ指摘事項一覧の行を直す")
     print("  ・表計算ソフトで開くまで合計欄は空に見える。openpyxl は計算結果を持たないため")
+    print("  ・依頼者に渡す版は --finalize <この台帳> <渡す版.xlsx> で作る（数式を値にし、評価者向けの注記と"
+          f"{STARS_SHEET}を外す）")
     if stars is None:
         print(f"  ・{STARS_SHEET}: 例の行だけ。--stars <audit_grep.sh の出力> で ★ の一覧を取り込める")
     else:

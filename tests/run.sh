@@ -155,7 +155,7 @@ else ng "資料: ファイルの一覧を取る命令が止められたときの
 miss=""
 for pair in "13-infrastructure.md:書いていないことも確かめる" "13-infrastructure.md:Azure と Google Cloud も同じ考え方で確かめる" \
             "13-infrastructure.md:の既定で権限が決まる" "14-mobile.md:kSecAttrAccessibleAlways" "14-mobile.md:NSExceptionMinimumTLSVersion" \
-            "14-mobile.md:@AppStorage" "14-mobile.md:秘密の語を含むものに ★"; do
+            "14-mobile.md:@AppStorage"; do
   grep -F -- "${pair#*:}" "$SKILL/references/${pair%%:*}" >/dev/null || miss="$miss ${pair}"
 done
 if [[ -z "$miss" ]]; then ok "資料: 資料 13・14 に、事前の洗い出しで足した観点がある（CloudFormation・Azure・Google Cloud・Helm・iOS・Expo）"
@@ -1928,6 +1928,164 @@ PYEOF
 )"
   contains "make_register: 整合の確認が枠組みのシートの根拠を 3 通り数える（owasp・api。none には出さない）" "owasp: 3 api: 3 none: 0" "$MFW"
   contains "make_register: 全行同じ文の比べ方は 255 文字を超える文でも比べられる形（SUMPRODUCT）" "SUMPRODUCT(--('7_枠組みへの当てはめ'!\$D\$5:\$D\$14=INDEX(" "$MFW"
+
+  # --finalize（仕上げ）。埋めた台帳から依頼者に渡す版を作る。雛形の件数は数式だけで、Excel 以外の閲覧ソフトと
+  # Python での読み取りでは空に見えていた。評価者向けの注記・整合の確認・★の判定も、渡す版に残っていた。
+  # 題材は雛形に行をその場で書いたもの。指摘 7 行のうち、対応が要るのは P0 1 行・P1 2 行（工数 AI 4.5h・人手 1.5h）
+  "$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/fin-tpl.xlsx" --service "題材サービス" >/dev/null 2>&1
+  "$PY_BIN" - "$TMP/fin-tpl.xlsx" "$TMP/fin-ok.xlsx" "$TMP/fin-bad.xlsx" "$TMP/fin-vlookup.xlsx" <<'PYEOF'
+import re, sys
+from openpyxl import load_workbook
+def fill(out, bad=False, vlookup=False):
+    wb = load_workbook(sys.argv[1])
+    for ws in wb.worksheets:      # 例示行（薄い黄色）を空にする
+        for row in ws.iter_rows():
+            for c in row:
+                if c.fill.fill_type == "solid" and str(c.fill.fgColor.rgb).upper().endswith("FFFBEA"):
+                    c.value = None
+    sm = wb["1_総合評価"]
+    obs = False
+    for r in range(1, sm.max_row + 1):
+        a, b = sm.cell(r, 1).value, sm.cell(r, 2)
+        if r < 15 and isinstance(b.value, str) and b.value.startswith("（"):
+            b.value = f"題材: {a}"
+        if isinstance(a, str) and a.startswith("【数え方の但し書き】"):
+            sm.cell(r, 1).value = "【数え方の但し書き】題材の台帳は 7 行。対応が要る指摘は 3 件。"
+        if isinstance(a, str) and a.startswith("【結論の書き方】"):
+            sm.cell(r, 1).value = "【結論】題材の結論。"
+        if isinstance(a, str) and a.startswith("■"):
+            obs = a.startswith("■ 観点の一覧"); continue
+        if obs and isinstance(a, str) and a != "観点":
+            b.value = "問題なし"
+    fs = wb["3_指摘事項一覧"]
+    h = {fs.cell(3, c).value: c for c in range(1, fs.max_column + 1)}
+    rows = [("S-1", "問題あり", "P1", "未対応", 2, 1), ("S-2", "問題あり", "P1", "対応中", 1.5, 0.5),
+            ("S-3", "問題あり", "P0", "未対応", 1, 0), ("S-4", "問題あり", "P2", "クローズ（解消）", 3, 3),
+            ("S-5", "問題あり", "P3", "見送り", 4, 4),
+            ("S-6", "問題なし", "P2" if bad else "—", "クローズ（該当なし）", None, None),
+            ("S-7", "判断保留", "P2", "未対応", 0, 0.5)]
+    for i, (fid, j, p, st, ai, hu) in enumerate(rows, start=4):
+        for k, v in (("ID", fid), ("判定", j), ("優先度", p), ("状態", st), ("AI実装(h)", ai), ("人手(h)", hu),
+                     ("指摘事項", f"題材の指摘 {fid}")):
+            fs.cell(i, h[k]).value = v
+    us = wb["5_未確認事項"]
+    for j, v in enumerate(["U-1", "題材の未確認事項", "高", "担当者に聞く", "S-7"], start=1):
+        us.cell(5, j).value = v
+    st = wb["★の判定"]
+    for j, v in enumerate(["★-1", "2m", "src/題材.ts:1", "問題あり", "S-1", "題材の理由"], start=1):
+        st.cell(5, j).value = v
+    wb["4_評価できる実装"]["A2"] = "題材: 評価者が書き換えた副題"
+    if vlookup:
+        wb["4_評価できる実装"]["D5"] = '=VLOOKUP("S-1",\'3_指摘事項一覧\'!A4:B10,2,FALSE)'
+    wb.save(out)
+fill(sys.argv[2]); fill(sys.argv[3], bad=True); fill(sys.argv[4], vlookup=True)
+PYEOF
+  FIN_SUM0="$(shasum "$TMP/fin-ok.xlsx" 2>/dev/null)"
+  MF="$("$PY_BIN" "$SKILL/scripts/make_register.py" --finalize "$TMP/fin-ok.xlsx" "$TMP/fin-out.xlsx" 2>&1)"; MF_RC=$?
+  if [[ $MF_RC -eq 0 && -f "$TMP/fin-out.xlsx" ]]; then ok "make_register --finalize: 整合の確認がどれも 0 の台帳から渡す版を作る"
+  else ng "make_register --finalize: 整合の確認がどれも 0 の台帳から渡す版を作る" "終了コード $MF_RC / $(printf '%s' "$MF" | tail -3 | tr '\n' ' ')"; fi
+  contains "make_register --finalize: 外したシートを出す（★の判定）" "外したシート: ★の判定" "$MF"
+  contains "make_register --finalize: 外した注記を出す（【この欄の使い方】）" "2_実機確認サマリ!A7 【この欄の使い方】" "$MF"
+  contains "make_register --finalize: 外した節を出す（整合の確認）" "■ 整合の確認（" "$MF"
+  contains "make_register --finalize: 書き換えてあって残した副題を、確かめることとして出す" "4_評価できる実装!A2 の副題は雛形から書き換えてある" "$MF"
+  if [[ "$(shasum "$TMP/fin-ok.xlsx" 2>/dev/null)" == "$FIN_SUM0" && -n "$FIN_SUM0" ]]; then ok "make_register --finalize: 元の台帳を変更しない"
+  else ng "make_register --finalize: 元の台帳を変更しない"; fi
+  MFV="$("$PY_BIN" - "$TMP/fin-out.xlsx" "$TMP/fin-ok.xlsx" <<'PYEOF' 2>&1
+import re, sys
+from openpyxl import load_workbook
+res = []
+def check(name, cond, detail=""):
+    res.append(("OK|" + name) if cond else ("NG|" + name + "|" + detail))
+f = load_workbook(sys.argv[1])
+d = load_workbook(sys.argv[1], data_only=True)   # Excel を通さずに読む閲覧ソフトと同じく、保存された値だけを読む
+nf = [f"{ws.title}!{c.coordinate}" for ws in f.worksheets for row in ws.iter_rows() for c in row if c.data_type == "f"]
+check("渡す版に数式が残らない（値で保存する）", not nf, str(nf[:5]))
+sm = d["1_総合評価"]
+row = {str(sm.cell(r, 1).value): [sm.cell(r, c).value for c in (2, 4, 5)] for r in range(1, sm.max_row + 1) if sm.cell(r, 1).value}
+got = (row.get("P0（即日〜3日）"), row.get("P1（1〜2週間）"), row.get("P2（1か月）"), row.get("合計"))
+check("件数と工数が値として入る（P0 1 件・P1 2 件 3.5h/1.5h・P2 0 件・合計 3 件 4.5h/1.5h）",
+      got == ([1, 1, 0], [2, 3.5, 1.5], [0, 0, 0], [3, 4.5, 1.5]), str(got))
+bd = [row.get(k, [None])[0] for k in ("台帳の行数（ID のある行）", "問題あり", "　うち 見送り", "　うち クローズ（解消）", "判断保留", "問題なし（クローズ（該当なし））")]
+check("台帳の内訳が値として入る（7・5・1・1・1・1）", bd == [7, 5, 1, 1, 1, 1], str(bd))
+check("作業用のシート（★の判定）が無い", "★の判定" not in d.sheetnames, str(d.sheetnames))
+texts = [str(c.value) for ws in d.worksheets for r in ws.iter_rows() for c in r if c.value is not None]
+for lab in ("【この欄の使い方】", "【行き先の書き方】", "【結論の書き方】", "【作業を止めているものは表の外にも書く】",
+            "【どの版で書いたかを必ず明記する】"):
+    check(f"評価者向けの注記 {lab} が無い", not any(t.startswith(lab) for t in texts))
+check("整合の確認の節と「判定が空欄の行」が無い", not any(t.startswith("■ 整合の確認") or t == "判定が空欄の行" for t in texts))
+check("見出しに評価者への指示（数え方の但し書きに使う、結果を空欄にしない）を残さない",
+      not any(t.startswith("■") and ("但し書きに使う" in t or "空欄にしない" in t or "自動集計。" in t) for t in texts))
+check("中身を書き換えた依頼者向けの注記（【数え方の但し書き】【結論】）は残す",
+      any(t.startswith("【数え方の但し書き】題材") for t in texts) and "【結論】題材の結論。" in texts)
+# 観点の名前から資料の番号（「02 A. 」「07 10. 」「03 1. 」「運用 1. 」）を外す。雛形の 1 行目の「02 A. 認可」は「認可」になる
+obs = []
+on = False
+for r in range(1, sm.max_row + 1):
+    a = sm.cell(r, 1).value
+    if isinstance(a, str) and a.startswith("■ 観点の一覧"): on = True; continue
+    if on and isinstance(a, str) and a.startswith("■"): break
+    if on and isinstance(a, str) and a != "観点": obs.append(a)
+check("観点の一覧の観点の名前から資料の番号を外す（「02 A. 認可」→「認可」）",
+      len(obs) >= 40 and obs[0] == "認可" and not any(re.match(r"^[0-9]{2} ", o) for o in obs), str(obs[:3]))
+check("観点の一覧の運用の行からも番号を外す（「運用 1. 」→ 観点の名前だけ）",
+      "管理コンソールの多要素認証とメンバー" in obs and not any(re.match(r"^\S{1,6} (?:[A-Z]|[0-9]{1,2})\. ", o) for o in obs),
+      str([o for o in obs if re.match(r"^\S{1,6} (?:[A-Z]|[0-9]{1,2})\. ", o)][:3]))
+# 副題（A2）。雛形のままの副題は、雛形が持つ依頼者向けの副題に置き換える（評価者向けの書き方の決まりを残さない）
+phrases = {"2_実機確認サマリ": "「気づいたこと」に置く", "3_指摘事項一覧": "一度振った ID は再利用しない",
+           "5_未確認事項": "空欄にする", "6_対応ロードマップ": "ここに置く",
+           "7_枠組みへの当てはめ": "対外説明・網羅性の確認が要る場合のみ"}
+left = [f"{k}: {v}" for k, v in phrases.items() if not d[k]["A2"].value or v in str(d[k]["A2"].value)]
+check("雛形のままの副題を依頼者向けの副題に置き換える（評価者向けの文を残さず、空にもしない）", not left, str(left))
+check("総合評価の副題は評価日を保ったまま依頼者向けにする",
+      str(sm["A2"].value).startswith("評価日 ") and "集計した値" in str(sm["A2"].value), str(sm["A2"].value))
+check("評価者が書き換えた副題はそのまま残す", d["4_評価できる実装"]["A2"].value == "題材: 評価者が書き換えた副題",
+      str(d["4_評価できる実装"]["A2"].value))
+check("渡す版の総合評価の副題に「自動集計される」と書かない（値はもう追従しない）", "自動集計される" not in str(sm["A2"].value))
+src = load_workbook(sys.argv[2])
+check("元の台帳には数式と ★の判定 が残る", "★の判定" in src.sheetnames and str(src["1_総合評価"]["B17"].value).startswith("="))
+print("\n".join(res))
+PYEOF
+)"
+  if ! printf '%s' "$MFV" | grep -E '^(OK|NG)\|' >/dev/null; then
+    ng "make_register --finalize: 渡す版の検査を実行できた" "$(printf '%s' "$MFV" | tail -3)"
+  fi
+  while IFS='|' read -r st name detail; do
+    case "$st" in
+      OK) ok "make_register --finalize: $name" ;;
+      NG) ng "make_register --finalize: $name" "$detail" ;;
+    esac
+  done <<< "$MFV"
+  # 整合の確認が 0 でない台帳（問題なしの行に優先度 P2）。渡す版を作らずに止め、残っているものを出す。--force なら作る
+  MB="$("$PY_BIN" "$SKILL/scripts/make_register.py" --finalize "$TMP/fin-bad.xlsx" "$TMP/fin-bad-out.xlsx" 2>&1)"; MB_RC=$?
+  if [[ $MB_RC -eq 2 && ! -e "$TMP/fin-bad-out.xlsx" ]]; then ok "make_register --finalize: 整合の確認が 0 でなければ渡す版を作らずに止まる（終了コード 2）"
+  else ng "make_register --finalize: 整合の確認が 0 でなければ渡す版を作らずに止まる（終了コード 2）" "終了コード $MB_RC"; fi
+  contains "make_register --finalize: 止めたとき、残っている整合の確認の項目と件数を出す" "問題なしなのに優先度が「—」でない行: 1" "$MB"
+  MBF="$("$PY_BIN" "$SKILL/scripts/make_register.py" --finalize "$TMP/fin-bad.xlsx" "$TMP/fin-bad-out.xlsx" --force 2>&1)"; MBF_RC=$?
+  if [[ $MBF_RC -eq 0 && -f "$TMP/fin-bad-out.xlsx" ]] && grep -F -- '--force のため' <<<"$MBF" >/dev/null; then
+    ok "make_register --finalize: --force なら残っているものを出したうえで作る"
+  else ng "make_register --finalize: --force なら残っているものを出したうえで作る" "終了コード $MBF_RC"; fi
+  # 埋めていない雛形。例示行・前提の空欄が残っていれば止める
+  MT="$("$PY_BIN" "$SKILL/scripts/make_register.py" --finalize "$TMP/fin-tpl.xlsx" "$TMP/fin-tpl-out.xlsx" 2>&1)"; MT_RC=$?
+  if [[ $MT_RC -eq 2 && ! -e "$TMP/fin-tpl-out.xlsx" ]] && grep -F '雛形のまま: 3_指摘事項一覧!H4' <<<"$MT" >/dev/null; then
+    ok "make_register --finalize: 雛形の例示行が残っていれば止まり、場所を出す"
+  else ng "make_register --finalize: 雛形の例示行が残っていれば止まり、場所を出す" "終了コード $MT_RC / $(printf '%s' "$MT" | head -3 | tr '\n' ' ')"; fi
+  # 計算できない数式（雛形が使わない関数）は、黙って空にせず、関数の名前を出して止める
+  MU="$("$PY_BIN" "$SKILL/scripts/make_register.py" --finalize "$TMP/fin-vlookup.xlsx" "$TMP/fin-vlookup-out.xlsx" 2>&1)"; MU_RC=$?
+  if [[ $MU_RC -eq 1 && ! -e "$TMP/fin-vlookup-out.xlsx" ]] && grep -F '4_評価できる実装!D5 の 関数 VLOOKUP' <<<"$MU" >/dev/null; then
+    ok "make_register --finalize: 計算できない関数があれば、場所と関数の名前を出して止まる"
+  else ng "make_register --finalize: 計算できない関数があれば、場所と関数の名前を出して止まる" "終了コード $MU_RC / $(printf '%s' "$MU" | head -2 | tr '\n' ' ')"; fi
+  # 既にある渡す版を上書きしない（雛形の作成と同じく --force で上書き）。元の台帳と同じ場所には書かない
+  printf '%s' "前に作った渡す版（題材）" > "$TMP/fin-exist.xlsx"
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" --finalize "$TMP/fin-ok.xlsx" "$TMP/fin-exist.xlsx" >/dev/null 2>&1 \
+     || [[ "$(cat "$TMP/fin-exist.xlsx")" != "前に作った渡す版（題材）" ]]; then
+    ng "make_register --finalize: 既にある渡す版は上書きせずに止まる"
+  else ok "make_register --finalize: 既にある渡す版は上書きせずに止まる"; fi
+  if "$PY_BIN" "$SKILL/scripts/make_register.py" --finalize "$TMP/fin-ok.xlsx" "$TMP/fin-ok.xlsx" --force >/dev/null 2>&1 \
+     || [[ "$(shasum "$TMP/fin-ok.xlsx")" != "$FIN_SUM0" ]]; then
+    ng "make_register --finalize: 渡す版を元の台帳と同じ場所に書かない（--force でも）"
+  else ok "make_register --finalize: 渡す版を元の台帳と同じ場所に書かない（--force でも）"; fi
+  MH="$("$PY_BIN" "$SKILL/scripts/make_register.py" --help 2>&1)"
+  contains "make_register: --help に仕上げのモードの使い方がある" "make_register.py --finalize <埋めた台帳.xlsx> <渡す版.xlsx>" "$MH"
   # carry_check.py。再評価で前回の ID が消えた・参照切れ・番号の使い回しを出す（11 の 3 節）。
   # 題材は架空の台帳 2 冊。前回: S-1・S-2・U-1・U-2。今回: S-1（書き直しただけ）・U-1（別の意味に使い回し）を残し、
   # S-2 を実機確認の表から参照だけしている。資料の節の参照（02 の A-1）と CVE・GHSA の番号は ID に数えない
@@ -3418,7 +3576,7 @@ if bash -n "$ROOT/tests/eval/run-eval.sh" 2>/dev/null; then ok "eval: run-eval.s
 else ng "eval: run-eval.sh の構文"; fi
 # 題材の中のエージェント向けの設定を消す手順が残っているか（消さないと、評価の実行中に題材のフックや指示が読み込まれる）
 contains "eval: 題材のエージェント向けの設定を消す"              "for p in .claude CLAUDE.md"     "$(cat "$ROOT/tests/eval/run-eval.sh")"
-if awk '/cp -R "\$SKILL_SRC"/ && !c { c = NR } /> "\$OUT\/skill_version"/ && !v { v = NR } END { exit !(c && v && c < v) }' "$ROOT/tests/eval/run-eval.sh" \
+if awk '/cp -R "\$SKILL_SRC"/ && !c { c = NR } /cat "\$SKILL_VERSION_FILE" > "\$OUT\/skill_version"/ && !v { v = NR } END { exit !(c && v && c < v) }' "$ROOT/tests/eval/run-eval.sh" \
    && grep -F 'skill_version="$(cat "$out/skill_version"' "$ROOT/tests/eval/run-eval.sh" >/dev/null; then
   ok "eval: 当てたスキルの版を、写した時点で控えて記録する"
 else ng "eval: 当てたスキルの版を、写した時点で控えて記録する" "記録の時点の版を使っている"; fi

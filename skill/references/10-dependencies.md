@@ -43,8 +43,7 @@ govulncheck ./...                     # Go。到達性まで見てくれる
 | `go.sum` | Go | `govulncheck ./...` |
 | `composer.lock` | PHP | `composer audit` |
 | `Cargo.lock` | Rust | `cargo audit` |
-| `packages.lock.json` | .NET | `dotnet list package --vulnerable --include-transitive` |
-| `gradle.lockfile`・`pom.xml` | Java / Kotlin | OSV の照合か、組織で使っている SCA の道具 |
+| `packages.lock.json`・`gradle.lockfile`・`pom.xml` | .NET・Java / Kotlin | `dotnet list package --vulnerable --include-transitive`、Java は OSV の照合か組織の SCA の道具 |
 
 **npm の `package-lock.json` が無いことを、ロックファイルが無いことと読まない**（2 節）。bun・pnpm・yarn のロックファイルがあれば、それが正になる。
 
@@ -61,14 +60,13 @@ govulncheck ./...                     # Go。到達性まで見てくれる
 アプリのコードが正しくても成立する。この種は「呼んでいるか」で判定できないので、
 **版が該当するかどうかで判定する**。認証・認可の枠組みに関わるものは、
 `references/04-findings-register.md` の問い 1 に当たりうる（P0 の候補。実例は `references/02-code-audit.md` の A-5）。
+版はロックファイルの解決結果で確かめ、勧告は枠組みの公式の勧告を評価の時点で見る。
+**事前の洗い出しが照合する既知の勧告の表は、照合した日より後の勧告を含まない。** 表に無いことを、該当しない根拠にしない。
 
 ```bash
 # 枠組みの版を、ロックファイル側の実際の解決結果で確認する
 grep -m1 -A2 '"node_modules/next"' package-lock.json 2>/dev/null
 npm ls next react vue svelte 2>/dev/null | head
-```
-
-```bash
 # 該当ライブラリをどこで使っているか
 grep -rn "require('<lib>')\|from '<lib>'" --include='*.ts' --include='*.js' .
 # 依存木のどこから来ているか（直接依存か、他の依存が連れてきたか）
@@ -76,6 +74,7 @@ npm ls <lib>
 ```
 
 `npm ls` の結果は指摘の書き方を変える。**直接依存なら上げるだけ**、**他の依存が連れてきたものなら親を上げる必要がある**（あるいは上げられない）。
+親を上げられなければ、`overrides`（yarn は `resolutions`）で間接依存の版を修正版に固定するのが標準の手段になる。
 
 **他の依存が連れてきたもの（間接依存）は、上の grep では到達を判定できない。** アプリは間接依存を直接 import しないので、
 grep が 0 件でも「呼んでいない」にはならない。勧告に書かれた「影響する機能・関数」を、**親の依存がその機能を使っているか**、
@@ -84,66 +83,28 @@ grep が 0 件でも「呼んでいない」にはならない。勧告に書か
 ### 1-2. 「実際に悪用されているか」で優先度を分ける
 
 スキャンが出す深刻度（CVSS）は**理論上の重さ**で、**実際に攻撃に使われているか**とは別になる。
-優先度を決めるときは、次の順で確かめる。
+優先度を決めるときは、次の情報源で確かめる。
 
 | 情報源 | 何が分かるか | 使い方 |
 |---|---|---|
 | **CISA KEV**（Known Exploited Vulnerabilities） | **実際に悪用が確認された脆弱性**の公式カタログ。CVE 単位 | スキャンで出た CVE がここにあれば、**CVSS にかかわらず少なくとも P1**。公開資産で、認証なしに届き全制御を許すものは P0（`references/04-findings-register.md` の「悪用が確認されていれば上げる」） |
 | GitHub Security Advisories | パッケージ単位の公式勧告。**マルウェアの勧告もここに載る**（CVE が付かないことが多い） | 修正版の有無と、GHSA から CVE・EPSS への引き直し |
-| EPSS | 今後 30 日に悪用される確率の推定（FIRST。2026-06 から v5） | KEV に無いものの順位づけ |
+| EPSS | 今後 30 日に悪用される確率の推定（FIRST） | KEV に無いものの順位づけ |
 | OSV | 各エコシステムの勧告を束ねたもの。**悪性パッケージは `MAL-` で始まる ID** | `osv-scanner` でロックファイルを直接照合できる |
 | **JVN iPedia** | 国内の脆弱性対策情報（JPCERT/CC と IPA が運営）。日本語 | 国内製品・国内向けの補足。**依頼者への説明に日本語の一次情報として引ける** |
-| JPCERT/CC 注意喚起・IPA 重要なセキュリティ情報 | **国内で影響が大きいもの**への警告 | 評価期間中に出たものが対象の構成に当たらないかを、**評価の最後にもう一度見る** |
+| JPCERT/CC 注意喚起・IPA 重要なセキュリティ情報 | **国内で影響が大きいもの**への警告 | **評価の最初と最後**に、対象の構成に当たるものが無いかを見る |
 | 枠組み自身のアドバイザリ | Next.js / Rails / Django などの公式の勧告 | **枠組み本体の脆弱性**（1 節の例外）はここで版を確かめる |
 
-```bash
-# KEV は JSON で公開されている。スキャンで出た勧告を CVE に引き直してから突き合わせる。
-# npm audit --json の via[] には CVE 番号が無い（GHSA の URL しか無い）。CVE で直接照合すると、
-# どんな結果でも「該当なし」になるので注意。GHSA → CVE と EPSS は GitHub の勧告 API で引ける（gh が要る）
-curl -sS https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json \
-  | python3 -c 'import json,sys; print("\n".join(v["cveID"] for v in json.load(sys.stdin)["vulnerabilities"]))' \
-  > /tmp/kev.txt
-npm audit --json | python3 -c '
-import json,sys,re
-for a in json.load(sys.stdin).get("vulnerabilities",{}).values():
-    for v in a.get("via",[]):
-        if isinstance(v,dict):
-            m=re.search(r"GHSA(-[0-9a-z]{4}){3}", v.get("url",""))
-            if m: print(m.group(0), a["name"], a["severity"])' | sort -u \
-  | while read -r ghsa name sev; do
-      read -r cve epss < <(gh api "/advisories/$ghsa" --jq '[.cve_id // "-", .epss.percentage // "-"] | @tsv')
-      kev=$(grep -qxF "$cve" /tmp/kev.txt && echo KEV || echo -)
-      printf '%s\t%s\t%s\t%s\tEPSS=%s\t%s\n' "$kev" "$cve" "$ghsa" "$name" "$epss" "$sev"
-    done | sort -r
-```
+**KEV との照合は、勧告を CVE に引き直してから行う。** `npm audit --json` の出力には CVE 番号が無く GHSA の URL しか無いので、
+CVE で直接照合すると、どんな結果でも「該当なし」になる。GHSA から CVE と EPSS へは GitHub の勧告 API（`gh api /advisories/<GHSA>`）で引ける。
+`pip-audit -f json` は勧告の別名に CVE を持つ。**開発依存も含めて照合する**（開発依存は CI と開発機で動く。3-3）。
+**判定の順は KEV → EPSS → CVSS。** CVE の付かない勧告（マルウェアの勧告など）は KEV と照合できないので、別に目で見る。
 
-**開発依存も含めて照合する**（`--omit=dev` を付けない）。開発依存は本番には入らないが、CI と開発機で動く（3-3）。
+**KEV には依存パッケージだけでなく、CI の Action やツール自体の侵害も載る。** `.github/workflows` の `uses:` も同じように照合する。
+**逆に、載っていないことは安全の根拠にならない**（大規模な npm の侵害でも KEV に載らなかったものがある）。
 
-**npm 以外も同じく CVE に引き直して照合する。** Python なら `pip-audit` の JSON に、勧告の別名として CVE が入る。
-
-```bash
-pip-audit -r requirements.txt -f json 2>/dev/null | python3 -c '
-import json,sys
-for d in json.load(sys.stdin).get("dependencies",[]):
-    for v in d.get("vulns",[]):
-        for c in [v.get("id","")] + v.get("aliases",[]):
-            if c.startswith("CVE-"): print(c, d["name"])' | sort -u \
-  | while read -r cve name; do grep -xF "$cve" /tmp/kev.txt >/dev/null && echo "KEV $cve $name"; done
-```
-
-他のエコシステムは、1 節の表の道具の JSON 出力から CVE を取り出して、同じ `/tmp/kev.txt` と突き合わせる。
-
-**先頭に `KEV` が出た行から見る**（04 の規則で少なくとも P1）。次に EPSS（今後 30 日に悪用される確率の推定。2026-06 から v5）が
-高いものを見る。**判定の順は KEV → EPSS → CVSS。** CVE が `-` の勧告（マルウェアの勧告など、
-CVE の付かないもの）は KEV と照合できないので、別に目で見る。
-
-**KEV には依存パッケージだけでなく、CI の Action やツール自体の侵害も載る**（例: tj-actions の
-CVE-2025-30066、reviewdog の CVE-2025-30154、Trivy の CVE-2026-33634）。`.github/workflows` の
-`uses:` も同じように照合する。**逆に、載っていないことは安全の根拠にならない**
-（大規模な npm の侵害でも KEV に載らなかったものがある）。
-
-**KEV に載っていることは「今すぐ」の根拠になる。** 逆に、載っていない high は
-「到達性を確かめてから」（1 節）でよい。**この区別を台帳に書く**と、依頼者が順序を納得しやすい。
+**KEV に載っていることは「今すぐ」の根拠になる。** 載っていない high は「到達性を確かめてから」（1 節）でよい。
+**この区別を台帳に書く**と、依頼者が順序を納得しやすい。
 
 **注意喚起は評価の最後にもう一度見る。** 評価に数週間かかると、その間に新しい勧告が出る。
 報告書の日付の時点で、対象の構成に当たる注意喚起が無いかを確かめてから出す。
@@ -154,11 +115,12 @@ CVE-2025-30066、reviewdog の CVE-2025-30154、Trivy の CVE-2026-33634）。`.
 
 - CI にスキャンが入っているか。入っていなければ、誰も見ていない
 - 依存更新の自動検知（Dependabot / Renovate）があるか。Dependabot は **3 つを分けて聞く**:
-  セキュリティ更新（即時）、バージョン更新（2026-07 から既定で 3 日の待機）、
-  **悪性パッケージのアラート（opt-in。npm は 2026-03 から）**。`npm audit` は悪性パッケージを検知しないので、
+  セキュリティ更新、バージョン更新、**悪性パッケージのアラート（opt-in）**。`npm audit` は悪性パッケージを検知しないので、
   最後の 1 つが無ければ「乗っ取られた版が入っても気づく仕組みが無い」と書ける
 - **通知の宛先が生きているか。** 設定されていても、誰も見ていないリポジトリの通知は無いのと同じ
 - ロックファイル（`package-lock.json` / `yarn.lock` / `poetry.lock`）がコミットされているか
+
+**直し方。** CI に依存のスキャン（`npm audit --omit=dev` や `osv-scanner`）を入れ、Dependabot か Renovate のセキュリティ更新と悪性パッケージのアラートを有効にし、通知を誰が受けるかを決める。
 
 **ロックファイルがあっても、ビルドで使われているとは限らない。** CI やホスティングのビルドが `npm install` を
 使っていると、ロックファイルと食い違えば書き換えて進む。`npm ci`（pnpm なら `--frozen-lockfile`）を使っているかを見る。
@@ -182,16 +144,11 @@ git log -1 --format=%cr -- <見つかったロックファイル>    # 最後に
 
 **ロックファイルが必要かは、パッケージの定義との組で決める。** 依存を宣言した定義（`package.json` の `dependencies`、`pyproject.toml`、
 `requirements.txt`、`Gemfile`、`composer.json`、`Cargo.toml`、`pubspec.yaml`、`Podfile` など）が無ければ、ロックファイルが無いことは指摘にならない
-（IaC だけのリポジトリなど）。エコシステムごとに扱いが違うものがある:
+（IaC だけのリポジトリなど）。エコシステムごとに扱いが違うものがある。
 
-| エコシステム | ロックファイルが無いとき |
-|---|---|
-| Go | 指摘にならない。`go.mod` が版を決め、最小版選択（MVS）は新しい版が出ても結果が変わらない（Go の公式の資料）。`go.sum` は照合用 |
-| Python の `requirements.txt` | すべてを `==` で固定していれば、ロックの代わりになる（pip-compile の出力など）。範囲で書いていれば指摘 |
-| Gradle（`gradle.lockfile`）・.NET（`packages.lock.json`） | ロックは任意。版を固定して書いていれば解決はほぼ変わらない。**動的な版**（Gradle の `1.+`・`latest.release`・`[1.0,2.0)`、NuGet の `4.*`）を書いていて、ロックが無ければ指摘 |
-| Maven | ロックの仕組みが無い。版の範囲（`[1.0,2.0)`）や `LATEST`・`RELEASE` を書いていれば指摘 |
-
-Gradle のバージョンカタログ（`libs.versions.toml`）は版を 1 か所に集める仕組みで、ロックではない。カタログに動的な版を書けば、ロックが無い限り固定されない。
+- **Go** は指摘にならない。`go.mod` が版を決め、最小版選択は新しい版が出ても結果が変わらない（`go.sum` は照合用）
+- **Python の `requirements.txt`** は、すべてを `==` で固定していればロックの代わりになる。範囲で書いていれば指摘
+- **Gradle・Maven・.NET** はロックが任意か無い。**動的な版**（`1.+`・`latest.release`・`[1.0,2.0)`・`LATEST`・`RELEASE`・NuGet の `4.*`。バージョンカタログの中も含む）を書いていて、ロックが無ければ指摘
 
 ## 3. 他人のコードが本番に入る経路
 
@@ -202,21 +159,19 @@ Gradle のバージョンカタログ（`libs.versions.toml`）は版を 1 か�
 `npm install` は、依存パッケージの `postinstall` を実行する。**依存を 1 つ足すと、他人のスクリプトが開発機と CI で走る。**
 
 ```bash
-# インストール時にスクリプトが走る依存の数。preinstall / install / binding.gyp も含めて、
-# ロックファイルに記録されている（node_modules/*/package.json の grep はスコープ付きと preinstall を落とす）
+# インストール時にスクリプトが走る依存の数と名前（preinstall / install / binding.gyp も含めてロックファイルに記録されている）
 grep -c '"hasInstallScript": true' package-lock.json 2>/dev/null
-# 名前は、その直前に現れた "node_modules/<名前>" のキー。間に version / resolved / integrity / dev が入るので
-# 行数を決め打ちした grep -B では取れない
 awk '/^[[:space:]]*"node_modules\//{k=$1} /"hasInstallScript": true/{gsub(/[":]/,"",k); sub(/^node_modules\//,"",k); print k}' package-lock.json 2>/dev/null | head -30
 ```
 
-**パッケージマネージャ側の既定が変わっている。** npm 12（2026-07）と pnpm 10 以降は、依存のスクリプトを
-既定で実行せず、許可したものだけを動かす。**ただし実際にビルドしているのが古い npm なら、この保護は働かない**
-（Vercel の既定は Node 24 に付く npm 11。Node 20 / 22 を選んでいれば npm 10。どちらも npm 12 ではない）。
-見るのは手元の設定ではなく、**本番のビルドで何の版が動いているか**。
+**`hasInstallScript` は npm の lockfile v2 以降にしか入らない。** pnpm・yarn・bun と npm の lockfile v1 では上の数が 0 になるので、**0 を「無い」と読まない。**
+pnpm は `pnpm-lock.yaml` の `requiresBuild: true` を数え、無ければ既にある `node_modules` の各 `package.json` の `scripts` を見る。
+**数えるために依存を入れない**（入れた時点でスクリプトが走る）。数えられなければ「判定不能」と書いて未確認事項に残す。
 
-**公開直後の版を入れない設定（クールダウン）があるか。** 2025〜2026 年の npm の乗っ取り
-（Shai-Hulud、axios など）は、悪性版の公開から取り下げまで数時間だった。数日の待機でその大半を避けられる。
+**パッケージマネージャの新しい版は、依存のスクリプトを既定で実行せず、許可したものだけを動かす方向にある。**
+**ただし本番のビルドで動いているのが古い版なら、この保護は働かない。** 見るのは手元の設定ではなく、ホスティングや CI のビルドで何の版が動いているか。
+
+**公開直後の版を入れない設定（クールダウン）があるか。** 乗っ取られた版は、公開から取り下げまで数時間のことが多い。数日の待機でその大半を避けられる。
 
 ```bash
 grep -nE 'ignore-scripts|min-release-age|allow-(git|remote|scripts)|dangerously-allow-all-scripts|^registry' .npmrc 2>/dev/null
@@ -231,35 +186,15 @@ grep -n 'cooldown' .github/dependabot.yml 2>/dev/null
 **取得元の差し替え**（フォークの git リポジトリや任意の URL の tarball を指す）を探す。どちらも、なぜそうしたかがコミットや
 コメントに無ければ、依頼者に聞く。
 
-`scripts/audit_grep.sh` の 21 節が、スクリプトの走る依存の数と名前、公式レジストリ以外の取得元、防御の設定を出す。
+候補は事前の洗い出しの 21 節に出る。
 
 **既知の乗っ取られた版がロックファイルに入っていないか**も見る。入っていたら、
 **その版が入ったビルド環境と開発機の秘密情報はすべて漏れたものとして扱う**（入れ替えと、露出していた期間の悪用の調査までを是正に書く。タスクの型は `references/05-remediation-plan.md` の「秘密情報の入れ替え」）。
 
-見つかったこと自体は指摘ではない（ビルドに必要なものも多い）。**書くのは、この経路が存在することと、CI で本番の秘密情報が同じ環境にあるかどうか。** 両方が揃うと、依存 1 つの汚染で秘密情報が抜ける経路になる。
+スクリプトの走る依存が見つかったこと自体は指摘ではない（ビルドに必要なものも多い）。**書くのは、この経路が存在することと、CI で本番の秘密情報が同じ環境にあるかどうか。** 両方が揃うと、依存 1 つの汚染で秘密情報が抜ける経路になる。
 
-**`hasInstallScript` は npm のロックファイル（lockfile v2 以降）にしか入らない。** pnpm・yarn・bun と、npm の lockfile v1 では上の数が 0 になる。
-**0 を「無い」と読まない。** pnpm は版によって `pnpm-lock.yaml` に `requiresBuild: true` が入るので、まずそれを数える。
-入っていなければ、既に入っている `node_modules` の各 `package.json` を数える（pnpm の実体は `node_modules/.pnpm` の下にある）。
-
-```bash
-grep -c 'requiresBuild: true' pnpm-lock.yaml 2>/dev/null
-# node_modules が既にあるときだけ。スクリプト（preinstall / install / postinstall）か binding.gyp を持つ依存の名前
-find node_modules -name package.json -type f 2>/dev/null | python3 -c '
-import json, os, sys
-names = set()
-for f in sys.stdin.read().split("\n"):
-    try: j = json.load(open(f))
-    except Exception: continue
-    s = j.get("scripts") if isinstance(j.get("scripts"), dict) else {}
-    if j.get("name") and (any(k in s for k in ("preinstall", "install", "postinstall"))
-                          or os.path.exists(os.path.join(os.path.dirname(f), "binding.gyp"))):
-        names.add(j["name"])
-print(len(names)); print("\n".join(sorted(names)[:30]))'
-```
-
-**数えるために依存を入れない。** 入れた時点でスクリプトが走る。`node_modules` が無く、ロックファイルからも数えられなければ、
-「判定不能」と書いて未確認事項に残す。
+**直し方。** 依存のスクリプトは許可したものだけを動かす（npm の `ignore-scripts` と許可の一覧、pnpm の `onlyBuiltDependencies`）。
+ビルドでは `npm ci` を使い、クールダウン（pnpm の `minimumReleaseAge`、Dependabot の `cooldown` など）を入れる。本番の秘密情報は、依存を入れるジョブに渡さない。
 
 **リポジトリ自身のスクリプトも、全開発者の端末と CI で走る。** 依存のスクリプトと別に見る。
 
@@ -277,12 +212,7 @@ grep -rnE '"(initializeCommand|onCreateCommand|updateContentCommand|postCreateCo
 
 ### 3-2. 名前の紛らわしい依存
 
-タイポスクワッティング（`lodahs` のような、正規のパッケージに似せた名前）を、直接依存だけでも見る。
-
-```bash
-# 直接依存の一覧を出して、見慣れないものを目で確かめる
-node -e "const p=require('./package.json');console.log(Object.keys({...p.dependencies,...p.devDependencies}).join('\n'))"
-```
+タイポスクワッティング（`lodahs` のような、正規のパッケージに似せた名前）を、直接依存だけでも見る（npm の確かめ方は下のコマンド）。
 
 **npm 以外にも同じ経路がある。** `requirements.txt`・`pyproject.toml`・`Gemfile`・`composer.json` の直接依存も同じように目で見る。
 レジストリに実在するか、いつから公開されているかは、それぞれ次で確かめられる。
@@ -293,13 +223,11 @@ node -e "const p=require('./package.json');console.log(Object.keys({...p.depende
 | `Gemfile` | `gem info -r <名前>` |
 | `composer.json` | `composer show -a <名前>` |
 
-**判定は目でやる。** 機械的には落とせない。週あたりのダウンロード数と、リポジトリの所在を見れば大抵は分かる。
+**判定は目でやる。** 機械的には判定できない。週あたりのダウンロード数と、リポジトリの所在を見れば大抵は分かる。
 
 **AI が生成したコードでは、実在しないパッケージ名が混ざる。** モデルが「ありそうな名前」を作り、
 後から攻撃者がその名前で悪意あるパッケージを公開して待つ、という形が知られている
-（slopsquatting と呼ばれる）。USENIX Security 2025 の研究では、**生成されたパッケージ参照の 19.7% が
-実在しない名前**だった（商用モデル平均 5.2%、オープンなモデル平均 21.7%）。同じプロンプトを 10 回投げると
-**43% は 10 回とも同じ名前を再現した**。攻撃側は名前を予測して先回りできる。
+（slopsquatting と呼ばれる）。生成される名前は同じプロンプトで再現されやすく、攻撃側は名前を予測して先回りできる。
 
 **この評価の対象では、特にここを見る価値が高い。** AI で素早く作ったアプリは、1 回の作業で
 依存が一気に増える。**インストールが通っている以上どこかには存在する**ので、
@@ -320,99 +248,42 @@ node -e "const p=require('./package.json');console.log(Object.keys({...p.depende
 `npm view <名前> dist.attestations repository.url` で、出所の証明（provenance）とリポジトリの所在も見られる。
 
 **公開日が極端に新しいものと、レジストリに無いものを重点的に見る。** 前者は先回りされた名前の候補、
-後者はプライベートレジストリ由来か、単にタイプミスになる。
+後者はプライベートレジストリ由来か、単にタイプミスになる。疑わしい名前は、正規のパッケージに置き換えるか依存から外し、
+既に入れた環境の秘密情報は 3-1 の「乗っ取られた版」と同じく漏れたものとして扱う。
 
 ### 3-3. CI から本番への経路
 
-**2025〜2026 年の大きな事故の多くは、ここで起きた**（tj-actions、nx、Trivy、TanStack）。
-Vercel のようなマネージド構成でも、`.github/workflows/` は**秘密情報と本番への権限を持つインフラの定義**として見る。
+**サプライチェーンの大きな事故の多くは、ここで起きている。** Vercel のようなマネージド構成でも、`.github/workflows/` は
+**秘密情報と本番への権限を持つインフラの定義**として見る。候補は事前の洗い出しの 20 節に出る。
 
-- CI の権限がどこまであるか。本番へ直接デプロイできるか。`permissions:` を書いていないワークフローは既定の権限で動く
-- **サードパーティの Action を版で固定しているか。** `@v3` のようなタグ参照は、タグが差し替えられると別のコードが走る。
-  コミットハッシュでの固定が基本だが、**それだけでは足りない**。固定した Action の中で別の Action をタグ参照していれば、
-  そこは固定されない（Trivy の事例）。**フォーク側のコミットを指すハッシュでないか**も確かめる
-- **外部から来る値を `run:` に直接埋め込んでいないか。** PR のタイトルやブランチ名を `${{ }}` で `run:` に書くと、
-  シェルに注入できる（nx の根本原因）。環境変数に入れてから参照するのが正しい。**手動実行の入力（`inputs`）も同じ書き方で注入になる。**
-  入力できるのは書き込みの権限を持つ人か、呼び出し元のワークフローだが、呼び出し元が PR の題名などを渡していれば外部の値と同じになる。
-  秘密情報を持つジョブなら指摘にする
-- **外部から来る値を、環境ファイル（`$GITHUB_ENV`・`$GITHUB_OUTPUT`・`$GITHUB_PATH`）に書き込んでいないか。** 環境ファイルは
-  「名前=値」を改行で区切って読む。値に改行を含めれば、`$GITHUB_ENV` なら同じジョブの後続のステップに別の環境変数
-  （`LD_PRELOAD`・`BASH_ENV` や、後続のステップが使う変数）を足して任意のコードを動かせ、`$GITHUB_OUTPUT` なら同じステップの別の出力を、
-  `$GITHUB_PATH` なら `PATH` の先頭に別のディレクトリを書き足せる。**`env:` で受けて `"$名前"` で使う形は、上のシェルへの注入は防ぐが、
-  この形は防がない**（値そのものを書き込むため）。`env:` で受けた変数を加工してから書く形も同じ。
-  複数行の「名前<<区切り」で書く形は、値の中に区切りだけの行があるとその後ろが別の値になる。GitHub の資料は「区切りが値の中の 1 行に現れないようにし、
-  値が任意ならこの形を使わずファイルに書く」としている。`EOF` のような固定の区切りは推測できるので、外部の値なら指摘にする。
-  区切りを実行ごとに作る（`uuidgen`・乱数）か、1 行の値なら改行を除く（`tr -d '\n'`）。`@actions/core` の `exportVariable`・`setOutput`
-  （`github-script` の `core.*` も）は区切りを実行ごとに作り、値が区切りを含めば止まるので、この形の穴は無い。
-  `workflow_run` で前のワークフローの成果物（PR の番号など）を読んで書く形は、成果物の中身が PR の側から来るので外部の値と同じ。
-  ブランチ名（`github.head_ref` など）は git の参照名の決まりで改行と空白を持てないので、この形で別の値は足せない
-  （書き込んだ値を後続の `run:` に `${{ env.名前 }}` で展開すれば、上のシェルへの注入になる）。
-  `NODE_OPTIONS` は `$GITHUB_ENV` では設定できない（GitHub の仕様）
-- **`contains()` で権限を決めていないか。第 1 引数が文字列か配列かで比べ方が変わる。** 第 1 引数が文字列なら、第 2 引数が
-  **部分文字列として含まれれば**真、配列なら**要素のどれかと一致すれば**真になる（どちらも大文字と小文字を区別しない）。
-  ラベル名・利用者名・ブランチ名を文字列のまま比べる形（`contains(github.event.label.name, 'admin')`、`contains(github.head_ref, 'release')`、
-  `contains('alice,bob', github.actor)`）は部分一致なので、`admin` を含むかで判定すればラベル `admin-bypass` が通り、
-  `alice,bob` の中にあるかで判定すれば利用者 `ali` が通る。権限の判定は `==` で比べるか、配列を受ける形にする。
-  配列を受ける形（`contains(github.event.pull_request.labels.*.name, 'admin')` のようなオブジェクトフィルタ、
-  `contains(fromJSON('["alice","bob"]'), github.actor)`）は要素ごとの比較で、正しい書き方なので指摘しない。
-  第 1 引数が `github.event.*.labels.*.name` のように `.*.` を含むか、`fromJSON` の配列かで見分ける
-- **秘密情報を、使うステップの `env:` に置いているか。** ジョブ全体やワークフロー全体の `env:` に置くと、そのジョブの全ステップ
-  （第三者の Action、`run:` で動く依存のスクリプト）から読める。LLM の鍵や CMS の書き込みの鍵を CI に置く構成で起きやすい（`references/12-ai-features.md` の 9 節）
-- **`actions/checkout` が資格情報を残したまま、作業ツリーを成果物に上げていないか。** checkout は既定で `GITHUB_TOKEN` を
-  `.git/config` に書き残す。同じジョブで `actions/upload-artifact` が `path: .` や `${{ github.workspace }}` のように
-  `.git` を含む範囲を上げると、成果物を取れる人（公開リポジトリなら誰でも）にトークンが渡る。
-  `upload-artifact` は v4.4.0（v3 系は v3.2.0）から隠しファイルを既定で除くので、それより前の版か
-  `include-hidden-files: true` のときに上がる。上がらない版でも、残ったトークンは同じジョブの後のステップ
-  （第三者の Action、依存のスクリプト）から読める。checkout に `persist-credentials: false` を付けるか、上げる範囲をビルドの出力に絞る
-- **既知の勧告がある版の Action を使っていないか。** Action も依存の一つで、GitHub の勧告データベースに
-  `actions` の分類で載る（乗っ取られた版、秘密情報を漏らす版）。ハッシュで固定していても、固定した版が勧告の範囲なら残る。
-  版はタグか、ハッシュの後ろの版の注記（`# v1.2.3`）で決める。`scripts/audit_grep.sh` の 20 節は照合した日の表で ★ を付けるが、
-  その日より後の勧告は載らないので、使っている Action の勧告を評価の時点で見る
-- **Action の入力で、道具を最新（`version: latest` など）で入れていないか。** Action をハッシュで固定しても、
-  中で入れる道具が走るたびに変わる。乗っ取られた版が出た時点で、次の実行から入る。版を固定する
-- **人が数を指定できる一括処理に上限があるか。** 手動実行の入力で本数や件数を渡すワークフロー（生成して公開する、一斉に送る）は、
-  入力に上限が無いと、従量課金の費用と公開の量がそのまま伸びる
-- **`pull_request_target` / `workflow_run` で PR の中身を取得して動かしていないか。** 秘密情報を持った状態で
-  他人のコードが走る。`actions/checkout` は既定で**フォークからの PR** の取得を拒否するようになった
-  （v7 で 2026-06、v2〜v6 の最新版にも 2026-07 に取り込み。v1 には無い）が、**古い版のハッシュで固定していれば、この修正は入らない**。
-  解除する入力（`allow-unsafe-pr-checkout`）や、手書きの `git fetch` / `gh pr checkout` にも及ばない。
-  公開リポジトリでは、`pull_request_target` を既定で止めるルールが 2026-11-02 から適用される予定
-- **信頼できないトリガーからキャッシュを書けないか**（TanStack の事例。2026-06 から既定で読み取り専用だが、
-  2026-09 に足された `cache-mode` をワークフローに書くと上書きできる）
-- npm に公開する権限を持つトークンが CI にあるか。あれば、**公開は OIDC による Trusted Publishing か**。
-  ただし**出所の証明（provenance）が正しくても安全とは言えない。** 正規の OIDC 経路から悪性版が公開された事例がある
+- **CI の権限がどこまであるか。** 本番へ直接デプロイできるか。`permissions:` を書いていないワークフローは既定の権限で動く。最小の権限を書く
+- **サードパーティの Action をコミットハッシュで固定しているか。** `@v3` のようなタグ参照は、タグが差し替えられると別のコードが走る。
+  固定した Action の中で別の Action をタグ参照していれば、そこは固定されない。フォーク側のコミットを指すハッシュでないかも確かめる
+- **外部から来る値を `run:` に `${{ }}` で直接埋め込んでいないか。** PR のタイトルやブランチ名、手動実行の入力（`inputs`）を
+  そう書くとシェルに注入できる。秘密情報を持つジョブなら指摘にする。`env:` に入れてから `"$名前"` で参照する
+- **外部から来る値を、環境ファイル（`$GITHUB_ENV`・`$GITHUB_OUTPUT`・`$GITHUB_PATH`）に書き込んでいないか。** 値に改行を含めれば、
+  後続のステップに別の環境変数（`LD_PRELOAD`・`BASH_ENV` など）や `PATH` の先頭を足して任意のコードを動かせる。
+  **`env:` で受けて `"$名前"` で使う形でも、値そのものを書き込むので防げない。** 「名前<<区切り」の形で `EOF` のような固定の区切りを使うのも同じ。
+  区切りを実行ごとに作る（乱数）か、1 行の値なら改行を除く（`tr -d '\n'`）か、`@actions/core` の `exportVariable`・`setOutput` を使う。
+  `workflow_run` で読む前のワークフローの成果物は PR の側から来るので、外部の値として扱う
+- **`contains()` で権限を決めていないか。** 第 1 引数が文字列なら部分一致で、`contains(github.event.label.name, 'admin')` はラベル `admin-bypass` でも、
+  `contains('alice,bob', github.actor)` は利用者 `ali` でも真になる。権限の判定は `==` で比べるか、配列（`.*.` のフィルタや `fromJSON` の配列）を受ける形にする
+- **秘密情報を、使うステップの `env:` だけに置いているか。** ジョブ全体やワークフロー全体の `env:` に置くと、第三者の Action や依存のスクリプトからも読める
+  （LLM の鍵や CMS の書き込みの鍵を CI に置く構成で起きやすい。`references/12-ai-features.md` の 9 節）
+- **`actions/checkout` が資格情報を残したまま、作業ツリーを成果物に上げていないか。** checkout は既定で `GITHUB_TOKEN` を `.git/config` に残す。
+  `.git` を含む範囲（`path: .` など）を成果物に上げると、成果物を取れる人にトークンが渡る。残ったトークンは同じジョブの後のステップからも読める。
+  checkout に `persist-credentials: false` を付けるか、上げる範囲をビルドの出力に絞る
+- **既知の勧告がある版の Action を使っていないか。** Action も依存の一つで、GitHub の勧告データベースに載る。ハッシュで固定していても、固定した版が勧告の範囲なら残る。
+  使っている Action の勧告を評価の時点で見る
+- **Action の入力で、道具を最新（`version: latest` など）で入れていないか。** Action を固定しても、中で入れる道具が走るたびに変わる。版を固定する
+- **人が件数を指定できる一括処理**（生成して公開する、一斉に送る）に上限があるか。無いと従量課金の費用と公開の量がそのまま伸びる
+- **`pull_request_target` / `workflow_run` で PR の中身を取得して動かしていないか。** 秘密情報を持った状態で他人のコードが走る。
+  checkout の新しい版はフォークからの PR の取得を既定で拒否するが、古い版のハッシュで固定していればその保護は入らず、手書きの `git fetch` や `gh pr checkout` にも及ばない
+- **信頼できないトリガー（フォークからの PR など）からキャッシュを書けないか。** 書ければ、後の信頼されたワークフローが汚染されたキャッシュを読む
+- **npm に公開する権限を持つトークンが CI にあるか。** あれば、公開は OIDC による Trusted Publishing に移す。
+  ただし出所の証明（provenance）が正しくても安全とは言えない。正規の OIDC 経路から悪性版が公開された事例がある
 
-```bash
-W=.github/workflows
-# 版の固定。サブパス付きの Action と再利用ワークフローも拾い、40 桁のハッシュ以外を出す
-grep -rnE 'uses:[[:space:]]*[^[:space:]#]+@' $W 2>/dev/null | grep -vE '@[0-9a-f]{40}([[:space:]]|$)'
-grep -rnE 'uses:[[:space:]]*docker://' $W 2>/dev/null
-# 危険なトリガーと PR の中身の取得
-grep -rnE 'pull_request_target|workflow_run|issue_comment' $W 2>/dev/null
-grep -rnE 'allow-unsafe-pr-checkout|cache-mode:|head\.(sha|ref)|refs/pull/|gh pr checkout' $W 2>/dev/null
-# 外部から来る値と手動実行の入力の ${{ }} 展開。run: | の複数行ブロックの中にも来るので、ファイル全体で拾い、run: の中かを目で見る
-# （scripts/audit_grep.sh の 20 節は run: の中かを判定し、外部の値なら ★ を付ける。ジョブ全体の env: の秘密情報も出す）
-grep -rnE '\$\{\{[[:space:]]*(github\.event\.(issue|pull_request|comment|review|head_commit|commits|pages|discussion|workflow_run|inputs)|github\.head_ref|inputs\.)' $W 2>/dev/null
-# 環境ファイルへの書き込み。値が外部の値か（env: で受けた名前・run: の中で代入した名前を辿る）と、「名前<<区切り」の区切りが固定かを目で見る
-# （20 節は env: と代入を辿り、外部の値なら ★ を付ける。区切りを実行ごとに作る形・改行を除く形・ブランチ名・入力・ファイルの中身は ★ を付けずに並べる）
-grep -rnE 'GITHUB_(ENV|OUTPUT|PATH)([^A-Za-z0-9_]|$)' $W 2>/dev/null
-# contains() の第 1 引数。文字列（部分一致）か、.*. のオブジェクトフィルタや fromJSON の配列（要素の一致）かを見る
-grep -rnE 'contains\(' $W 2>/dev/null
-# 資格情報を残す checkout と、作業ツリーを上げる成果物（同じジョブにあるかは目で見る。20 節はジョブごとに判定する）
-grep -rnE 'actions/checkout@|persist-credentials:' $W 2>/dev/null
-grep -rnA6 'actions/upload-artifact@' $W 2>/dev/null | grep -E 'path:[[:space:]]*["'"'"']?(\.|\./|\*\*?|\$\{\{[[:space:]]*github\.workspace[[:space:]]*\}\})["'"'"']?[[:space:]]*$'
-# 道具を最新で入れる入力
-grep -rnE '^[[:space:]]+[A-Za-z_-]*version:[[:space:]]*["'"'"']?latest' $W 2>/dev/null
-# 権限と秘密情報
-grep -rLE '^permissions:' $W/*.y*ml 2>/dev/null          # トップレベルの permissions が無い
-grep -rnE 'permissions:[[:space:]]*write-all|id-token:[[:space:]]*write' $W 2>/dev/null
-grep -rnE '(echo|printf|cat|tee).*\$\{\{[[:space:]]*secrets\.|toJSON\(secrets\)|secrets:[[:space:]]*inherit' $W 2>/dev/null
-```
-
-`scripts/audit_grep.sh` の 20 節が、`.github/workflows/` があるときに上をまとめて出す。
-
-**組織の設定も聞く。** SHA 固定を強制する方針（2025-08 から設定できる）と、ワークフローを誰が・どのイベントで
-動かせるかの制限（2026-09 に GA）。コードからは見えないので、無ければ未確認事項に残す。
+**組織の設定も聞く。** SHA 固定を強制する方針と、ワークフローを誰が・どのイベントで動かせるかの制限。コードからは見えないので、無ければ未確認事項に残す。
 
 ### 3-4. ブラウザに読み込む第三者スクリプト
 
@@ -422,8 +293,8 @@ grep -rnE '(echo|printf|cat|tee).*\$\{\{[[:space:]]*secrets\.|toJSON\(secrets\)|
 
 - **版を付けない CDN の参照**（`unpkg.com/<名前>`、`@latest`、版の範囲だけの指定）は、中身が予告なく変わるので SRI を付けられない。
   付けても、新しい版が出た時点で読み込みが止まる。**版を完全に固定し、SRI を付ける**か、自分の配信物に取り込む
-- **配信元のドメインの持ち主が変わることがある。** 2024 年には、広く使われていた polyfill の配信ドメインが売却され、
-  読み込んでいたサイトに悪性のコードが配られた。無名の配信元や、既に保守されていないライブラリの配信元を読み込んでいないかを見る
+- **配信元のドメインの持ち主が変わることがある。** 広く使われていた polyfill の配信ドメインが売却され、
+  読み込んでいたサイトに悪性のコードが配られた例がある。無名の配信元や、既に保守されていないライブラリの配信元を読み込んでいないかを見る
 
 ```bash
 grep -rnE 'unpkg\.com|cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com|@latest|polyfill' \
@@ -455,11 +326,14 @@ git ls-files -z '*.md' '*.mdc' '.cursorrules' '*.json' 2>/dev/null \
   | xargs -0 perl -CSD -ne 'print "$ARGV:$.\n" if /[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2060}-\x{2069}\x{E0000}-\x{E007F}]/; close ARGV if eof' 2>/dev/null
 ```
 
-`scripts/audit_grep.sh` の 22 節が、設定ファイルがあるときに上をまとめて出す。
+候補は事前の洗い出しの 22 節に出る。
 
 **見つかったこと自体は指摘ではない。** 書くのは、**開発者の端末で自動的に動くものがあるか**と、
 **その端末に本番の秘密情報があるか**の 2 つ。両方揃うと、リポジトリへの 1 回の書き込みで本番の鍵が抜ける。
 開発者が本番の DB やクラウドに MCP でつないでいるかは取材で聞く（`references/01-scoping.md` の B-3）。
+
+**直し方。** 個人用の設定は `.gitignore` に入れてリポジトリから外し、自動承認と権限の緩和は共有の設定に置かない。
+MCP サーバーは版を固定し、`folderOpen` のタスクは外す。指示書に見えない文字があれば消し、誰が入れたかを履歴で確かめる。
 
 ---
 

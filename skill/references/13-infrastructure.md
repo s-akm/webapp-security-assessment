@@ -1,12 +1,12 @@
-# インフラの定義（IaC・コンテナ）
+# インフラの定義（IaC・コンテナ・自前のサーバー）
 
-**インフラを自分たちのリポジトリで定義しているとき**に読む。
+**インフラを自分たちのリポジトリで定義しているとき**、または**自前のサーバー（VPS など）に載せているとき**に読む。
 
 **マネージドの基盤に載せているだけなら、この資料は不要。** Vercel や Supabase のような
 構成では、設定は管理画面にあり、コードには現れない。その場合は
 `references/03-runtime-verification.md` で実機を見るほうが確実になる。
 
-**要否の判定**は `scripts/audit_grep.sh` の 0 節が出す。次のどれかがあれば読む。
+**要否の判定**は事前の洗い出しの 0 節に出る。次のどれかがあれば読む。
 
 | 見つかったもの | 読む節 |
 |---|---|
@@ -15,13 +15,10 @@
 | Kubernetes のマニフェスト / Helm チャート | 4 |
 | `serverless.yml` / SAM / `wrangler.toml` / `wrangler.json*` / SST（`sst.config.ts`） | 5 |
 | PaaS の定義（`render.yaml` / `fly.toml` / `app.yaml` / `netlify.toml` / `vercel.json`） | 5 と 6 |
+| `nginx.conf` / `Caddyfile` / systemd のユニット / ssh や rsync で配る配備の手順 | 7（compose があれば 2 も）。0 節には出ないので、配備先を取材で確かめる |
 
-**設定項目の網羅的な一覧は CIS Benchmarks にある。** この資料は「AI で素早く作った構成で
-実際に空く穴」に絞ってあり、網羅を狙っていない。**取引先が CIS 準拠を求めてきたとき、または
-自前ホスティングで設定項目を漏れなく見たいとき**は、対象の製品の版に合った Benchmark を
-cisecurity.org から取る（Docker / Kubernetes / PostgreSQL / 各クラウドの版がある）。
-**製品の版ごとに別の Benchmark**なので、対象の版を先に確かめる。Level 1 が基本、Level 2 が
-より厳しい設定で、**全部を適用するものではない**（可用性や運用と衝突する項目がある）。
+この資料は「AI で素早く作った構成で実際に空く穴」に絞ってある。設定項目を漏れなく見る必要があるとき（取引先が CIS 準拠を求めたときなど）は、
+対象の製品の版に合った CIS Benchmark を使う（Level 1 が基本で、全部を適用するものではない）。
 
 ---
 
@@ -29,21 +26,10 @@ cisecurity.org から取る（Docker / Kubernetes / PostgreSQL / 各クラウド
 
 **最初にこれを確定させる。** インフラの一部だけがコードにあり、残りは手作業、という状態が多い。
 
-```bash
-# 定義ファイルの所在
-find . \( -name 'Dockerfile*' -o -name 'docker-compose*.y*ml' -o -name 'compose*.y*ml' -o -name '*.tf' \
-       -o -name '*.tfvars' -o -name '*.bicep' -o -name 'serverless.y*ml' -o -name 'template.y*ml' \
-       -o -name 'wrangler.toml' -o -name 'wrangler.json*' -o -name 'sst.config.*' \
-       -o -name 'Chart.yaml' -o -name 'cdk.json' -o -name 'Pulumi.yaml' \
-       -o -name 'render.yaml' -o -name 'fly.toml' -o -name 'app.yaml' -o -name 'netlify.toml' -o -name 'vercel.json' \) \
-  -not -path '*/node_modules/*' -not -path '*/.git/*' | head -30
-```
+定義ファイルの所在は、上の表の名前で探す（`find . -name 'Dockerfile*' -o -name '*.tf' …`）。
 
-**コードに無い部分は、実機確認に回す**（03）。ここを曖昧にすると、
-「コードを読んだから設定も見た」という誤解が報告書に残る。
-
-**コードと実機がずれていることもある。** 手で変えた設定は、次の適用で戻る。
-**適用の履歴が追えるか**（実行ログ、`terraform plan` の差分）を聞いておく。
+**コードに無い部分は、実機確認（03）で確かめる。** ここを曖昧にすると、「コードを読んだから設定も見た」という誤解が報告書に残る。
+コードと実機がずれていることもあるので、**適用の履歴が追えるか**（実行ログ、`terraform plan` の差分）を聞いておく。
 
 ---
 
@@ -51,20 +37,15 @@ find . \( -name 'Dockerfile*' -o -name 'docker-compose*.y*ml' -o -name 'compose*
 
 ### 2-1. 実行時の権限
 
-```bash
-grep -nE '^USER|privileged|--privileged|cap_add|securityContext' \
-  Dockerfile* docker-compose*.y*ml 2>/dev/null
-```
-
-- **`USER` の指定が無ければ root で動く。** 侵入されたときに、コンテナ内で何でもできる
-- `privileged: true` や広い `cap_add` があれば、ホスト側まで到達しうる
-- ホストのソケットやディレクトリを渡していないか（`/var/run/docker.sock` は特に危険）
+- **`USER` の指定が無ければ root で動く。** 侵入されたときに、コンテナ内で何でもできる。直し方は、最終段に `USER node` などの一般の利用者を書くこと
+- `privileged: true`・広い `cap_add`・ホストのソケットやディレクトリ（特に `/var/run/docker.sock`）を渡していれば、ホスト側まで到達しうる
 - **DB やキャッシュのポートを外へ公開していないか。** compose の `ports:` に `"5432:5432"` のように**待ち受けるアドレス無しで**
   書くと、ホストのすべてのインターフェースで待ち受け、サーバーが公開されていればインターネットから届く。
   Docker が公開したポートは、ホストの防火壁（ufw など）の規則より先に通されることがあるので、「ufw で閉じている」を根拠にしない。
-  コンテナ同士の通信だけなら `ports:` は要らない。ホストから使うだけなら `"127.0.0.1:5432:5432"` と書く
+  直し方は、コンテナ同士の通信だけなら `ports:` を消すこと。ホストから使うだけなら `"127.0.0.1:5432:5432"` と書く
 
 ```bash
+grep -nE '^USER|privileged|cap_add|docker\.sock' Dockerfile* *compose*.y*ml 2>/dev/null
 # 待ち受けるアドレスを書かずに公開しているポート（DB・キャッシュ・検索の既定のポートを先に見る）
 grep -nE '^[[:space:]]*-[[:space:]]*"?[0-9]+:[0-9]+' docker-compose*.y*ml compose*.y*ml 2>/dev/null
 grep -nE '"?(5432|3306|6379|27017|9200|11211):' docker-compose*.y*ml compose*.y*ml 2>/dev/null | grep -v '127\.0\.0\.1:'
@@ -72,49 +53,28 @@ grep -nE '"?(5432|3306|6379|27017|9200|11211):' docker-compose*.y*ml compose*.y*
 
 ### 2-2. イメージに焼き込まれたもの
 
-**`ARG` と `ENV` に秘密情報を渡していないか。** ビルド引数はイメージの履歴に残る。
-`docker history` で読める。**「ビルド時だけだから消える」は成り立たない。**
+**`ARG` と `ENV` に秘密情報を渡していないか。** ビルド引数はイメージの履歴に残り、`docker history` で読める。
 
 ```bash
 grep -nE 'ARG .*(KEY|SECRET|TOKEN|PASSWORD)|ENV .*(KEY|SECRET|TOKEN|PASSWORD)' Dockerfile* 2>/dev/null
 # 秘密らしいファイルを入れる行と消す行（後の RUN で消していれば、入れた層に残る）
-grep -nE '^(COPY|ADD|RUN).*(\.env|\.npmrc|\.pypirc|\.netrc|id_rsa|\.pem|\.key|credentials)' Dockerfile* 2>/dev/null
-# 定義ファイルに平文で書いた秘密情報（compose の environment:、terraform.tfvars、K8s の ConfigMap）。
-# 名前と行番号だけを出し、値は画面に出さない
-grep -rnoiE '^[[:space:]]*-?[[:space:]]*"?[A-Za-z0-9_]*(KEY|SECRET|TOKEN|PASSWORD|PASSWD)[A-Za-z0-9_]*"?[[:space:]]*[:=]' \
-  --include='docker-compose*.y*ml' --include='compose*.y*ml' --include='*.tfvars' --include='*.yaml' --include='*.yml' . 2>/dev/null \
-  | grep -v node_modules | head -20
-# .dockerignore が無ければ .env や .git がイメージに入る
+grep -nE '^(COPY|ADD|RUN).*(\.env|\.npmrc|\.netrc|id_rsa|\.pem|\.key|credentials)' Dockerfile* 2>/dev/null
 ls -la .dockerignore 2>/dev/null || echo "  .dockerignore が無い"
 ```
 
 - **compose の `environment:`、`terraform.tfvars`、K8s の `ConfigMap` に書いた値は平文で、リポジトリにある。**
-  値が `${DB_PASSWORD}` のような参照なら問題ない。値そのものが書かれていれば、秘密情報の入れ替え（`references/05-remediation-plan.md`）の対象になる。
-  `ConfigMap` は秘密情報を置く場所ではなく、`Secret` も暗号化ではない（4 節）
-- **`.dockerignore` が無い**と、`.env`・`.git`・鍵ファイルがそのまま入る。
-  `.git` が入れば、履歴に残った秘密情報も一緒に配布される（C-2 と同じ話になる）
+  値が `${DB_PASSWORD}` のような参照なら問題ない。値そのものが書かれていれば、秘密情報の入れ替え（`references/05-remediation-plan.md`）の対象になる
+- **`.dockerignore` が無い**と、`.env`・`.git`・鍵ファイルがそのまま入る（`.git` が入れば履歴の秘密情報も配布される。C-2）
 - **秘密のファイルを `COPY`・`ADD` で入れてから、後の `RUN` で消していないか。** 命令ごとに層ができ、後の層の削除は
-  前の層の中身を消さない（OCI のイメージの仕様では、削除は上の層に置く印（whiteout）で隠すだけ）。イメージを取れば、入れた層から読める。
-  別の `RUN` で書き出してから消すのも同じ。**同じ `RUN` の中で書き出して消す**か、`RUN --mount=type=secret` で渡せば層に残らない
-  （Docker の公式の資料は、ビルドの秘密を `ARG`・`ENV` で渡さず、秘密のマウントを使うよう求めている）。
-  多段ビルドの前の段で入れて消したものは、配るイメージには入らない（ビルドのキャッシュと前の段のイメージには残る）
-- マルチステージビルドを使っていれば、最終段に開発用の道具が残っていないか
+  前の層の中身を消さない。イメージを取れば、入れた層から読める。直し方は、`RUN --mount=type=secret` で渡すこと
+  （同じ `RUN` の中で書き出して消しても層に残らない）。多段ビルドの前の段で入れて消したものは、配るイメージには入らない
 
 ### 2-3. ベースイメージ
 
-- **版が固定されているか。** `:latest` は、ビルドのたびに中身が変わる。
-  何を監査したのかが言えなくなる（`references/10-dependencies.md` のロックファイルと同じ話）。
-  **版のタグも差し替えられる**（2026-03 に、公式のセキュリティツールのイメージの既存タグが悪性版に
-  置き換えられた）。確実なのは `FROM image@sha256:…` のダイジェスト固定
-- ビルドの中で依存を入れるとき、`npm ci --ignore-scripts` などで**インストール時のスクリプトを止めているか**。
-  `.npmrc` や `ARG NPM_TOKEN` でトークンをイメージに持ち込んでいないか
-- 由来が確かなイメージか。個人が公開しているものを土台にしていないか
-- 更新の仕組みがあるか。**ベースイメージの脆弱性は、アプリを直さなくても増える**
-
-```bash
-grep -nE '^FROM' Dockerfile* 2>/dev/null | grep -v '@sha256:'
-grep -nE 'npm (install|ci)|COPY .*\.npmrc|ARG .*TOKEN' Dockerfile* 2>/dev/null
-```
+- **版が固定されているか。** `:latest` はビルドのたびに中身が変わり、何を監査したのかが言えなくなる。
+  タグも差し替えられるので、確実なのは `FROM image@sha256:…` のダイジェスト固定（`grep -nE '^FROM' Dockerfile* | grep -v '@sha256:'`）
+- 由来が確かなイメージか（個人が公開しているものを土台にしていないか）。更新の仕組みがあるか。**ベースイメージの脆弱性は、アプリを直さなくても増える**
+- ビルドの中の依存のインストールは、`references/10-dependencies.md` の 3-1 と同じに見る（インストール時のスクリプト、`.npmrc` のトークン）
 
 ### 2-4. 使われていない・作れない定義
 
@@ -134,76 +94,47 @@ grep -nE 'npm (install|ci)|COPY .*\.npmrc|ARG .*TOKEN' Dockerfile* 2>/dev/null
 ### 3-1. 公開範囲
 
 ```bash
-grep -rnE '0\.0\.0\.0/0|::/0|public|acl.*public-read|allUsers|allAuthenticatedUsers' \
-  --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
-# DB を外から直接つなげる設定と、インスタンスのメタデータの取得の方式
-grep -rnE 'publicly_accessible|PubliclyAccessible|http_tokens|HttpTokens|metadata_options|MetadataOptions' \
-  --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
-# Azure と Google Cloud の公開（DB の防火壁の範囲、受信元、ストレージの公開の可否）
-grep -rnE 'start_ip_address|end_ip_address|source_address_prefix|allow_nested_items_to_be_public|container_access_type|authorized_networks|public_access_prevention' \
-  --include='*.tf' . 2>/dev/null | head -20
+grep -rnE '0\.0\.0\.0/0|::/0|public|allUsers|publicly_accessible|PubliclyAccessible|http_tokens|HttpTokens|start_ip_address|source_address_prefix|authorized_networks|container_access_type|public_access_prevention' \
+  --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | grep -v node_modules | head -30
 ```
 
 - 全開放の受信規則（`0.0.0.0/0`）が、管理用のポート（SSH・RDP）や**DB・キャッシュのポート**
-  （PostgreSQL 5432・MySQL 3306・Redis 6379・MongoDB 27017・Elasticsearch 9200）に付いていないか
+  （PostgreSQL 5432・MySQL 3306・Redis 6379・MongoDB 27017・Elasticsearch 9200）に付いていないか。
+  直し方は、接続元を絞るか、DB を非公開のサブネットに置いてアプリからだけ届くようにすること
 - **RDS などのマネージド DB に `publicly_accessible = true` が付いていないか。** 受信規則と組み合わさると、
-  インターネットから DB へ直接つなげる。Terraform の `aws_db_instance` は書かなければ `false` だが、RDS の API
-  （CloudFormation の `PubliclyAccessible` もこれに従う）は、Aurora でない DB で `DBSubnetGroupName` を指定しないか `default` にすると
-  既定が `true` になる（RDS の `CreateDBInstance` の資料）。**CloudFormation では、書いていないことも確かめる。** `scripts/audit_grep.sh` の
-  17 節は、YAML の `Resources:` の下の字下げと、JSON の `"Resources"` の中の括弧の深さで資源を区切り、`AWS::RDS::DBInstance` の
-  `StorageEncrypted`・`PubliclyAccessible`・`DeletionProtection`、`AWS::EC2::Instance`・`LaunchTemplate` の `HttpTokens` を書いていないものを並べる
-  （Aurora の DB インスタンスは暗号化と削除の保護をクラスタで決めるので数えない。読み取りレプリカとスナップショットからの復元は、暗号化を元から引き継ぐ）
+  インターネットから DB へ直接つなげる。Terraform の `aws_db_instance` は書かなければ `false` だが、CloudFormation（RDS の API）は
+  サブネットグループの指定によって既定が `true` になる。**CloudFormation では、書いていないことも確かめる**（事前の洗い出しの 17 節に、
+  暗号化・公開・削除の保護・メタデータの方式を書いていない資源の候補が出る）
 - **EC2 のインスタンスメタデータを IMDSv2 に限っているか**（Terraform は `metadata_options` の `http_tokens = "required"`、
-  CloudFormation は `MetadataOptions` の `HttpTokens: required`）。指定が無ければ、作成時の既定（AMI やアカウントの設定）に任される。
-  IMDSv1 が残っていると、アプリの SSRF（`references/07-web-vulnerabilities.md` の 5 節）から、インスタンスの資格情報を取られやすくなる
-- ストレージが公開読み取りになっていないか
-- **意図した公開もある**（静的サイトの配信）。用途を確かめてから起票する
-- **既定値は作成時期で違う。** AWS の S3 は 2023-04 以降に作ったバケットだけ、公開ブロックが有効・ACL 無効が既定になった。
-  それより前からあるバケットは変わっていないので、作成日を確かめる。定義に公開ブロックを書いていないこと自体は、今作るバケットでは穴ではない。
-  `BlockPublicAcls: false`（`block_public_acls = false`）のように外している定義と、`AccessControl: PublicRead` は、意図した公開かを確かめる
-- **Azure と Google Cloud も同じ考え方で確かめる**（既定は各プロバイダの資料で確かめたもの）。
-  - Azure の DB の防火壁の規則（`azurerm_mssql_firewall_rule` など）で `start_ip_address = "0.0.0.0"`・`end_ip_address = "255.255.255.255"` なら、
-    すべての IP アドレスから DB へ届く。`0.0.0.0`〜`0.0.0.0` は「Azure のサービスを許可」で、**ほかの利用者の契約のものを含む** Azure のすべての資源から届く（Microsoft の資料）
-  - Azure のネットワークの規則で `source_address_prefix` が `*` か `Internet` の受信の許可は、`0.0.0.0/0` と同じ
-  - `azurerm_storage_account` の `allow_nested_items_to_be_public` は、azurerm 4.x までは既定が `true`（中のコンテナを匿名の公開にできる）、
-    5.x からは `false`。書いていなければ、使っているプロバイダの版を確かめる。コンテナの `container_access_type` が `blob` か `container` なら匿名で読める
-  - Google Cloud の SQL の `authorized_networks` に `0.0.0.0/0` があれば、すべての IP アドレスから DB へ届く。ファイアウォールの `source_ranges` も同じ
-  - `google_storage_bucket` の `public_access_prevention` は既定が `inherited` で、組織のポリシーで強制していなければ、中のものを
-    `allUsers` に公開できる。`enforced` にしているかを確かめる
-  - Azure Storage と Google Cloud は保管データを常に暗号化する（各社の資料）。暗号化の書き漏れは、AWS の RDS のような穴にならない
+  CloudFormation は `MetadataOptions` の `HttpTokens: required`）。指定が無ければ作成時の既定に任される。IMDSv1 が残っていると、
+  アプリの SSRF（`references/07-web-vulnerabilities.md` の 5 節）からインスタンスの資格情報を取られやすくなる
+- ストレージが公開読み取りになっていないか（`block_public_acls = false`、`AccessControl: PublicRead` など）。**意図した公開もある**（静的サイトの配信）ので、
+  用途を確かめてから起票する。既定値は作成時期とプロバイダの版で違う（S3 は古いバケットなら作成日を確かめる）
+- **Azure と Google Cloud も同じ考え方で確かめる。** DB の防火壁の範囲（Azure の `start_ip_address = "0.0.0.0"`・`end_ip_address = "255.255.255.255"`、
+  Google Cloud の SQL の `authorized_networks` の `0.0.0.0/0`）、受信の規則（`source_address_prefix` が `*` か `Internet`）、
+  ストレージの匿名の公開（`container_access_type` が `blob` か `container`、`public_access_prevention` が `enforced` でない）を見る。
+  Azure の `0.0.0.0`〜`0.0.0.0` は「Azure のサービスを許可」で、ほかの契約者の資源からも届く。既定はプロバイダの版で変わるので、使っている版の資料で確かめる
 
 ### 3-2. 権限の広さ
 
 ```bash
-# JSON の "Action": "*" と配列の ["*"]、Terraform の actions = ["*"]、サービス単位の "s3:*"、
-# 「これ以外すべて」を許す NotAction、ロールを渡せる iam:PassRole
-grep -rniE \
-  -e '"?(Action|Resource|actions|resources)"?[[:space:]]*[:=][[:space:]]*\[?[[:space:]]*"\*"' \
-  -e '"[a-z0-9-]+:\*"' -e 'NotAction|not_actions' -e 'iam:PassRole' -e 'roles/(owner|editor)|AdministratorAccess' \
+# "Action": "*"・actions = ["*"]・サービス単位の "s3:*"・NotAction・iam:PassRole・管理者のロール
+grep -rniE -e '"?(Action|Resource|actions|resources)"?[[:space:]]*[:=][[:space:]]*\[?[[:space:]]*"\*"' \
+  -e '"[a-z0-9-]+:\*"|NotAction|not_actions|iam:PassRole|roles/(owner|editor)|AdministratorAccess' \
   --include='*.tf' --include='*.json' --include='*.y*ml' --include='*.ts' . 2>/dev/null | grep -v node_modules | head -20
 ```
 
-**並びを複数行に分けて書くと（`Action = [` の次の行に `"s3:*",`、YAML の `Action:` の次の行に `- "s3:*"`）、上の 1 行の検索では拾えない。**
-`scripts/audit_grep.sh` の 17 節は並びの中まで見る。手で探すときは、`Action`・`Resource` の並びを開いて読む。
+並びを複数行に分けて書くと上の 1 行の検索では拾えないので、`Action`・`Resource` の並びを開いて読む。
 
-**`*` の権限は、その資格情報が漏れたときの被害範囲そのものになる。** `"s3:*"` のようなサービス単位の `*` も、
-そのサービスの中では同じ。`NotAction` は「列挙したもの以外すべて」を許すので、`*` と同じ重さで読む。
-`iam:PassRole` を `Resource: "*"` で持つ資格情報は、より強いロールを別の資源に渡して、その権限で動かせる。
-CI に渡している資格情報が広い権限を持っていれば、`references/10-dependencies.md` の
-3-3 と合わせて重い指摘になる。
+**`*` の権限は、その資格情報が漏れたときの被害範囲そのものになる。** サービス単位の `"s3:*"` も、「列挙したもの以外すべて」を許す
+`NotAction` も同じ重さで読む。`iam:PassRole` を `Resource: "*"` で持てば、より強いロールを別の資源に渡して動かせる。CI に渡す資格情報なら
+`references/10-dependencies.md` の 3-3 と合わせて重い指摘になる。直し方は、使う操作（`s3:GetObject` など）と対象の資源の ARN を列挙すること。
 
 ### 3-3. 暗号化とログ
 
-- 保管データの暗号化が有効になっているか（既定で無効な資源がある）。**Terraform の `aws_db_instance` の `storage_encrypted` は
-  書かなければ `false`**（`aws_rds_cluster` も `provisioned` では `false`、`serverless` では `true`）。RDS の API も既定は暗号化しない。
-  **CloudFormation の `AWS::RDS::DBInstance` の `StorageEncrypted` も、書かなければ暗号化しない**（CloudFormation の資料）。
-  暗号化は作ったあとで切り替えられず、スナップショットからの作り直しになる
-
-```bash
-grep -rnE 'storage_encrypted|StorageEncrypted|kms_key_id|KmsKeyId' --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
-```
-- 監査ログ・アクセスログが有効か。**無効なら、事故のときに何も分からない**（02 の G 節）
-- ログの保存期間が決まっているか
+- 保管データの暗号化が有効になっているか。**RDS は Terraform（`storage_encrypted`）でも CloudFormation（`StorageEncrypted`）でも、
+  書かなければ暗号化しない。** 作ったあとで切り替えられず、スナップショットからの作り直しになる（Azure Storage と Google Cloud は常に暗号化する）
+- 監査ログ・アクセスログが有効で、保存期間が決まっているか。**無効なら、事故のときに何も分からない**（02 の G 節）
 
 ### 3-4. 状態ファイル
 
@@ -215,85 +146,58 @@ grep -rn 'backend "' --include='*.tf' . 2>/dev/null | head
 git log --all --oneline -- '*.tfstate' 2>/dev/null | head
 ```
 
-- リポジトリに入っていないか。**履歴に一度でも入っていれば、その鍵は失効が要る**
-- 遠隔に置いている場合、そのバケットが暗号化・非公開になっているか
+- リポジトリに入っていないか（**履歴に一度でも入っていれば、その中の秘密情報は失効させる必要がある**）。遠隔に置くなら、そのバケットが暗号化・非公開か
+- 直し方は、`*.tfstate*` を `.gitignore` に入れ、暗号化した非公開のバケットを `backend` に指定し、中にあった秘密情報を入れ替えること
 
 ### 3-5. 消失への備え
 
-**定義ファイルで管理している資源は、`terraform destroy` や定義の書き換え 1 回で消える。** 本番の DB が、
-消されないように作られているかを見る。
+**定義ファイルで管理している資源は、`terraform destroy` や定義の書き換え 1 回で消える。** 本番の DB が消されないように作られているかを見る。
 
 ```bash
-grep -rnE 'backup_retention_period|skip_final_snapshot|deletion_protection|DeletionProtection|DeletionPolicy|prevent_destroy|deletion_window_in_days|BackupRetentionPeriod' \
+grep -rnE 'backup_retention_period|BackupRetentionPeriod|skip_final_snapshot|deletion_protection|DeletionProtection|DeletionPolicy|prevent_destroy' \
   --include='*.tf' --include='*.y*ml' --include='*.json' . 2>/dev/null | head -20
 ```
 
-- `backup_retention_period = 0`（`BackupRetentionPeriod: 0`）なら、自動バックアップが取られていない。
-  **書いていないときの値は資料で食い違う**（Terraform の AWS プロバイダの資料は `aws_db_instance` の既定を `0`、RDS の API の資料は `1` と書く）。
-  書いていなければ、実機の保存期間を確かめる
-- `skip_final_snapshot = true` なら、削除のときに最後のスナップショットを残さない
-- `deletion_protection` が無いか `false` なら、削除の操作がそのまま通る。Terraform の `lifecycle { prevent_destroy = true }`、
-  CloudFormation の `DeletionPolicy: Retain` / `Snapshot` も同じ役割
-- 暗号化に使う KMS の鍵を消すと、その鍵で暗号化したデータは読めなくなる。鍵の削除の待機期間（`deletion_window_in_days`）と、
-  鍵を消せる権限を誰が持っているか
+- `backup_retention_period = 0` なら自動バックアップが無い（書いていなければ実機の保存期間を確かめる）。`skip_final_snapshot = true` なら、削除のときに最後のスナップショットを残さない
+- `deletion_protection` が無いか `false` なら、削除の操作がそのまま通る。直し方は `deletion_protection = true` と `lifecycle { prevent_destroy = true }`（CloudFormation は `DeletionPolicy: Retain`）
 - **バックアップが同じアカウントの中にしか無いか。** アカウントの資格情報が漏れれば、バックアップも一緒に消せる。
-  復元を試したことがあるかは依頼者に聞く（`references/03-runtime-verification.md` の 4 節の「復元を一度でも試したことがあるか」）
+  復元を試したことがあるかは依頼者に聞く（`references/03-runtime-verification.md` の 4 節）
 
 ---
 
 ## 4. Kubernetes
 
-該当する構成のときだけ見る。
+該当する構成のときだけ見る。小〜中規模のアプリで実際に空くのは、次の形が多い。
 
-- **`Secret` は base64 であって暗号化ではない。** マニフェストがリポジトリにあれば、
-  そこに書かれた値は平文と同じ扱いになる
-- `securityContext` — root で動いていないか、特権が付いていないか
-- **`hostNetwork: true`・`hostPID: true`・`hostIPC: true`・`hostPath` のボリュームが無いか。** ホストのネットワーク・プロセス・
-  共有メモリ・ファイルにポッドから届く。どれも Pod Security Standards の Baseline が禁じている。ログ収集などの基盤の部品以外で
-  使っていれば、その理由を確かめる
-- **`hostPath` でコンテナの実行環境のソケット（`/var/run/docker.sock`・`containerd.sock`）を渡していないか。** ソケットを持つポッドは、
-  ホストで任意のコンテナを動かせる（2-1 の compose の `docker.sock` と同じ）
-- **`automountServiceAccountToken` を `false` にしているか。** 既定ではポッドに API の資格情報が置かれ、
-  ポッドが侵されると、そのサービスアカウントの権限でクラスタを操作される。API を呼ばないポッドには要らない
-- **`NetworkPolicy` があるか。** 無ければ、どのポッドからどのポッドへも通る
-- **Ingress に `tls:` の指定があるか。** 無ければ、外から平文の HTTP で届く
-- **Service の `type: NodePort` が意図したものか。** すべてのノードの IP の固定のポート（既定は 30000〜32767）で受ける。
-  ノードが外から届く場所にあれば、Ingress や認証を通らずにサービスへ届く
-- **RBAC の広さ。** `cluster-admin` を付与していないか（Kubernetes の公式の資料は、特に必要な場合を除いて使わないよう求めている）。
-  `verbs`・`resources` に `"*"` を書いていないか。`*` は今ある資源だけでなく、**後から増える資源の種類にも届く**
-- リソース制限（`limits`）があるか。無ければ 1 つのポッドで全体が落ちる。名前空間に `LimitRange` があれば、
-  書いていないコンテナに既定の上限が入る。Helm のテンプレートで値を差し込む書き方は、`values.yaml` まで読む
-- **Helm のチャートは、`values.yaml` の既定で権限が決まる。** テンプレートが `privileged: {{ .Values.securityContext.privileged }}` や
-  `{{- toYaml .Values.securityContext | nindent 12 }}` のように値を差し込んでいると、マニフェストの行を読んでも値は分からない。
-  `values.yaml` の既定に `privileged: true`・`hostNetwork: true`・`runAsUser: 0` などがあれば、上書きせずに入れた環境ではそのまま動く。
-  `scripts/audit_grep.sh` の 17 節は、テンプレートが参照する `.Values.…`（とその下の階層）と `values.yaml` の既定を突き合わせて並べる。
-  実際に入れるときの `-f`・`--set`・helmfile の値で上書きしていれば、そちらで決まるので、配備の手順の値も確かめる
+- **`Secret` は base64 であって暗号化ではない。** マニフェストがリポジトリにあれば、そこに書かれた値は平文と同じ扱いになる
+- ホストへ届く設定（`privileged: true`、`hostNetwork`・`hostPID`・`hostIPC`、`hostPath`、特にコンテナの実行環境のソケット）が、
+  ログ収集などの基盤の部品以外に付いていないか。root で動いていないか
+- 外からの入口が意図どおりか（Ingress に `tls:` があるか、`type: NodePort` で認証を通らずに届かないか）。`NetworkPolicy` が無ければどのポッドへも通る
+- RBAC に `cluster-admin` や `verbs`・`resources` の `"*"` を付けていないか。API を呼ばないポッドは `automountServiceAccountToken: false` にする
+- **Helm のチャートは、`values.yaml` の既定で権限が決まる。** テンプレートが値を差し込んでいれば、`values.yaml` の既定と、
+  配備の手順で上書きする値（`-f`・`--set`）まで読む
 
 ```bash
-# コメントの行を除いて、ホストへ届く設定と RBAC の広さを見る
 grep -rnE '^[[:space:]]*(hostPID|hostIPC|hostNetwork|privileged):[[:space:]]*true|hostPath:|\.sock|cluster-admin|type:[[:space:]]*NodePort' \
   --include='*.y*ml' . 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#' | grep -v node_modules | head -30
-grep -rnE -A3 '^[[:space:]]*-?[[:space:]]*(verbs|resources):' --include='*.y*ml' . 2>/dev/null | grep -F '"*"' | head
 ```
 
 ---
 
 ## 5. サーバーレスの定義
 
-`serverless.yml` / SAM / `wrangler.toml` / `wrangler.json*` / SST などがある場合。
-PaaS の定義（`render.yaml`・`fly.toml`・`app.yaml`・`netlify.toml`・`vercel.json`）も、環境変数の直書きと、
-公開するサービスと内部だけのサービスの分け方をここで見る。応答ヘッダやリダイレクトの設定は `references/07-web-vulnerabilities.md` の 4 節・7 節と突き合わせる。
+PaaS の定義（`render.yaml`・`fly.toml`・`app.yaml`・`netlify.toml`・`vercel.json`）も、環境変数の直書きと公開・内部のサービスの分け方をここで見る
+（応答ヘッダやリダイレクトの設定は `references/07-web-vulnerabilities.md` の 4 節・7 節）。
 
 - **関数ごとの権限が分かれているか。** 全関数に同じ広い権限を渡していないか
 - 環境変数に秘密情報を直書きしていないか（**定義ファイルはリポジトリにある**）
 - 公開する関数と、内部からのみ呼ぶ関数が分かれているか。**AWS Lambda の Function URL で `AuthType: NONE` は
-  認証なしの公開**で、関数の中で認証していなければ誰でも呼べる
+  認証なしの公開**で、関数の中で認証していなければ誰でも呼べる。直し方は、内部から呼ぶだけなら `AWS_IAM` にすること。
+  公開が必要なら、関数の冒頭でトークンや署名を検証する
 - タイムアウトと同時実行数の上限。**無制限なら、費用が青天井になる**（02 の F 節）
 
 ```bash
-# 認証なしで公開される関数の URL（SAM / CloudFormation / CDK / Terraform / Serverless Framework / Firebase）。
-# Firebase の HTTP 関数は invoker を書かなければ公開になるので、明示の public だけでなく onRequest / onCall も数え、
-# 関数の中で認証しているかを読む
+# 認証なしで公開される関数の URL。Firebase の HTTP 関数は既定で公開なので、onRequest / onCall も数えて関数の中の認証を読む
 grep -rnE 'AuthType.*NONE|authType:.*NONE|FunctionUrlAuthType|authorization_type[[:space:]]*=[[:space:]]*"NONE"|aws_lambda_function_url|^[[:space:]]*url:[[:space:]]*true|invoker:[[:space:]]*.?public|https\.onRequest\(|https\.onCall\(|onRequest\(|onCall\(' \
   --include='*.y*ml' --include='*.ts' --include='*.json' --include='*.tf' . 2>/dev/null | grep -v node_modules
 ```
@@ -302,22 +206,34 @@ grep -rnE 'AuthType.*NONE|authType:.*NONE|FunctionUrlAuthType|authorization_type
 
 ## 6. マネージド構成の場合
 
-**この資料の出番はほとんど無い。** 設定は管理画面にあり、コードには現れない。
-**ただし `.github/workflows/` は例外。** CI の定義は秘密情報と本番への権限を持つインフラの定義で、
-マネージド構成でもリポジトリにある。`references/10-dependencies.md` の 3-3 で見る。
-`references/03-runtime-verification.md` の 5〜8 節（ネットワーク、鍵、環境の分離、
-エッジ・WAF）で実機を見る。
+**この資料の出番はほとんど無い。** `references/03-runtime-verification.md` の 5〜8 節（ネットワーク、鍵、環境の分離、エッジ・WAF）で実機を見る。
+`.github/workflows/` はマネージド構成でもリポジトリにあるインフラの定義で、`references/10-dependencies.md` の 3-3 で見る。
+**「IaC が無いこと」自体は指摘ではない。** 指摘になるのは、**誰が何を変えたか分からない**場合で、変更の記録と権限を持つ人を 03 で確かめる。
 
-**「IaC が無いこと」自体は指摘ではない。** 小規模なら管理画面で足りる。
-指摘になるのは、**誰が何を変えたか分からない**場合になる。変更の記録が残るか、
-権限を持つ人が誰かを 03 で確かめる。
+---
+
+## 7. 自前のサーバー（VPS など）に載せている場合
+
+compose と nginx を 1 台のサーバーに置く構成では、ホストそのものが攻撃面になる。ホストの確認（SSH・開いているポート・OS の更新・TLS の終端・バックアップの保存先）は
+`references/03-runtime-verification.md` の 10 節の「自前のサーバー 1 台で動かしている場合」の表で依頼者に頼む。ここでは、リポジトリで読めるものを確かめる。
+
+| 見ること | 問題ありにする形 | 直し方 |
+|---|---|---|
+| compose の `ports:` | DB・管理画面などを `0.0.0.0` で公開している。Docker が公開したポートは防火壁の規則より先に通る（2-1） | 2-1 のとおり `ports:` を消すか `127.0.0.1:` に絞る |
+| nginx の設定 | HTTP のまま中身を返す `server` がある、アプリのポートを直接公開している | 80 番は HTTPS への転送だけにし、アプリは `127.0.0.1` で待ち受ける |
+| 前段の転送 | nginx の後ろのアプリが、`X-Forwarded-For` を無条件に信じて回数制限や IP の判定に使う（02 の F-1） | 信頼する前段の数か IP を指定する（Express の `trust proxy` など） |
+
+```bash
+# nginx の設定（リポジトリにあるもの）。HTTP のまま返す server と、アプリへの転送の設定
+grep -rnE 'listen[[:space:]]+80|return[[:space:]]+30[18]|ssl_protocols|proxy_pass|proxy_set_header|real_ip' \
+  --include='*.conf' --include='Caddyfile' . 2>/dev/null | grep -v node_modules | head -20
+```
 
 ---
 
 ## 指摘の書き方
 
-**インフラの指摘は、コードの指摘より「直すと壊れる」危険が高い。**
-ネットワークを閉じたら本番が止まった、という形が起きる。
+**インフラの指摘は、コードの指摘より「直すと壊れる」危険が高い**（ネットワークを閉じたら本番が止まる）。
 
 ```markdown
 | 事実 | 受信規則に 0.0.0.0/0 が 2 件。うち 1 件は管理用のポート（<path>:<line>） |
