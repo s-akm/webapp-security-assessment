@@ -543,7 +543,7 @@ mutate "網羅表: 答えの viewpoint を見ない" "../tests/eval/coverage.py"
 mutate "網羅表: 失敗した検査も数える" "../tests/eval/coverage.py" "成功した検査だけを観点ごとに数える" \
   's = s.replace("r\"\\s*✓ (audit_grep", "r\"\\s*[✓✗] (audit_grep", 1)'
 mutate "採点: 対照を答えとして数える" "../tests/eval/score.py" "対照は見つけた数の分母に入れない" \
-  's = s.replace("        if it.get(\x27control\x27):\n", "        if False:\n", 1)'
+  's = s.replace("        if it.get(\x27control\x27):\n            status = ", "        if False:\n            status = ", 1)'
 mutate "採点: 広い範囲の指摘も対照に数える" "../tests/eval/score.py" "広い範囲で指した別の指摘は対照の誤検出に数えない" \
   's = s.replace("    return [l for l in matching_locs(item, finding, tol) if span(l)[1] - span(l)[0] <= PRECISE]\n", "    return matching_locs(item, finding, tol)\n", 1)'
 mutate "採点: 対照は 1 行で指したものだけを数える" "../tests/eval/score.py" "狭い範囲で対照を指した問題ありは誤検出に数える" \
