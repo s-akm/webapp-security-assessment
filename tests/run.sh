@@ -3110,7 +3110,9 @@ contains "audit_grep[2i]: 認可のある case は ★ なしで並べる"      
 
 # ★ の一覧。節に散らばった ★ を最後に集め、節の番号を付ける。説明文の ★ は数えない
 contains "audit_grep[★一覧]: 最後に ★ を集めて出す"                "=== ★ の一覧"                   "$SSTAR"
-contains "audit_grep[★一覧]: 節の番号を付ける"                     "[2b.] ★ server.js:6: app.get('/metrics'" "$SSTAR"
+contains "audit_grep[★一覧]: 節の番号を付ける"                     "[2b.] ★ server.js:6:" "$SSTAR"
+# 一覧はコードの行を写さず、場所とスクリプトの注記だけにする（コードの行は各節にある。同じものを二度読ませない）
+absent   "audit_grep[★一覧]: コードの行を一覧に写さない"             "[2b.] ★ server.js:6: app.get" "$SSTAR"
 absent   "audit_grep[★一覧]: 説明文の ★ を数えない"                "★ は、ほぼ確実に"               "$SSTAR"
 if [[ "$(printf '%s\n' "$RTALL" | grep -c '=== ★ の一覧')" == "1" ]] && grep -F '同じ原因のもの' <<<"$(printf '%s\n' "$RTALL" | tail -4)" >/dev/null; then
   ok "audit_grep[★一覧]: 出力の最後に 1 回だけ出す"

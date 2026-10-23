@@ -124,10 +124,18 @@ if [[ -z "${AUDIT_GREP_INNER:-}" ]]; then
     LC_ALL=C awk '
       /^=== / { sec = $2; next }
       index($0, "★") && $0 !~ /※/ && $0 !~ /★ (の|が|は|を)/ {
-        l = $0; sub(/^[ \t]+/, "", l); n++; item[n] = "  [" sec "] " l
+        l = $0; sub(/^[ \t]+/, "", l)
+        # 「場所:行: コード」の行は、場所とスクリプトの注記（← …）だけを残す。コードの行は各節に出ていて、
+        # 一覧で同じものをもう一度読ませると、対象のコードを読む余地を削る
+        if (match(l, /^★ [^ ]+:[0-9]+: /)) {
+          loc = substr(l, 1, RLENGTH - 1); note = ""
+          if (match(l, /  ← .*$/)) note = substr(l, RSTART)
+          l = loc note
+        }
+        n++; item[n] = "  [" sec "] " l
       }
       END {
-        printf "\n=== ★ の一覧（%d 件。1 件ずつ判定して台帳に残す） ===\n", n
+        printf "\n=== ★ の一覧（%d 件。1 件ずつ判定して台帳に残す。コードの行は各節にある） ===\n", n
         if (n == 0) print "  （なし）"
         for (i = 1; i <= n; i++) print item[i]
         print "  ※ 問題あり・問題なし・判断保留のどれかにし、問題なしも理由を「確認の方法」に書く。"
@@ -243,6 +251,47 @@ hr() { printf '\n=== %s ===\n' "$1"; }
 # 行の頭に文字列を付ける。pfx "$f:" はファイル名に | や & や \ があると壊れ、その行が黙って消える（実測）
 pfx() { local l; while IFS= read -r l || [[ -n "$l" ]]; do printf '%s%s\n' "$1" "$l"; done; }
 show() { local out; out="$(cat)"; if [[ -n "$out" ]]; then printf '%s\n' "$out"; else echo "  （検出なし）"; fi; }
+# 2・2b 節のファイルごとの行のうち、同じディレクトリで「認可の語が 1 つも無い」ファイルが 4 つ以上あれば 1 行にまとめる。
+# 大きなリポジトリでは、この 2 つの節がファイルを 1 行ずつ並べて出力の 2〜3 割を占め、対象のコードを読む余地を削る。
+# 認可の語があるファイルと、数の合わないファイル（定義 N / ガード M で M > 0）は 1 行ずつ残す
+collapse_dirs() {
+  # 並び順（grep と rg で違う）によらず、ディレクトリと状態の組でまとめる。まとめた行は、その組が最初に出た位置に置き、
+  # ファイル名は名前の順に並べる
+  LC_ALL=C awk '
+    {
+      line[NR] = $0; key[NR] = ""; kind = ""; num = 0
+      if ($0 ~ /^  [^ ]+ +← ガード検出なし/) {
+        kind = "ガード検出なし"; label = "定義"
+        if (match($0, /定義 [0-9]+/)) num = substr($0, RSTART + 7, RLENGTH - 7) + 0; else num = 1
+      } else if ($0 ~ /^  [^ ]+ +登録 [0-9]+ \/ 行に認可の語あり 0 \//) {
+        kind = "どの登録の行にも認可の語が無い"; label = "登録"
+        match($0, /登録 [0-9]+/); num = substr($0, RSTART + 7, RLENGTH - 7) + 0
+      }
+      if (kind == "") next
+      path = $1; d = path; sub(/\/[^\/]*$/, "", d); if (d == path) d = "."
+      b = path; sub(/^.*\//, "", b)
+      k = d SUBSEP kind; key[NR] = k
+      if (!(k in cnt)) { kdir[k] = d; kkind[k] = kind; klabel[k] = label }
+      cnt[k]++; sum[k] += num; nm[k, cnt[k]] = b
+    }
+    END {
+      for (i = 1; i <= NR; i++) {
+        k = key[i]
+        if (k == "" || cnt[k] < 4) { print line[i]; continue }
+        if (k in done) continue
+        done[k] = 1
+        # ファイル名を名前の順に並べる（1 つの組は数十件までなので挿入ソートで足りる）
+        for (a = 2; a <= cnt[k]; a++) {
+          v = nm[k, a]; c = a - 1
+          while (c >= 1 && nm[k, c] > v) { nm[k, c + 1] = nm[k, c]; c-- }
+          nm[k, c + 1] = v
+        }
+        names = ""
+        for (a = 1; a <= cnt[k]; a++) names = names (a > 1 ? ", " : "") nm[k, a]
+        printf "  %s/ の %d ファイル ← %s（%s 計 %d）: %s\n", kdir[k], cnt[k], kkind[k], klabel[k], sum[k], names
+      }
+    }'
+}
 
 # 検出した秘密情報の値そのものは出力しない。
 # 「どのファイルの何行目に、どの名前で存在するか」までが分かれば起票できる。
@@ -1053,7 +1102,7 @@ hf_grep -nE "$GUARD" | GUARD_RE="$GUARD" LC_ALL=C awk -v list="$HF_LIST" '
         else printf "  %-46s %s\n", f, g
       }
     }' "$HF_GRD"
-} | show
+} | collapse_dirs | show
 echo "  ※ 「定義 N / ガード M」が出た行は、1 ファイルに複数のハンドラがある。"
 echo "    N と M が違えば、ガードの無いハンドラが混じっている。関数ごとに目で確かめる"
 echo "  ※ ガード名が出ていても、そのハンドラに掛かっているとは限らない。"
@@ -1114,7 +1163,7 @@ if [[ -s "$HF_REG" ]]; then
         f = order[i]; if (!(f in tot)) continue
         printf "  %-46s 登録 %d / 行に認可の語あり %d / なし %d\n", f, tot[f], grd[f] + 0, tot[f] - grd[f]
       }
-    }' "$HF_REG"
+    }' "$HF_REG" | collapse_dirs
   if [[ -s "$HF_LIST.regc" ]]; then
     echo "  --- 認可の語を含む登録が、コメントアウトされている（その認可が外れたまま動いている可能性がある）"
     cat "$HF_LIST.regc"
