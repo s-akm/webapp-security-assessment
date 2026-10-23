@@ -2,6 +2,7 @@
 # 成果物（サマリ・台帳・修正指示書）の質を測る。run-eval.sh が台帳の JSON（指摘の場所と判定）しか測らないのを補う。
 #
 #   tests/eval/deliverable-eval.sh <題材> [--skill-ref <タグ|コミット>] [--no-skill] [--model <評価のモデル>] [--fixer-model <直す役のモデル>] [--record]
+#   tests/eval/deliverable-eval.sh --judge-only <作業場所> [--record]   採点の段だけをやり直す（採点が途中で止まった回など）
 #
 # 3 段で測る。
 #   1. 評価: スキルを置いた claude -p に、成果物を docs/security-assessment/ に作らせる（実機の確認はしない）
@@ -15,7 +16,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVAL="$ROOT/tests/eval"; D="$EVAL/deliverable"
 LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
-MODEL="claude-opus-5-5"; FIXER_MODEL="claude-sonnet-5-5"; SKILL_REF=""; NO_SKILL=0; RECORD=0; TARGET=""
+MODEL="claude-opus-5-5"; FIXER_MODEL="claude-sonnet-5-5"; SKILL_REF=""; NO_SKILL=0; RECORD=0; TARGET=""; JUDGE_ONLY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skill-ref) SKILL_REF="$2"; shift 2 ;;
@@ -23,12 +24,20 @@ while [[ $# -gt 0 ]]; do
     --model) MODEL="$2"; shift 2 ;;
     --fixer-model) FIXER_MODEL="$2"; shift 2 ;;
     --record) RECORD=1; shift ;;
-    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
+    --judge-only) JUDGE_ONLY="$2"; shift 2 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) TARGET="$1"; shift ;;
   esac
 done
-[[ -n "$TARGET" ]] || { sed -n '2,13p' "$0"; exit 2; }
 CLAUDE_BIN="${WSA_CLAUDE_BIN:-claude}"
+if [[ -n "$JUDGE_ONLY" ]]; then
+  # 採点の段だけ。評価と修正の出力（out/・judge/）が残っている作業場所を渡す
+  WORK="$(cd "$JUDGE_ONLY" && pwd)"; OUT="$WORK/out"; J="$WORK/judge"
+  [[ -f "$J/fix.diff" && -d "$J/deliverables" ]] || { echo "採点の材料（$J の fix.diff と deliverables/）が無い" >&2; exit 2; }
+  TARGET="$(head -1 "$OUT/target")"
+  [[ -f "$OUT/judge.jsonl" ]] && mv "$OUT/judge.jsonl" "$OUT/judge-前回-$(date +%H%M%S).jsonl"
+else
+[[ -n "$TARGET" ]] || { sed -n '2,14p' "$0"; exit 2; }
 line="$(grep -v '^#' "$LOCAL/targets.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
 [[ -n "$line" ]] || { echo "題材 $TARGET が targets.tsv に無い" >&2; exit 2; }
 [[ -z "$(printf '%s' "$line" | cut -f7)" ]] || { echo "当てるディレクトリ（7 列目）を持つ題材には対応していない" >&2; exit 2; }
@@ -105,6 +114,7 @@ r=[json.loads(l) for l in open(sys.argv[1], encoding="utf-8") if l.startswith("{
 r=[e for e in r if e.get("type")=="result"]
 open(sys.argv[2],"w",encoding="utf-8").write((r[-1].get("result") or "") if r else "（報告なし）")' "$OUT/fix.jsonl" "$J/fixer-report.txt" || true
 ( cd "$J" && diff -ruN -x docs orig fix > fix.diff ) || true
+fi
 
 # 4. 採点
 echo "3/3 採点（モデル ${MODEL}）"
@@ -125,6 +135,9 @@ cost = sum((result(os.path.join(out, f)).get('total_cost_usd') or 0) for f in ('
 jr = result(os.path.join(out, 'judge.jsonl')).get('structured_output')
 if not jr:
     sys.exit('採点の結果が無い。' + os.path.join(out, 'judge.log') + ' を見る')
+# 採点の役が利用の上限などで読み切れなかった回は、数を使わない（--judge-only でやり直す）
+if re.search(r'使用量の上限|利用の上限|usage limit', json.dumps(jr, ensure_ascii=False)):
+    sys.exit('採点が途中で止まった（上限に触れている）。記録しない。--judge-only ' + os.path.dirname(out) + ' でやり直す')
 answers = json.load(open(os.path.join(j, 'answers.json'), encoding='utf-8'))
 in_ids = {it['id'] for it in answers.get('items') or [] if it.get('scope', 'in') == 'in' and not it.get('control')}
 ctl_ids = {it['id'] for it in answers.get('items') or [] if it.get('scope', 'in') == 'in' and it.get('control')}
