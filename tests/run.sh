@@ -3576,6 +3576,14 @@ else ng "eval: 題材ごとの前提を、手元の置き場から指示に差�
 
 if bash -n "$ROOT/tests/eval/run-eval.sh" 2>/dev/null; then ok "eval: run-eval.sh の構文"
 else ng "eval: run-eval.sh の構文"; fi
+for f in deliverable-eval.sh grep-diff.sh; do
+  if bash -n "$ROOT/tests/eval/$f" 2>/dev/null; then ok "eval: $f の構文"
+  else ng "eval: $f の構文"; fi
+done
+for f in reading.py select-targets.py; do
+  if python3 -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read())' "$ROOT/tests/eval/$f" 2>/dev/null; then ok "eval: $f の構文"
+  else ng "eval: $f の構文"; fi
+done
 # 題材の中のエージェント向けの設定を消す手順が残っているか（消さないと、評価の実行中に題材のフックや指示が読み込まれる）
 contains "eval: 題材のエージェント向けの設定を消す"              "for p in .claude CLAUDE.md"     "$(cat "$ROOT/tests/eval/run-eval.sh")"
 if awk '/cp -R "\$SKILL_SRC"/ && !c { c = NR } /cat "\$SKILL_VERSION_FILE" > "\$OUT\/skill_version"/ && !v { v = NR } END { exit !(c && v && c < v) }' "$ROOT/tests/eval/run-eval.sh" \

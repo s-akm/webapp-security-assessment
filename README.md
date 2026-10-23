@@ -50,7 +50,7 @@ build/
   identifying-words.sh  公開してはいけない語の一覧を、手元の非公開のファイルから作る（案件語と、評価の題材の名前）
 .github/        CI（macOS と Linux）、Dependabot、secret scanning の設定
 tests/          スキルを直したときに壊れていないかを見る
-  run.sh        検査本体（1449 件）
+  run.sh        検査本体（1453 件）
   mutations.sh  検査の検査。欠陥を入れて、対応する検査が失敗するかを確かめる（529 件）
   self-audit.sh 配布前の自己監査。上の 2 つに加え、方針の遵守と配布物を見る
   eval/         実地の評価。スキルを教材に当て、見つけた割合と方針の遵守を測る（費用がかかる。CI では実行しない）
@@ -328,8 +328,8 @@ for k in 1 2 3 4; do git worktree add --detach "../wsa-shard$k" HEAD; done
 
 1. 次の 3 つの和集合の題材に、今の HEAD を 1 回ずつ当てる（`./tests/eval/run-eval.sh <題材> --record`。[tests/eval/README.md](tests/eval/README.md)）。
    前の版を同じ条件で当てた回が無い題材は、前の版も `--skill-ref` で当てる
-   - 事前の洗い出しの出力が変わる題材: 前の版と HEAD の `audit_grep.sh` を、前処理済みの写しに当てて差を取る（費用なし）。★ や並ぶ行が変わった題材。見出しと注記だけの差は外す
-   - 変えた資料の節の観点に、答えを持つ題材（網羅表で選ぶ）
+   - 事前の洗い出しの出力が変わる題材: 前の版と HEAD の `audit_grep.sh` を、前処理済みの写しに当てて差を取る（費用なし。`./tests/eval/grep-diff.sh --old <前の版>`）。★ や並ぶ行が変わった題材。見出しと注記だけの差は外す
+   - 変えた資料の節の観点に、答えを持つ題材（網羅表で選ぶ。`./tests/eval/select-targets.py --old <前の版>`）
    - 固定の小さな組（毎回）: GitHub Actions・Supabase の RLS の穴のある版と直した版・Express の医療・Express の EC。判定の決まりを変えたときに、思わぬ所へ効果が及ばないかを見る
 2. `./tests/eval/compare.py` で前の版と比べる。比べる相手は、前の版を同じ条件（許可・指示・前処理・答えの定義・CLI の版）で当てた回。途中で別のモデルに切り替わった回は、同じ条件の回とだけ比べる。
    - 「要再確認」の題材は、今の版をもう 1 回当てる。「劣後」で前の版の回が 1 回だけなら、前の版も 2 回足してから判定する
