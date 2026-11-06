@@ -3,6 +3,7 @@
 #
 #   tests/eval/deliverable-eval.sh <題材> [--skill-ref <タグ|コミット>] [--no-skill] [--model <評価のモデル>] [--fixer-model <直す役のモデル>] [--record]
 #   tests/eval/deliverable-eval.sh --judge-only <作業場所> [--record]   採点の段だけをやり直す（採点が途中で止まった回など）
+#   tests/eval/deliverable-eval.sh <題材> --assess-only [--skill-ref …]  評価の段で止める。成果物をファイルに書く形で、安全上の判定に止められるかを確かめる
 #
 # 3 段で測る。
 #   1. 評価: スキルを置いた claude -p に、成果物を docs/security-assessment/ に作らせる（実機の確認はしない）
@@ -16,7 +17,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EVAL="$ROOT/tests/eval"; D="$EVAL/deliverable"
 LOCAL="${WSA_EVAL_LOCAL:-$EVAL/local}"
-MODEL="claude-opus-5-5"; FIXER_MODEL="claude-sonnet-5-5"; SKILL_REF=""; NO_SKILL=0; RECORD=0; TARGET=""; JUDGE_ONLY=""
+MODEL="claude-opus-5-5"; FIXER_MODEL="claude-sonnet-5-5"; SKILL_REF=""; NO_SKILL=0; RECORD=0; TARGET=""; JUDGE_ONLY=""; ASSESS_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skill-ref) SKILL_REF="$2"; shift 2 ;;
@@ -25,7 +26,8 @@ while [[ $# -gt 0 ]]; do
     --fixer-model) FIXER_MODEL="$2"; shift 2 ;;
     --record) RECORD=1; shift ;;
     --judge-only) JUDGE_ONLY="$2"; shift 2 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    --assess-only) ASSESS_ONLY=1; shift ;;
+    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
     *) TARGET="$1"; shift ;;
   esac
 done
@@ -37,7 +39,7 @@ if [[ -n "$JUDGE_ONLY" ]]; then
   TARGET="$(head -1 "$OUT/target")"
   [[ -f "$OUT/judge.jsonl" ]] && mv "$OUT/judge.jsonl" "$OUT/judge-前回-$(date +%H%M%S).jsonl"
 else
-[[ -n "$TARGET" ]] || { sed -n '2,14p' "$0"; exit 2; }
+[[ -n "$TARGET" ]] || { sed -n '2,15p' "$0"; exit 2; }
 line="$(grep -v '^#' "$LOCAL/targets.tsv" | awk -F'\t' -v t="$TARGET" '$1 == t' | head -1)"
 [[ -n "$line" ]] || { echo "題材 $TARGET が targets.tsv に無い" >&2; exit 2; }
 [[ -z "$(printf '%s' "$line" | cut -f7)" ]] || { echo "当てるディレクトリ（7 列目）を持つ題材には対応していない" >&2; exit 2; }
@@ -55,7 +57,8 @@ cp "$OUT/answers.json" "$J/answers.json"
 
 # 台帳の道具が使う openpyxl。評価の作業場所の外に仮想環境を 1 つ作って使い回す
 BASE="$(dirname "$WORK")"; VENV="$BASE/venv-openpyxl"
-[[ -x "$VENV/bin/python3" ]] || { python3 -m venv "$VENV" && "$VENV/bin/pip" install -q openpyxl; }
+# Python を更新すると仮想環境が残ったまま openpyxl だけ読めなくなる（2026-11 に起きた）ので、読み込みまで確かめて作り直す
+"$VENV/bin/python3" -c 'import openpyxl' 2>/dev/null || { rm -rf "$VENV"; python3 -m venv "$VENV" && "$VENV/bin/pip" install -q openpyxl; }
 export PATH="$VENV/bin:$PATH"
 
 out_real="$(cd "$OUT" && pwd -P)"; j_real="$(cd "$J" && pwd -P)"; src_real="$(cd "$SRC" && pwd -P)"
@@ -81,6 +84,27 @@ echo "1/3 評価（モデル ${MODEL}。数十分かかる）"
     --allowedTools Skill "Bash(bash *audit_grep.sh*)" "Bash(python3 *make_register.py*)" "Bash(bash *scan_secrets.sh*)" "Bash(mkdir *)" \
       "Edit(/$SRC/docs/**)" "Write(/$SRC/docs/**)" "Edit(/$src_real/docs/**)" "Write(/$src_real/docs/**)" \
     --disallowedTools WebFetch WebSearch Agent NotebookEdit "${deny_out[@]}" ) > "$OUT/assess.jsonl" 2> "$OUT/assess.log" || echo "評価が 0 以外で終わった（$OUT/assess.log）"
+# 安全上の判定で止められた回数と、途中で切り替わったモデル。成果物が無いときの原因の切り分けにも使う
+python3 - "$OUT/assess.jsonl" <<'PY'
+import json, sys
+fb, models, res = [], [], {}
+for l in open(sys.argv[1], encoding='utf-8'):
+    try:
+        e = json.loads(l)
+    except ValueError:
+        continue
+    if not isinstance(e, dict):
+        continue
+    if e.get('subtype') == 'model_refusal_fallback':
+        fb.append(e.get('api_refusal_category'))
+    if e.get('type') == 'assistant':
+        m = (e.get('message') or {}).get('model')
+        if m and (not models or models[-1] != m):
+            models.append(m)
+    if e.get('type') == 'result':
+        res = e
+print(f"評価の段: 安全上の判定で止められた {len(fb)} 回{fb or ''}・モデル {'→'.join(models)}・結果 {res.get('subtype')}・{round(res.get('total_cost_usd') or 0, 2)} 米ドル")
+PY
 DELIV="$SRC/docs/security-assessment"
 [[ -f "$DELIV/README.md" ]] || { echo "成果物（$DELIV/README.md）が無い。採点しない。出力: $OUT" >&2; exit 1; }
 mkdir -p "$J/deliverables"; rsync -a "$DELIV/" "$J/deliverables/"
@@ -97,6 +121,12 @@ for p in sorted(glob.glob(os.path.join(sys.argv[1], '**', '*.xlsx'), recursive=T
             if any(cells): out.append('\t'.join(cells).rstrip())
 open(sys.argv[2], 'w', encoding='utf-8').write('\n'.join(out) + '\n')
 PY
+
+if [[ "$ASSESS_ONLY" -eq 1 ]]; then
+  echo "評価の段で止めた。成果物: ${DELIV}"
+  ( cd "$DELIV" && find . -type f | LC_ALL=C sort | xargs wc -c | tail -20 )
+  exit 0
+fi
 
 # 3. 修正（スキルを置かない、依頼者の AI のコーディング支援の役）
 rsync -a "$J/orig/" "$J/fix/"
