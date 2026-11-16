@@ -74,7 +74,7 @@ if [[ "$NO_SKILL" -eq 0 ]]; then
   notes="- webapp-security-assessment スキルに従って評価してください
 - scripts/audit_grep.sh は実行済みで、出力は $WS/evidence/audit-grep.txt にある。実行し直さずに、これを読む
 - スキルの版の確認（scripts/version_check.sh）は済ませてある。置いてある写しの版で進める
-- 台帳の xlsx に値を書くスクリプトは $XW/ に置き、python3 で実行してよい（openpyxl は入っている）。ほかの Python は実行できない"
+- 台帳の xlsx に値を書くスクリプトは $XW/ に置き、python3 で実行してよい（openpyxl は入っている）。スキルの make_register.py と check_remediation.py は、写さずにその場所のまま python3 で実行できる。ほかの Python は実行できない"
 fi
 prompt="$(python3 -c 'import sys
 t = open(sys.argv[1], encoding="utf-8").read()
@@ -92,7 +92,7 @@ echo "1/3 評価（モデル ${MODEL}。数十分かかる）"
 # 安全上の判定で止められた回数と、途中で切り替わったモデル。成果物が無いときの原因の切り分けにも使う
 python3 - "$OUT/assess.jsonl" <<'PY'
 import json, sys
-fb, models, res = [], [], {}
+fb, stopped, models, res = [], 0, [], {}
 for l in open(sys.argv[1], encoding='utf-8'):
     try:
         e = json.loads(l)
@@ -102,19 +102,23 @@ for l in open(sys.argv[1], encoding='utf-8'):
         continue
     if e.get('subtype') == 'model_refusal_fallback':
         fb.append(e.get('api_refusal_category'))
+    # モデルを切り替えずに止めることもある（止めた応答を伝える合成のメッセージが入り、同じモデルで一度だけ続く）
+    if e.get('refused_message_id'):
+        stopped += 1
     if e.get('type') == 'assistant':
         m = (e.get('message') or {}).get('model')
         if m and (not models or models[-1] != m):
             models.append(m)
     if e.get('type') == 'result':
         res = e
-print(f"評価の段: 安全上の判定で止められた {len(fb)} 回{fb or ''}・モデル {'→'.join(models)}・結果 {res.get('subtype')}・{round(res.get('total_cost_usd') or 0, 2)} 米ドル")
+print(f"評価の段: 安全上の判定で止められた {max(stopped, len(fb))} 回（うちモデルを切り替えた {len(fb)} 回{fb or ''}）・モデル {'→'.join(models)}・結果 {res.get('subtype')}・{round(res.get('total_cost_usd') or 0, 2)} 米ドル")
 # 認証切れや上限は、結果が success のまま is_error で返る（2026-11 に認証切れで 8 秒で終わった）
 if res.get('is_error'):
     print(f"評価の段が誤りで終わった: {str(res.get('result'))[:200]}")
+open(sys.argv[1].replace('.jsonl', '-result.txt'), 'w', encoding='utf-8').write(str(res.get('result') or '') + '\n')
 PY
 DELIV="$SRC/docs/security-assessment"
-[[ -f "$DELIV/README.md" ]] || { echo "成果物（$DELIV/README.md）が無い。採点しない。出力: $OUT" >&2; exit 1; }
+[[ -f "$DELIV/README.md" ]] || { echo "成果物（$DELIV/README.md）が無い。採点しない。出力: $OUT" >&2; echo "評価の段の最後の報告（先頭）:" >&2; head -c 1200 "$OUT/assess-result.txt" >&2; exit 1; }
 mkdir -p "$J/deliverables"; rsync -a "$DELIV/" "$J/deliverables/"
 python3 - "$J/deliverables" "$J/deliverables-xlsx.txt" <<'PY'
 import glob, os, sys
