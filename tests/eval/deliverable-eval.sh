@@ -63,6 +63,9 @@ export PATH="$VENV/bin:$PATH"
 
 out_real="$(cd "$OUT" && pwd -P)"; j_real="$(cd "$J" && pwd -P)"; src_real="$(cd "$SRC" && pwd -P)"
 deny_out=("Read(/$OUT/**)" "Read(/$out_real/**)" "Read(/$J/**)" "Read(/$j_real/**)")
+# 台帳の xlsx に値を書くスクリプトの置き場。実際の評価では、評価者が書いたスクリプトを依頼者が許可して実行する。
+# ここではこの置き場のスクリプトだけを Python で実行させる（題材のコードは実行させない）
+XW="$WS/work"; mkdir -p "$XW"; xw_real="$(cd "$XW" && pwd -P)"
 
 # 2. 評価
 premise_file="$LOCAL/$(printf '%s' "$line" | cut -f6)"; [[ -f "$premise_file" && "$premise_file" != "$LOCAL/" ]] || premise_file="$LOCAL/premise/$TARGET.md"
@@ -70,7 +73,8 @@ notes=""
 if [[ "$NO_SKILL" -eq 0 ]]; then
   notes="- webapp-security-assessment スキルに従って評価してください
 - scripts/audit_grep.sh は実行済みで、出力は $WS/evidence/audit-grep.txt にある。実行し直さずに、これを読む
-- スキルの版の確認（scripts/version_check.sh）は済ませてある。置いてある写しの版で進める"
+- スキルの版の確認（scripts/version_check.sh）は済ませてある。置いてある写しの版で進める
+- 台帳の xlsx に値を書くスクリプトは $XW/ に置き、python3 で実行してよい（openpyxl は入っている）。ほかの Python は実行できない"
 fi
 prompt="$(python3 -c 'import sys
 t = open(sys.argv[1], encoding="utf-8").read()
@@ -81,7 +85,8 @@ echo "1/3 評価（モデル ${MODEL}。数十分かかる）"
 ( cd "$SRC" && "$CLAUDE_BIN" -p "$prompt" --output-format stream-json --verbose \
     --setting-sources project --strict-mcp-config --no-session-persistence --max-budget-usd 20 --model "$MODEL" \
     --add-dir "$WS" --permission-mode dontAsk \
-    --allowedTools Skill "Bash(bash *audit_grep.sh*)" "Bash(python3 *make_register.py*)" "Bash(bash *scan_secrets.sh*)" "Bash(mkdir *)" \
+    --allowedTools Skill "Bash(bash *audit_grep.sh*)" "Bash(python3 *make_register.py*)" "Bash(python3 *check_remediation.py*)" "Bash(bash *scan_secrets.sh*)" "Bash(mkdir *)" \
+      "Write(/$XW/**)" "Edit(/$XW/**)" "Write(/$xw_real/**)" "Edit(/$xw_real/**)" "Bash(python3 $XW/*)" "Bash(python3 $xw_real/*)" \
       "Edit(/$SRC/docs/**)" "Write(/$SRC/docs/**)" "Edit(/$src_real/docs/**)" "Write(/$src_real/docs/**)" \
     --disallowedTools WebFetch WebSearch Agent NotebookEdit "${deny_out[@]}" ) > "$OUT/assess.jsonl" 2> "$OUT/assess.log" || echo "評価が 0 以外で終わった（$OUT/assess.log）"
 # 安全上の判定で止められた回数と、途中で切り替わったモデル。成果物が無いときの原因の切り分けにも使う
@@ -104,6 +109,9 @@ for l in open(sys.argv[1], encoding='utf-8'):
     if e.get('type') == 'result':
         res = e
 print(f"評価の段: 安全上の判定で止められた {len(fb)} 回{fb or ''}・モデル {'→'.join(models)}・結果 {res.get('subtype')}・{round(res.get('total_cost_usd') or 0, 2)} 米ドル")
+# 認証切れや上限は、結果が success のまま is_error で返る（2026-11 に認証切れで 8 秒で終わった）
+if res.get('is_error'):
+    print(f"評価の段が誤りで終わった: {str(res.get('result'))[:200]}")
 PY
 DELIV="$SRC/docs/security-assessment"
 [[ -f "$DELIV/README.md" ]] || { echo "成果物（$DELIV/README.md）が無い。採点しない。出力: $OUT" >&2; exit 1; }

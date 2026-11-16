@@ -377,6 +377,16 @@ mutate "make_register: 未確認事項のシートの名前を 7_残る未確認
 mutate "資料: 04 の未確認事項の列から行き先の ID を落とす" "references/04-findings-register.md" "04 の未確認事項の列の表と" \
   's = "\n".join(l for l in s.split("\n") if not l.startswith("| 行き先の ID |"))'
 
+# ---- check_remediation（前提の順番・欄の抜け・答えを待つ一文。05 の「書き終えたら読み直す」）----
+mutate "check_remediation: 「順番:」の行を読まない" "scripts/check_remediation.py" "前提のタスクが「順番:」の並びで後ろにあれば出す" \
+  's = s.replace("if order is None and ORDER_LINE.match(line)", "if False and ORDER_LINE.match(line)")'
+mutate "check_remediation: 欄の抜けを終了コードに数えない" "scripts/check_remediation.py" "検証の欄が無いタスクを出す" \
+  's = s.replace("            no_cols.append(", "            (lambda *_: None)(")'
+mutate "check_remediation: 「着手しない」の一文を確かめない" "scripts/check_remediation.py" "U を前提にする AI のタスクに「着手しない」が無ければ出す" \
+  's = s.replace("if waits and \"AI\" in runner and not any", "if False and not any")'
+mutate "check_remediation: 対象の行番号を外さずに比べる" "scripts/check_remediation.py" "同じファイルを対象にしたタスクの組を出す" \
+  's = s.replace("(?::[0-9][0-9,\\-–〜]*)?`", "`")'
+
 mutate "make_register: ★ の行のコードを台帳に写す" "scripts/make_register.py" "コードの写しを台帳に入れない" \
   's = s.replace("rows.append((sec, f\"{loc.group(1)}:{loc.group(2)}\", None))", "rows.append((sec, f\"{loc.group(1)}:{loc.group(2)}\", rest))")'
 mutate "make_register: ★ の判定の空欄を数えない" "scripts/make_register.py" "整合の確認が ★ の判定の空欄と" \

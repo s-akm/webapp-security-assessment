@@ -2187,6 +2187,133 @@ PYEOF
   contains "carry_check: 今回の台帳に行き先の列が無ければ（古い雛形のまま）そう言う" "  U-1  今回の 未確認事項 に「行き先」の列が無い" "$CC"
 fi
 
+# --- check_remediation.py（書き終えた修正指示書の、前提の順番と欄の抜け。05 の「書き終えたら読み直す」）---
+# 題材は架空の指示書 2 フェーズ。phase-1 の「順番:」の行で S-3 を S-2 より先に置き、S-3 の前提は S-2（後ろにある）。
+# S-4 は前提にタスクに無い S-9 と未確認事項 U-1 を挙げ、実行者が AI なのに「着手しない」の一文が無い。S-5 は検証の欄が無い。
+# S-6 は U-2 を前提にするが「着手しない」の一文がある。S-1 と S-3 は同じファイルを対象にする。S-7 の前提 S-1 は前のフェーズで、正しい
+CR="$TMP/cr/remediation"; mkdir -p "$CR"
+cat > "$CR/phase-0.md" <<'MD'
+# フェーズ 0
+
+## [S-1] 注文の詳細を返すハンドラで、持ち主を照合する
+
+| 項目 | 内容 |
+|---|---|
+| 実行者 | **AI**（コード修正） |
+| 前提 | なし |
+| 対象 | `src/routes/orders.js:40`、`src/lib/auth.js` |
+
+### 完了条件
+- 他人の注文 ID で 404 が返る
+### 手順
+1. 照合を足す
+### 検証
+```bash
+npm test
+```
+MD
+cat > "$CR/phase-1.md" <<'MD'
+# フェーズ 1
+
+順番: S-3 → S-2 → S-4 → S-5 → S-6 → S-7。
+
+## [S-2] 共通の照合の関数を作る
+
+| 実行者 | **AI** |
+|---|---|
+| 前提 | なし |
+
+### 完了条件
+- 関数がある
+### 手順
+1. 作る
+### 検証
+- テストが通る
+
+## [S-3] 管理画面の操作に照合を足す
+
+| 実行者 | **AI** |
+|---|---|
+| 前提 | S-2 の関数 |
+| 対象 | `src/routes/orders.js` |
+
+### 完了条件
+- 照合が入っている
+### 手順
+1. 足す
+### 検証
+- テストが通る
+
+## [S-4] 配送の通知の受け口に署名の確かめを足す
+
+| 実行者 | **AI** |
+|---|---|
+| 前提 | S-9、委託先の回答（U-1） |
+
+### 完了条件
+- 署名の無い通知が 401 になる
+### 手順
+1. 足す
+### 検証
+- テストが通る
+
+## [S-5] 退会の処理で個人情報を消す
+
+| 実行者 | **AI+人** |
+|---|---|
+| 前提 | なし |
+
+### 完了条件
+- 消える
+### 手順
+1. 消す
+
+## [S-6] 提携先の埋め込みの方式を変える
+
+| 実行者 | **AI** |
+|---|---|
+| 前提 | 方針の決定（U-2） |
+
+U-2 の答えが出るまで着手しない。答えが無いときは飛ばして報告する。
+
+### 完了条件
+- 変わっている
+### 手順
+1. 変える
+### 検証
+- テストが通る
+
+## [S-7] 一覧の画面に照合を足す
+
+| 実行者 | **AI** |
+|---|---|
+| 前提 | S-1 |
+
+### 完了条件
+- 入っている
+### 手順
+1. 足す
+### 検証
+- テストが通る
+MD
+RC_OUT="$(python3 "$SKILL/scripts/check_remediation.py" "$CR" 2>&1)"; RC_RC=$?
+if [[ $RC_RC -eq 2 ]]; then ok "check_remediation: 直すものがあれば 2"
+else ng "check_remediation: 直すものがあれば 2" "終了コード $RC_RC: $(tr '\n' ' ' <<<"$RC_OUT" | cut -c1-200)"; fi
+contains "check_remediation: 前提のタスクが「順番:」の並びで後ろにあれば出す" "  S-3（phase-1.md）  前提の S-2（phase-1.md）が後ろにある" "$RC_OUT"
+contains "check_remediation: 前提のタスクが指示書に無ければ出す" "  S-4（phase-1.md）  前提の S-9 が指示書のタスクに無い" "$RC_OUT"
+contains "check_remediation: U を前提にする AI のタスクに「着手しない」が無ければ出す" "  S-4（phase-1.md）  前提に U-1 があるのに" "$RC_OUT"
+contains "check_remediation: 検証の欄が無いタスクを出す" "  S-5（phase-1.md）  検証 の欄が無い" "$RC_OUT"
+absent   "check_remediation: 「着手しない」の一文があるタスクは出さない" "  S-6（" "$RC_OUT"
+absent   "check_remediation: 前のフェーズの前提は順番の誤りにしない" "  S-7（" "$RC_OUT"
+contains "check_remediation: 同じファイルを対象にしたタスクの組を出す（行番号は外して比べる）" "  src/routes/orders.js: S-1・S-3" "$RC_OUT"
+rm -f "$CR/phase-1.md"
+RC_OUT="$(python3 "$SKILL/scripts/check_remediation.py" "$CR" 2>&1)"; RC_RC=$?
+if [[ $RC_RC -eq 0 ]]; then ok "check_remediation: 直すものが無ければ 0"
+else ng "check_remediation: 直すものが無ければ 0" "終了コード $RC_RC: $(tr '\n' ' ' <<<"$RC_OUT" | cut -c1-200)"; fi
+python3 "$SKILL/scripts/check_remediation.py" "$TMP/cr/no-such" >/dev/null 2>&1; RC_RC=$?
+if [[ $RC_RC -eq 1 ]]; then ok "check_remediation: phase のファイルが無ければ 1"
+else ng "check_remediation: phase のファイルが無ければ 1" "終了コード $RC_RC"; fi
+
 # --- recon.sh / browser_probe.mjs は実サイトへ出る。発火台を立てて確かめる ---
 # わざと穴のあるページをローカルで配信し、期待する検出が出るかを見る。外部へは出ない。
 
