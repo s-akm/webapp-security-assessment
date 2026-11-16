@@ -93,6 +93,9 @@ tests/eval/local/
 `--record` で `tests/eval/local/deliverable-history.tsv` に 1 行足す。題材は答えの一覧に穴の中身（`name`）を持つもの、とくにスキルの資料を読まない担当が作った架空のアプリを使う
 （教材は学習済みで、直し方まで覚えている可能性がある）。採点はモデルが行うので揺れる。1 回ずつの差を読まず、同じ題材で数回の平均を比べる。
 
+評価の段は `make_register.py` のほかの Python を許可していないので、台帳の xlsx に値を書けず、台帳は Markdown になる。xlsx の台帳はこの回では測れない。
+採点の揺れの大きさは、同じ成果物の採点し直しで「壊した」が 2 件動いた（`--judge-only` を `--record` なしで実行した 1 回）。作業場所は一時フォルダにあり、OS の掃除で消える。
+
 ```bash
 ./tests/eval/select-targets.py --old <前の版>
 ./tests/eval/grep-diff.sh --old <前の版> [題材...]
