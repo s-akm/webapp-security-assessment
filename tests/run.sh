@@ -3555,6 +3555,15 @@ echo '{"type":"system","subtype":"model_refusal_fallback","original_model":"mA",
 SF="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr.json" --transcript "$TMP/eval-tr-fb.jsonl" 2>&1 || true)"
 contains "eval[採点]: 途中で別のモデルに切り替えた回を、元→切り替え先と記録する" "mA→mB" "$SF"
 absent   "eval[採点]: 切り替えの無い回には切り替えを書かない"   "→" "$(grep '^費用' <<<"$ST")"
+# 台帳を返す出力が止められ、切り替えずに同じモデルが続けた回は「元→止められた」にする（指摘を減らした台帳を返すことがある）。
+# 調べている途中で止められた回は、ふつうの回として数える
+ST_STOP='{"type":"user","refused_message_id":"msg_x","message":{"role":"user","content":[{"type":"text","text":"stopped"}]}}'
+{ cat "$TMP/eval-tr.jsonl"; echo '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"StructuredOutput","input":{}}]}}'; echo "$ST_STOP"; } > "$TMP/eval-tr-st.jsonl"
+{ cat "$TMP/eval-tr.jsonl"; echo "$ST_STOP"; } > "$TMP/eval-tr-st2.jsonl"
+SS="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr.json" --transcript "$TMP/eval-tr-st.jsonl" 2>&1 || true)"
+SS2="$(python3 "$ROOT/tests/eval/score.py" "$TMP/eval-sa.json" "$TMP/eval-sr.json" --transcript "$TMP/eval-tr-st2.jsonl" 2>&1 || true)"
+contains "eval[採点]: 台帳の出力を止められて同じモデルで続けた回を、元→止められたと記録する" "→止められた" "$(grep '^費用' <<<"$SS")"
+absent   "eval[採点]: 調べている途中で止められた回は、ふつうの回として記録する" "→" "$(grep '^費用' <<<"$SS2")"
 
 # 汎用の題材の前処理（prep_anchors.py）。題材ごとの表（アンカー・消すもの・手掛かりの語）は手元に置くので、
 # ここでは架空の題材と表で、答えの行を決められるか・手掛かりのコメントだけを行を保って消せるかを見る
