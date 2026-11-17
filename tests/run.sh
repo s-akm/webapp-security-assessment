@@ -1550,6 +1550,79 @@ else
   absent "make_register: --api（owasp）で一般の Top 10 と両方を並べない" "7_枠組みへの当てはめ" "$M4"
   M5="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$TMP/r-api-none.xlsx" --frameworks none --api 2>&1)"
   contains "make_register: --api（none）で API のシートが 1 枚増える" "シート 8 枚" "$M5"
+  # --rows: Markdown の表で書いた行を取り込む。指摘を 1 回の出力に全部書かず、数件ずつ書き足せるようにするため
+  RW="$TMP/rows"; mkdir -p "$RW"
+  cat > "$RW/a.md" <<'MDEOF'
+表の外の行は読まない
+
+## 指摘事項一覧
+| ID | 判定 | 優先度 | 状態 | 指摘事項 | AI実装(h) | 是正案 |
+|---|---|---|---|---|---|---|
+| S-01 | 問題あり | P1 | 未対応 | 一覧の取得で A \| B の形 | 1.5 | 持ち主で絞る<br>同じ形も直す |
+
+## 未確認事項
+| No | 確認したい情報 | 重要度 | 影響する項目 |
+|---|---|---|---|
+| U-1 | 本番の設定 | 高 | S-01 |
+MDEOF
+  cat > "$RW/b.md" <<'MDEOF'
+## 3_指摘事項一覧
+| ID | 判定 | 優先度 | 状態 | 指摘事項 |
+|---|---|---|---|---|
+| S-02 | 問題あり | P2 | 未対応 | 二つ目 |
+
+## 未確認事項
+| No | 確認したい情報 | 重要度 |
+|---|---|---|
+| U-2 | 二つ目 | 中 |
+| U-3 | 三つ目 | 低 |
+| U-1 | | 中 |
+
+## 総合評価
+| 項目 | 値 |
+|---|---|
+| 対象リビジョン | 0123abc |
+
+| 観点 | 結果 |
+|---|---|
+| 02 A. 認可 | 指摘あり |
+MDEOF
+  RM="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$RW/r.xlsx" --frameworks none --rows "$RW/a.md" "$RW/b.md" 2>&1)"
+  contains "make_register --rows: 取り込んだ行の数を出す" "3_指摘事項一覧: 足した行 2・書き換えた行 0" "$RM"
+  RV="$("$PY_BIN" - "$RW/r.xlsx" <<'PYEOF' 2>&1
+import sys, openpyxl
+wb = openpyxl.load_workbook(sys.argv[1])
+f, u, s = wb["3_指摘事項一覧"], wb["5_未確認事項"], wb["1_総合評価"]
+print("A4", f["A4"].value, "A5", f["A5"].value, "A6", f["A6"].value)
+print("G4", repr(f["G4"].value), "L4", repr(f["L4"].value), "J4", type(f["J4"].value).__name__)
+print("U", [u.cell(row=r, column=1).value for r in range(5, 9)], "C5", u["C5"].value, "E5", u["E5"].value)
+notes = sorted(m.min_row for m in u.merged_cells.ranges if m.min_row > 4)
+print("注記", "重ならない" if notes and notes[0] > 8 else f"重なる {notes}")
+fill = f["A4"].fill.fgColor.rgb if f["A4"].fill.fill_type else ""
+print("例示の網掛け", "残る" if str(fill)[-6:].upper() == "FFFBEA" else "無い")
+obs = [r for r in range(1, s.max_row + 1) if s.cell(row=r, column=1).value == "02 A. 認可"][0]
+print("前提", s["B6"].value, "観点", s.cell(row=obs, column=2).value)
+PYEOF
+)"
+  contains "make_register --rows: 複数のファイルの行を順に足す（例示行を上書きする）" "A4 S-01 A5 S-02 A6 None" "$RV"
+  contains "make_register --rows: \\| を | に、<br> を改行にする" "G4 '一覧の取得で A | B の形' L4 '持ち主で絞る\\n同じ形も直す'" "$RV"
+  contains "make_register --rows: 数字だけのセルは数値で入れる（工数の合計が数える）" "J4 float" "$RV"
+  contains "make_register --rows: No が同じ行は書いた列だけを書き換える" "U ['U-1', 'U-2', 'U-3', None] C5 中 E5 S-01" "$RV"
+  contains "make_register --rows: 注記を入れた行の下へ移す" "注記 重ならない" "$RV"
+  contains "make_register --rows: 例示行の網掛けを外す" "例示の網掛け 無い" "$RV"
+  contains "make_register --rows: 「| 項目 | 値 |」と観点の一覧の表を書ける" "前提 0123abc 観点 指摘あり" "$RV"
+  RF="$("$PY_BIN" "$SKILL/scripts/make_register.py" --finalize "$RW/r.xlsx" "$RW/out.xlsx" 2>&1 || true)"
+  absent "make_register --rows: 取り込んだ表に、仕上げが止める見本の文を残さない" "3_指摘事項一覧!" "$RF"
+  printf '## 指摘事項一覧\n| ID | 判定 |\n|---|---|\n| S-01 | 問題あり | 余り |\n' > "$RW/bad1.md"
+  printf '## 指摘事項一覧\n| ID | 重さ |\n|---|---|\n| S-01 | 高 |\n' > "$RW/bad2.md"
+  printf '## 無いシート\n| ID |\n|---|\n| S-01 |\n' > "$RW/bad3.md"
+  for b in 1 2 3; do
+    BE="$("$PY_BIN" "$SKILL/scripts/make_register.py" "$RW/bad$b.xlsx" --rows "$RW/bad$b.md" 2>&1)"; BRC=$?
+    [[ $BRC -eq 1 && ! -e "$RW/bad$b.xlsx" ]] && ok "make_register --rows: 誤った表（${b}）では台帳を作らず終了コード 1" \
+      || ng "make_register --rows: 誤った表（${b}）では台帳を作らず終了コード 1" "終了コード $BRC"
+    case $b in 1) want="列の数が見出しと違う" ;; 2) want="見出しの行が無い" ;; 3) want="が台帳に無い" ;; esac
+    contains "make_register --rows: 誤った表（${b}）の理由を出す" "$want" "$BE"
+  done
   # 窓枠（pane）の無いシートで、選択範囲が窓枠を指していないこと。openpyxl は枠の固定を外しても選択範囲の pane を残し、
   # Excel が開くたびに「修復されたレコード: … パーツ内のビュー」を出していた（実案件の台帳で、総合評価のシートがこの形だった）。
   # openpyxl で読み直すと見えないので、中の XML を直接読む。生成したすべての組み合わせの台帳で確かめる

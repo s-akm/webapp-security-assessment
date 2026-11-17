@@ -387,6 +387,14 @@ mutate "check_remediation: 「着手しない」の一文を確かめない" "sc
 mutate "check_remediation: 対象の行番号を外さずに比べる" "scripts/check_remediation.py" "同じファイルを対象にしたタスクの組を出す" \
   's = s.replace("(?::[0-9][0-9,\\-–〜]*)?`", "`")'
 
+# ---- make_register --rows（行のファイルを数件ずつ書き足して取り込む。04）----
+mutate "make_register --rows: 例示行を消さない" "scripts/make_register.py" "例示行の網掛けを外す" \
+  's = s.replace("                    if _is_example(ws, r):", "                    if False:")'
+mutate "make_register --rows: セルの中の \\| と <br> を戻さない" "scripts/make_register.py" "<br> を改行にする" \
+  's = s.replace("re.sub(r\"<br\\s*/?>\", \"\\n\", c.strip().replace(\"\\\\|\", \"|\"), flags=re.I)", "c.strip()")'
+mutate "make_register --rows: 注記を下へ移さない" "scripts/make_register.py" "注記を入れた行の下へ移す" \
+  's = s.replace("                        _move_notes(ws, r, 2)", "                        pass")'
+
 mutate "make_register: ★ の行のコードを台帳に写す" "scripts/make_register.py" "コードの写しを台帳に入れない" \
   's = s.replace("rows.append((sec, f\"{loc.group(1)}:{loc.group(2)}\", None))", "rows.append((sec, f\"{loc.group(1)}:{loc.group(2)}\", rest))")'
 mutate "make_register: ★ の判定の空欄を数えない" "scripts/make_register.py" "整合の確認が ★ の判定の空欄と" \

@@ -3,7 +3,8 @@
 
     python make_register.py <出力先.xlsx> [--service "サービス名"] [--date 2026-01-15]
                             [--skill-version 2.18.0] [--frameworks none|owasp|full]
-                            [--owasp 2025|2021] [--api] [--card] [--stars <audit_grep の出力>] [--force]
+                            [--owasp 2025|2021] [--api] [--card] [--stars <audit_grep の出力>]
+                            [--rows <行のファイル.md> ...] [--force]
     python make_register.py --finalize <埋めた台帳.xlsx> <渡す版.xlsx> [--force]
 
 出力先が既にあれば止まる（書きかけの台帳を雛形で潰さないため）。上書きするなら --force。
@@ -12,6 +13,9 @@
 （節と場所だけ。コードの写しは取り込まない）。★ は 1 件ずつ判定して台帳に残す決まり（SKILL.md の「スクリプト」）で、
 判定の空欄と、問題ありなのに指摘の ID が台帳に無い行を、総合評価の「整合の確認」が数える。
 渡さなくても「★の判定」シートは作る（★ の無い案件では空のまま残し、その旨を書く）。
+
+--rows に Markdown の表で書いた行のファイルを渡すと、雛形を作るときにその行を入れる（書き方は --help の「行の取り込み」）。
+指摘を 1 回の出力に全部書かず、行のファイルに数件ずつ書き足して、そのたびに --force で作り直す。
 
 --skill-version は、評価に使ったスキルの版を総合評価の「評価の前提」に入れる。省けば、このスクリプトの置き場から
 VERSION を探して入れる（配布物ならスキルの直下、リポジトリなら skill/ の 1 つ上）。見つからなければ空欄にする。
@@ -60,6 +64,7 @@ full なら 4_API_Top10）。none では 7_API_Top10 が 1 枚増える。
 
 import argparse
 import datetime as _dt
+from copy import copy as _copy
 import os
 import re
 import sys
@@ -1170,6 +1175,222 @@ def build_workbook(frameworks="owasp", owasp="2025", api=False, card=False, star
 
 
 # --------------------------------------------------------------------------
+# 行の取り込み（--rows）。Markdown の表で書いた行を、雛形の表に入れる。
+#
+# 指摘の中身を 1 本のスクリプトや 1 回の出力に全部書くと、長い出力が途中で止まったときに書いた分が残らない。
+# 行のファイルに数件ずつ書き足し、そのたびに雛形を作り直せば、止まっても前の分は残り、続きから書ける。
+# 表の書き方は ROWS_HELP。
+
+ROWS_HELP = """\
+行の取り込み（--rows <行のファイル.md> ...）:
+  雛形を作るときに、Markdown の表で書いた行を入れる。ファイルは複数渡せて、書いた順に入れる。
+  行のファイルに書き足したら、--force を付けて作り直す（雛形から作り直すので、同じ行が二重に入らない）。
+
+  ## 指摘事項一覧                     ← シートの名前（番号の「3_」は省いてよい）
+  | ID | 判定 | 優先度 | 状態 | 指摘事項 | 是正案 |   ← 列の名前はシートの見出しと同じにする。並びと省略は自由
+  |---|---|---|---|---|---|
+  | S-01 | 問題あり | P1 | 未対応 | ……の事実 | ……の直し方 |
+
+  ・最初に書いたとき、その表の例示行（薄い黄色）を消す。注記は入れた行の下へ移す
+  ・1 列目が No・ID・観点で、同じ値の行が既にあれば、その行の書いた列だけを書き換える
+    （★の判定に判定を書く、総合評価の観点の一覧に結果を書くとき）
+  ・空のセルは書かない。数字だけのセルは数値として入れる（工数の合計が数える）
+  ・セルの中の | は \\| と書き、改行は <br> と書く
+  ・見出しの行が無い欄は、次の 2 つの表で書く
+      | 項目 | 値 |   … A 列がその名前の行の B 列に入れる（総合評価の「評価の前提」）
+      | セル | 値 |   … B7 のようにセルを指定して入れる
+"""
+
+# 1 列目がこの名前の表は、同じ値の行が既にあればその行を書き換える（無ければ足す）
+KEY_COLUMNS = ("No", "ID", "観点")
+_MD_SEP = re.compile(r"^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
+_NUM = re.compile(r"^-?[0-9]+(?:\.[0-9]+)?$")
+
+
+class RowsError(Exception):
+    pass
+
+
+def _md_cells(line):
+    s = line.strip()
+    if s.startswith("|"):
+        s = s[1:]
+    if s.endswith("|") and not s.endswith("\\|"):
+        s = s[:-1]
+    cells = re.split(r"(?<!\\)\|", s)
+    return [re.sub(r"<br\s*/?>", "\n", c.strip().replace("\\|", "|"), flags=re.I) for c in cells]
+
+
+def parse_rows(path):
+    """行のファイルを読み、(シートの名前, 見出し, [(行番号, セルの並び)]) の並びを返す。"""
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except OSError as e:
+        raise RowsError(f"行のファイルを開けない: {path}（{e.strerror or e}）")
+    tables, sheet, cur = [], None, None
+    for no, line in enumerate(lines, start=1):
+        if line.startswith("## "):
+            sheet, cur = line[3:].strip(), None
+            continue
+        if not line.lstrip().startswith("|"):
+            cur = None
+            continue
+        if _MD_SEP.match(line.strip()):
+            continue
+        cells = _md_cells(line)
+        if cur is None:
+            if sheet is None:
+                raise RowsError(f"{path}:{no}: 表の前に「## シートの名前」の行が無い")
+            cur = (sheet, cells, [], f"{path}:{no}")
+            tables.append(cur)
+            continue
+        if len(cells) != len(cur[1]):
+            raise RowsError(f"{path}:{no}: 列の数が見出しと違う（見出し {len(cur[1])}・この行 {len(cells)}）。"
+                            "セルの中の | は \\| と書く")
+        cur[2].append((no, cells))
+    return tables
+
+
+def _find_sheet(wb, name):
+    for ws in wb.worksheets:
+        if name in (ws.title, ws.title.split("_", 1)[-1]):
+            return ws
+    raise RowsError(f"シート「{name}」が台帳に無い（ある: {'、'.join(wb.sheetnames)}）")
+
+
+def _head_match(cell_value, name):
+    return isinstance(cell_value, str) and (cell_value == name or cell_value.startswith(name + "（"))
+
+
+def _is_note(ws, r):
+    """注記（A 列から始まり、複数の行に結合したセル）の先頭の行か"""
+    return any(m.min_row == r and m.min_col == 1 and m.max_row > m.min_row for m in ws.merged_cells.ranges)
+
+
+def _is_example(ws, r):
+    for (rr, _), cell in ws._cells.items():
+        if rr == r and cell.fill is not None and cell.fill.fill_type == "solid" \
+                and isinstance(cell.fill.fgColor.rgb, str) and cell.fill.fgColor.rgb[-6:].upper() == EXAMPLE_FILL:
+            return True
+    return False
+
+
+def _row_empty(ws, r):
+    return all(cell.value in (None, "") for (rr, _), cell in ws._cells.items() if rr == r)
+
+
+def _put(ws, r, c, v):
+    cell = ws.cell(row=r, column=c, value=float(v) if "." in v and _NUM.match(v) else int(v) if _NUM.match(v) else v)
+    cell.font = Font(name=FONT, size=10)
+    cell.alignment = Alignment(vertical="top", wrap_text=True)
+    cell.border = BORDER
+    return cell
+
+
+def _move_notes(ws, first, shift):
+    """first 行目から下の注記を shift 行下げる。注記のほかに中身があれば、行を足せない"""
+    notes = []
+    for m in sorted(ws.merged_cells.ranges, key=lambda m: m.min_row):
+        if m.min_row >= first and m.min_col == 1 and m.max_row > m.min_row:
+            notes.append(m)
+    covered = {(r, c) for m in notes for r in range(m.min_row, m.max_row + 1) for c in range(m.min_col, m.max_col + 1)}
+    for (r, c), cell in ws._cells.items():
+        if r >= first and (r, c) not in covered and cell.value not in (None, ""):
+            raise RowsError(f"{ws.title} の表の下（{r} 行目）に別の中身があるので、行を足せない。「| セル | 値 |」の表で書く")
+    moved = []
+    for m in notes:
+        top = ws.cell(row=m.min_row, column=1)
+        moved.append((m.min_row, m.max_row - m.min_row, m.max_col, top.value, _copy(top.font), _copy(top.alignment)))
+        ws.unmerge_cells(m.coord)
+        top.value = None
+    for r, span, width, value, font, align in moved:
+        c = ws.cell(row=r + shift, column=1, value=value)
+        c.font, c.alignment = font, align
+        ws.merge_cells(start_row=r + shift, start_column=1, end_row=r + shift + span, end_column=width)
+
+
+def apply_rows(wb, paths):
+    """行のファイルの表を台帳に入れ、(シート, 足した行, 書き換えた行, 入れたセル) の一覧を返す。"""
+    done, touched = {}, set()
+    for path in paths:
+        for sheet, head, rows, where in parse_rows(path):
+            ws = _find_sheet(wb, sheet)
+            stat = done.setdefault(ws.title, [0, 0, 0])
+            if head in (["項目", "値"], ["セル", "値"]):
+                for no, (key, val) in rows:
+                    if head[0] == "セル":
+                        if not re.fullmatch(r"[A-Z]{1,3}[0-9]{1,5}", key):
+                            raise RowsError(f"{path}:{no}: セルの書き方が違う: {key}（B7 のように書く）")
+                        cell = ws[key]
+                    else:
+                        hit = [r for (r, c), x in ws._cells.items() if c == 1 and x.value == key]
+                        if len(hit) != 1:
+                            raise RowsError(f"{path}:{no}: {ws.title} の A 列に「{key}」の行が"
+                                            f"{'無い' if not hit else ' ' + str(len(hit)) + ' 行ある'}（「| セル | 値 |」の表で書く）")
+                        cell = ws.cell(row=hit[0], column=2)
+                    if type(cell).__name__ == "MergedCell":
+                        raise RowsError(f"{path}:{no}: {ws.title}!{cell.coordinate} は結合したセルの途中。結合の左上のセルに書く")
+                    if val:
+                        f = cell.font
+                        cell.value = val
+                        cell.font = Font(name=f.name or FONT, size=f.size or 10, bold=f.bold)
+                        stat[2] += 1
+                continue
+            # 見出しの行を探す（表の 1 列目の名前で始まり、ほかの列の名前もそろう行）
+            hr, cols = None, None
+            for (r, c), x in sorted(ws._cells.items()):
+                if c == 1 and _head_match(x.value, head[0]):
+                    line = {cc: y.value for (rr, cc), y in ws._cells.items() if rr == r}
+                    m = {}
+                    for name in head:
+                        cs = [cc for cc, v in line.items() if _head_match(v, name)]
+                        if cs:
+                            m[name] = cs[0]
+                    if len(m) == len(head):
+                        hr, cols = r, m
+                        break
+            if hr is None:
+                raise RowsError(f"{where}: {ws.title} に、列が「{'・'.join(head)}」の見出しの行が無い（列の名前はシートの見出しと同じにする）")
+            if (ws.title, hr) not in touched:
+                touched.add((ws.title, hr))
+                r = hr + 1
+                while not _is_note(ws, r) and not _row_empty(ws, r):
+                    if _is_example(ws, r):
+                        for (rr, _), cell in list(ws._cells.items()):
+                            if rr == r:
+                                cell.value, cell.font, cell.fill = None, Font(name=FONT, size=10), PatternFill()
+                    r += 1
+            keyed = head[0] in KEY_COLUMNS
+            for no, cells in rows:
+                vals = dict(zip(head, cells))
+                target = None
+                if keyed and vals[head[0]]:
+                    hit = [r for (r, c), x in ws._cells.items() if c == cols[head[0]] and r > hr and x.value == vals[head[0]]]
+                    if len(hit) > 1:
+                        raise RowsError(f"{path}:{no}: {ws.title} に {head[0]}「{vals[head[0]]}」の行が {len(hit)} 行ある")
+                    target = hit[0] if hit else None
+                if target is None:
+                    r = hr + 1
+                    while not _is_note(ws, r) and not _row_empty(ws, r):
+                        r += 1
+                    if _is_note(ws, r) or not _row_empty(ws, r + 1) or _is_note(ws, r + 1):
+                        _move_notes(ws, r, 2)
+                    target = r
+                    stat[0] += 1
+                else:
+                    stat[1] += 1
+                if target > LAST:
+                    raise RowsError(f"{path}:{no}: {ws.title} の {target} 行目は、集計の範囲（{LAST} 行まで）の外になる")
+                for name, v in vals.items():
+                    if v:
+                        cell = _put(ws, target, cols[name], v)
+                        if name == "優先度" and v in PRIORITY_FILL:
+                            cell.fill = PatternFill("solid", fgColor=PRIORITY_FILL[v])
+    return done
+
+
+# --------------------------------------------------------------------------
 # 仕上げ（--finalize）。埋め終えた台帳から、依頼者に渡す版を作る。
 #
 # 雛形の件数と工数は数式で、openpyxl は計算結果を保存しない。Excel で開けば計算されるが、プレビュー・一部のビューア・
@@ -2087,7 +2308,7 @@ def main():
     if "--finalize" in sys.argv[1:]:
         finalize_main(sys.argv[1:])
         return
-    ap = argparse.ArgumentParser(description="指摘台帳（xlsx）の雛形を生成する", epilog=FINALIZE_HELP,
+    ap = argparse.ArgumentParser(description="指摘台帳（xlsx）の雛形を生成する", epilog=ROWS_HELP + "\n" + FINALIZE_HELP,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("output", help="出力先の .xlsx パス")
     ap.add_argument("--service", default=DEFAULT_SERVICE, help="対象サービス名")
@@ -2105,6 +2326,8 @@ def main():
                          "クレジットカード・セキュリティガイドライン、EMV 3-D セキュア）")
     ap.add_argument("--stars", default="",
                     help="scripts/audit_grep.sh の出力。★ の一覧を「★の判定」シートに 1 行ずつ取り込む（節と場所だけ）")
+    ap.add_argument("--rows", nargs="+", default=[], metavar="行のファイル.md",
+                    help="Markdown の表で書いた行を、雛形の表に入れる（下の「行の取り込み」）")
     ap.add_argument("--force", action="store_true",
                     help="出力先が既にあれば上書きする（既定では止まる）")
     ap.add_argument("--finalize", nargs=2, metavar=("埋めた台帳.xlsx", "渡す版.xlsx"),
@@ -2135,6 +2358,15 @@ def main():
     stars = parse_stars(args.stars) if args.stars else None
     wb, names = build_workbook(args.frameworks, args.owasp, args.api, args.card, stars,
                                args.service, args.date, args.skill_version)
+    filled = {}
+    if args.rows:
+        try:
+            filled = apply_rows(wb, args.rows)
+        except RowsError as e:
+            print(f"行を取り込めない: {e}", file=sys.stderr)
+            print("  台帳は作っていない。行のファイルを直して、もう一度実行する。", file=sys.stderr)
+            raise SystemExit(1)
+        fix_views(wb)
     try:
         wb.save(args.output)
     except OSError as e:
@@ -2146,6 +2378,12 @@ def main():
         suffix += " / OWASP API Security Top 10 (2023)"
     print(f"生成: {args.output}（--frameworks {args.frameworks}{suffix}）")
     print(f"  シート {len(wb.sheetnames)} 枚: {', '.join(wb.sheetnames)}")
+    if args.rows:
+        print(f"  行のファイル {len(args.rows)} 本から取り込んだ:")
+        for title, (added, updated, cells) in filled.items():
+            print(f"    {title}: 足した行 {added}・書き換えた行 {updated}・入れたセル {cells}")
+        print("  ・書き足したら --force を付けて作り直す。仕上げる前に、総合評価の「整合の確認」が 0 かを確かめる")
+        return
     print()
     print("  ・薄い黄色の斜体行は書き方の例。実際の指摘を書くときに上書きするか削除する")
     print("  ・判定・優先度・状態は一覧から選ぶ（入力規則）。見送りとクローズは優先度ではなく状態に書く")

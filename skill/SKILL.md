@@ -260,7 +260,7 @@ docs/security-assessment/
 | `scripts/audit_grep.sh <repo>` | コード監査の事前の洗い出し。0 節で構成を判定し、読む資料を名指しする。以降の節で、認可の無いルート、持ち主を照らし合わせない取り出し、危険な関数、秘密情報、開発用の抜け道、BaaS の設定、CI の定義などの候補を出す。数万ファイルでは 10 分前後かかるので、モノレポは対象のアプリのディレクトリだけを渡す |
 | `scripts/recon.sh <url> [パス...]` | 外形の確認（HTTP ヘッダ、外から見えてはいけないファイル、証明書、DNS とメールの送信ドメイン認証、公開バンドルの鍵らしき文字列、第三者への送信先）。名乗りを付け、送る要求の一覧はスクリプトの先頭にある |
 | `scripts/browser_probe.mjs <url> [パス...]` | ブラウザで読み込み、同意前の第三者送信・WebSocket の接続先・Cookie の属性・保存領域のキー名・CSP の実効性を取る（Node.js 20 以降と Playwright。評価対象のリポジトリには入れない） |
-| `scripts/make_register.py <out.xlsx> [...]` | 指摘台帳の xlsx の雛形を作る。`--stars <audit_grep の出力>` で ★ の一覧を取り込む。`--finalize` で依頼者に渡す版に仕上げる（`openpyxl` が必要。評価対象のリポジトリには入れない） |
+| `scripts/make_register.py <out.xlsx> [...]` | 指摘台帳の xlsx の雛形を作る。`--stars <audit_grep の出力>` で ★ の一覧を、`--rows <行のファイル>` で Markdown の表に数件ずつ書いた指摘の行を取り込む（04）。`--finalize` で依頼者に渡す版に仕上げる（`openpyxl` が必要。評価対象のリポジトリには入れない） |
 | `scripts/check_remediation.py <remediation/>` | 修正指示書の、前提のタスクが後ろにある・欄が無い・答えを待つ一文が無いタスクと、同じファイルを変えるタスクの組を出す（05） |
 | `scripts/carry_check.py <前回.xlsx> <今回.xlsx>` | 再評価で、前回の ID が今回の台帳に引き継がれているかを確かめる（11 の 3 節） |
 | `scripts/scan_secrets.sh <dir>` | 成果物に秘密情報・個人情報が混ざっていないかの最終検査。終了コードは、検出なし 0・検出あり 2・未検査だけ 3 |

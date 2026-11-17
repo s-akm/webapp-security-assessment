@@ -74,7 +74,7 @@ if [[ "$NO_SKILL" -eq 0 ]]; then
   notes="- webapp-security-assessment スキルに従って評価してください
 - scripts/audit_grep.sh は実行済みで、出力は $WS/evidence/audit-grep.txt にある。実行し直さずに、これを読む
 - スキルの版の確認（scripts/version_check.sh）は済ませてある。置いてある写しの版で進める
-- 台帳の xlsx に値を書くスクリプトは $XW/ に置き、python3 で実行してよい（openpyxl は入っている）。スキルの make_register.py と check_remediation.py は、写さずにその場所のまま python3 で実行できる。ほかの Python は実行できない"
+- 作業用のファイル（台帳の行のファイル、xlsx に値を書くスクリプト）は $XW/ に置く。$XW/ のスクリプトは python3 で実行してよい（openpyxl は入っている）。スキルの make_register.py と check_remediation.py は、写さずにその場所のまま python3 で実行できる。ほかの Python は実行できない"
 fi
 prompt="$(python3 -c 'import sys
 t = open(sys.argv[1], encoding="utf-8").read()
