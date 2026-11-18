@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""資料の変更から、版を上げる前に当てる題材を選ぶ（README の「版を上げる」の 1 の 2 つ目）。
+"""資料の変更から、版を上げる前に当てる題材を選ぶ（README の「リリース手順」の 1 の 2 つ目）。
 
   tests/eval/select-targets.py [--old <タグ|コミット>] [--answers <答えの一覧の置き場>]
 
