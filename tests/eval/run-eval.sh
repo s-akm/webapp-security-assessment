@@ -276,17 +276,15 @@ premise_file="$LOCAL/$PREMISE"
 prompt="$(python3 -c 'import sys
 t = open(sys.argv[1], encoding="utf-8").read().replace("{{premise}}\n", open(sys.argv[2], encoding="utf-8").read()).replace("{{audit_grep}}", sys.argv[3])
 t = t.replace("{{files}}", sys.argv[3].rsplit("/", 1)[0] + "/files.txt")
-if sys.argv[4] == "1":
-    # 答えの無い題材は教材ではない。冒頭の 1 行だけを差し替える
-    t = "このディレクトリは、オープンソースで公開されているソフトウェアのリポジトリを、評価のために手元へ写したものです。\n" + t.split("\n", 1)[1]
-if sys.argv[5]:
+# 答えの無い題材（実在の OSS）にも、同じ書き出し（持ち主の依頼の形）を使う。題材ごとに書き出しを変えない
+if sys.argv[4]:
     # 再評価の回。前回の台帳の置き場と、11 に従うことを足す
     t += ("\n## 再評価\n\n"
-          "- これは 2 回目の評価。前回の評価の台帳（指摘と未確認事項。JSON）が " + sys.argv[5] + " にある。references/11-reassessment.md に従う\n"
+          "- これは 2 回目の評価。前回の評価の台帳（指摘と未確認事項。JSON）が " + sys.argv[4] + " にある。references/11-reassessment.md に従う\n"
           "- 前回の指摘と未確認事項の ID は振り直さない。前回の ID は、今回の台帳でも同じ ID の行として残し、行き先（指摘は 解消・未着手・部分対応・再発・未確認、"
           "未確認事項は 確定・未確認のまま・取り下げ）と根拠を事実の欄に書く\n"
           "- 新しく見つけたものは、前回の続きの番号から振る\n")
-print(t, end="")' "$PROMPT_FILE" "$premise_file" "$EVID/audit-grep.txt" "$NO_ANSWERS" "${PREVIOUS:+$EVID/previous-register.json}")"
+print(t, end="")' "$PROMPT_FILE" "$premise_file" "$EVID/audit-grep.txt" "${PREVIOUS:+$EVID/previous-register.json}")"
 printf '%s\n' "$prompt" > "$OUT/prompt.txt"
 # 許可は permissions.sh にまとめる（probe-permissions.sh も同じものを使い、CLI を更新したら実際に働くかを確かめる）
 # shellcheck source=permissions.sh

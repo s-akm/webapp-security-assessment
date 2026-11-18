@@ -3812,8 +3812,8 @@ printf '{"structured_output": {"findings": [], "unconfirmed": [{"id": "U-1", "te
 if ! WSA_EVAL_LOCAL="$TMP/eval-failed-local" bash "$ROOT/tests/eval/run-eval.sh" --score-only "$FAILD/out" --record >/dev/null 2>&1 \
    && [[ ! -f "$TMP/eval-failed-local/history.tsv" ]]; then ok "eval: 実行に失敗した回は採点も記録もしない"
 else ng "eval: 実行に失敗した回は採点も記録もしない" "失敗した回を history.tsv に記録した"; fi
-# 答えの無い題材（実在の OSS）は、冒頭の「教材」の 1 行を差し替え、下の階層のエージェント向けの設定も消す
-contains "eval: 答えの無い題材には、教材と書かない指示を使う"   'このディレクトリは、オープンソースで公開されているソフトウェアのリポジトリを' "$(cat "$ROOT/tests/eval/run-eval.sh")"
+# 答えの無い題材（実在の OSS）にも同じ書き出しを使い（題材ごとに差し替えない）、下の階層のエージェント向けの設定を消す
+absent "eval: 答えの無い題材でも、指示の書き出しを差し替えない"   'このディレクトリは、' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 contains "eval: 下の階層のエージェント向けの設定も消す"         '-name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 # 指示の書き出しは持ち主の依頼の形にする。「セキュリティ教材を練習のために」と書くと、穴の多い公開の教材で
 # 台帳の書き出しが安全上の判定（cyber）で止められやすい（2026-11-18 の切り分けで 36 回中 29 → 4 回中 0）
