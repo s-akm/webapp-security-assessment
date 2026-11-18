@@ -3815,6 +3815,12 @@ else ng "eval: 実行に失敗した回は採点も記録もしない" "失敗�
 # 答えの無い題材（実在の OSS）は、冒頭の「教材」の 1 行を差し替え、下の階層のエージェント向けの設定も消す
 contains "eval: 答えの無い題材には、教材と書かない指示を使う"   'このディレクトリは、オープンソースで公開されているソフトウェアのリポジトリを' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 contains "eval: 下の階層のエージェント向けの設定も消す"         '-name CLAUDE.md -o -name CLAUDE.local.md -o -name AGENTS.md' "$(cat "$ROOT/tests/eval/run-eval.sh")"
+# 指示の書き出しは持ち主の依頼の形にする。「セキュリティ教材を練習のために」と書くと、穴の多い公開の教材で
+# 台帳の書き出しが安全上の判定（cyber）で止められやすい（2026-11-18 の切り分けで 36 回中 29 → 4 回中 0）
+for p in prompt.md prompt-noskill.md; do
+  absent "eval: ${p} の書き出しに「教材」と書かない" '教材' "$(head -1 "$ROOT/tests/eval/$p")"
+  absent "eval: ${p} の書き出しに「練習」と書かない" '練習' "$(head -1 "$ROOT/tests/eval/$p")"
+done
 # 台帳が返らなかった回（安全上の判定で書き出しが止められ、指摘 0 件）は、同じモデルで当て直す
 contains "eval: 台帳が返らなかった回を同じモデルで当て直す"     'mv "$OUT/transcript.jsonl" "$OUT/transcript-止められた-$try.jsonl"' "$(cat "$ROOT/tests/eval/run-eval.sh")"
 contains "eval: 当てるモデルを完全な ID で固定する"               'MODEL="claude-opus-5-5"'        "$(cat "$ROOT/tests/eval/run-eval.sh")"
